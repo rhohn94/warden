@@ -17,8 +17,26 @@ egui desktop window.
 - Architecture design doc (`docs/design/app-design.md`)
 - UX design language adaptation (Aura/obsidian)
 
+## v0.2 — Obsidian UI + Core Fixes
+
+Plan: [`release-planning-v0.2.md`](release-planning-v0.2.md).
+
+Ships Obsidian theme system and Badge widgets; closes three functional gaps:
+Scan now trigger, stale entry removal, and open-in-browser for web apps.
+
+**Scope:**
+- Stale entry removal when app dirs disappear from scan
+- Open-in-browser button for running web apps with a known port
+- Wire the Scan now button to force an immediate scanner cycle
+- (Pre-committed) Obsidian theme system integration + Badge widget
+- (Pre-committed) Scanner: grimoire-build-info.json detection + tracing
+- (Pre-committed) Justfile run/deploy recipes
+
 ## Backlog
 
+- App details pane (tech stack, Grimoire version, Aura version) (#16)
+- Apply Aura spacing and radius tokens throughout UI (#12)
+- Visual-inspection CLI for headless agent verification (#9, Grimoire-Requirement, v0.3)
 - Multi-directory watching
 - Log streaming / tail window
 - macOS NSUserNotification support
