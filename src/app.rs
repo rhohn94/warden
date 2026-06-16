@@ -95,7 +95,19 @@ impl App {
         if self.scanner_rx.has_changed().unwrap_or(false) {
             let entries = self.scanner_rx.borrow_and_update().clone();
             debug!("scanner update: {} entries", entries.len());
+            let new_paths: HashSet<PathBuf> = entries.iter().map(|e| e.dir.clone()).collect();
             let mut state = self.state.lock().unwrap();
+            let removed_paths: Vec<PathBuf> = state
+                .statuses
+                .keys()
+                .filter(|p| !new_paths.contains(*p))
+                .cloned()
+                .collect();
+            for path in removed_paths {
+                state.statuses.remove(&path);
+                state.in_flight.remove(&path);
+                state.entries.retain(|e| e.dir != path);
+            }
             state.entries = entries.clone();
             state.last_scan = Instant::now();
             drop(state);
