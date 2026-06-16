@@ -1,6 +1,6 @@
 # Version history
 
-## v0.1.0 (unreleased)
+## v0.1.0 (2026-06-16)
 
 - Initial release: native egui desktop app for monitoring and controlling a fleet of locally deployed Grimoire apps
 - Directory scanner discovers apps by `grimoire-config.json` presence
