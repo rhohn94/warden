@@ -1,5 +1,6 @@
 mod app;
 mod detector;
+mod dump_ui;
 mod launcher;
 mod models;
 mod scanner;
@@ -22,18 +23,28 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
 
     if args.iter().any(|a| a == "--help" || a == "-h") {
-        println!("Usage: warden [--apps-dir <path>] [--refresh <secs>]");
+        println!("Usage: warden [--apps-dir <path>] [--refresh <secs>] [--dump-ui]");
         println!();
         println!("Options:");
         println!("  --apps-dir <path>   Directory to watch for deployed apps");
         println!("                      (default: ~/Projects/deployed-apps/)");
         println!("  --refresh <secs>    Scan interval in seconds (default: 5)");
+        println!("  --dump-ui           Print a JSON snapshot of app state to stdout and exit");
+        println!("                      (no window opened; suitable for scripting and regression tests)");
         return;
     }
 
     let apps_dir = parse_flag(&args, "--apps-dir")
         .map(PathBuf::from)
         .unwrap_or_else(default_apps_dir);
+
+    if args.iter().any(|a| a == "--dump-ui") {
+        if let Err(e) = dump_ui::scan_and_dump(apps_dir) {
+            eprintln!("warden --dump-ui: {}", e);
+            std::process::exit(1);
+        }
+        return;
+    }
 
     let refresh_secs: u64 = parse_flag(&args, "--refresh")
         .and_then(|v| v.parse().ok())
