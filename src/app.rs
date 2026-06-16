@@ -3,7 +3,7 @@ use crate::{
     launcher::Launcher,
     models::{AppEntry, AppStatus, PortInfo},
 };
-use tracing::{debug, info};
+use tracing::{debug, error, info};
 use obsidian::{
     app::window_attributes,
     theme::{self, Theme},
@@ -60,6 +60,7 @@ pub struct App {
     // shared app state
     state: Arc<Mutex<AppState>>,
     scanner_rx: watch::Receiver<Vec<AppEntry>>,
+    force_scan_tx: watch::Sender<()>,
     launcher: Arc<tokio::sync::Mutex<Launcher>>,
     runtime_handle: tokio::runtime::Handle,
 }
@@ -68,6 +69,7 @@ impl App {
     pub fn new(
         state: Arc<Mutex<AppState>>,
         scanner_rx: watch::Receiver<Vec<AppEntry>>,
+        force_scan_tx: watch::Sender<()>,
         launcher: Arc<tokio::sync::Mutex<Launcher>>,
         runtime_handle: tokio::runtime::Handle,
     ) -> Self {
@@ -81,6 +83,7 @@ impl App {
             renderer: None,
             state,
             scanner_rx,
+            force_scan_tx,
             launcher,
             runtime_handle,
         }
@@ -95,7 +98,19 @@ impl App {
         if self.scanner_rx.has_changed().unwrap_or(false) {
             let entries = self.scanner_rx.borrow_and_update().clone();
             debug!("scanner update: {} entries", entries.len());
+            let new_paths: HashSet<PathBuf> = entries.iter().map(|e| e.dir.clone()).collect();
             let mut state = self.state.lock().unwrap();
+            let removed_paths: Vec<PathBuf> = state
+                .statuses
+                .keys()
+                .filter(|p| !new_paths.contains(*p))
+                .cloned()
+                .collect();
+            for path in removed_paths {
+                state.statuses.remove(&path);
+                state.in_flight.remove(&path);
+                state.entries.retain(|e| e.dir != path);
+            }
             state.entries = entries.clone();
             state.last_scan = Instant::now();
             drop(state);
@@ -139,7 +154,7 @@ impl App {
                 ui.label(state.apps_dir.to_string_lossy().as_ref());
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui.button("Scan now").clicked() {
-                        // scanner auto-refreshes; a manual trigger can be added in v0.2
+                        let _ = self.force_scan_tx.send(());
                     }
                 });
             });
@@ -191,6 +206,13 @@ impl App {
                         };
                         if ui.button("Stop").clicked() {
                             self.dispatch_stop(entry.clone(), pid);
+                        }
+                        if let Some(port) = port_info.port {
+                            if ui.button("Open").clicked() {
+                                if let Err(e) = open::that(format!("http://localhost:{}", port)) {
+                                    error!("open browser failed: {}", e);
+                                }
+                            }
                         }
                     } else if ui.button("Start").clicked() {
                         self.dispatch_start(entry.clone());

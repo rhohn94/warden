@@ -7,17 +7,26 @@ use tracing::{debug, info, warn};
 
 /// Starts a background tokio task that scans `root` every `interval` and
 /// sends discovered apps through the returned `watch::Receiver`.
-pub fn start(root: PathBuf, interval: Duration) -> watch::Receiver<Vec<AppEntry>> {
+/// Also returns a `watch::Sender<()>` — send any value to trigger an
+/// immediate scan without waiting for the interval.
+pub fn start(
+    root: PathBuf,
+    interval: Duration,
+) -> (watch::Receiver<Vec<AppEntry>>, watch::Sender<()>) {
     let (tx, rx) = watch::channel(Vec::new());
+    let (force_tx, mut force_rx) = watch::channel(());
     tokio::spawn(async move {
         loop {
             let apps = scan_once(&root);
             info!("scan complete: {} app(s) in {}", apps.len(), root.display());
             let _ = tx.send(apps);
-            tokio::time::sleep(interval).await;
+            tokio::select! {
+                _ = tokio::time::sleep(interval) => {}
+                _ = force_rx.changed() => {}
+            }
         }
     });
-    rx
+    (rx, force_tx)
 }
 
 /// Scans `root` synchronously and returns discovered `AppEntry` records.
@@ -269,5 +278,62 @@ mod tests {
             Some(8080)
         );
         assert_eq!(parse_port_from_url("http://localhost"), None);
+    }
+
+    #[test]
+    fn removed_app_absent_on_rescan() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path().to_path_buf();
+
+        make_app(&root, "app-a", None, None);
+        make_app(&root, "app-b", None, None);
+
+        let first = scan_once(&root);
+        assert_eq!(first.len(), 2);
+
+        fs::remove_dir_all(root.join("app-b")).unwrap();
+
+        let second = scan_once(&root);
+        assert_eq!(second.len(), 1);
+        assert_eq!(second[0].name, "app-a");
+        assert!(!second.iter().any(|e| e.name == "app-b"));
+    }
+
+    #[tokio::test]
+    async fn force_scan_wakes_before_interval() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path().to_path_buf();
+        make_app(&root, "app-x", None, None);
+
+        // Use a very long interval so the test would stall without a force trigger.
+        let (mut rx, force_tx) = start(root, Duration::from_secs(3600));
+
+        // Wait for the first scan to arrive (scanner sends before sleeping).
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while !rx.has_changed().unwrap_or(false) {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "timed out waiting for initial scan"
+            );
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        rx.borrow_and_update(); // consume the first scan
+
+        // Trigger a force scan; the scanner should deliver a second update
+        // well within 1 second despite the 3600s interval.
+        force_tx.send(()).unwrap();
+        let timeout = tokio::time::sleep(Duration::from_secs(1));
+        tokio::pin!(timeout);
+        loop {
+            tokio::select! {
+                _ = &mut timeout => panic!("force scan did not arrive within 1 second"),
+                _ = rx.changed() => {
+                    let apps = rx.borrow_and_update().clone();
+                    assert_eq!(apps.len(), 1);
+                    assert_eq!(apps[0].name, "app-x");
+                    break;
+                }
+            }
+        }
     }
 }

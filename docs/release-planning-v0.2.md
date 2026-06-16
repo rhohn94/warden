@@ -175,14 +175,14 @@ Phase 2: merge `warden/v0.2-scan-now` after both Phase 1 branches are fully merg
 
 | Branch | Implemented | Reviewed | Merged into version/0.2 |
 |---|---|---|---|
-| `warden/v0.2-stale-entries` | ☐ | ☐ | ☐ |
-| `warden/v0.2-open-browser` | ☐ | ☐ | ☐ |
+| `warden/v0.2-stale-entries` | ☑ | ☑ | ☑ |
+| `warden/v0.2-open-browser` | ☑ | ☑ | ☑ |
 
 ### Phase 2
 
 | Branch | Implemented | Reviewed | Merged into version/0.2 |
 |---|---|---|---|
-| `warden/v0.2-scan-now` | ☐ | ☐ | ☐ |
+| `warden/v0.2-scan-now` | ☑ | ☑ | ☑ |
 
 ### Follow-ups
 
