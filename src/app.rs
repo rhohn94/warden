@@ -6,6 +6,7 @@ use crate::{
 use tracing::{debug, error, info};
 use obsidian::{
     app::window_attributes,
+    aura::golden,
     theme::{self, Theme},
     widgets::{Badge, BadgeStatus},
     AppDelegate, EguiOnlyRenderer, EguiWindow,
@@ -150,10 +151,17 @@ impl App {
             // ── Header ──────────────────────────────────────────────────
             ui.horizontal(|ui| {
                 ui.heading("Warden");
-                ui.add_space(8.0);
+                ui.add_space(golden::SPACE[2]); // SPACE_2 = 8px
                 ui.label(state.apps_dir.to_string_lossy().as_ref());
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.button("Scan now").clicked() {
+                    if ui
+                        .add(
+                            egui::Button::new("Scan now")
+                                .min_size(egui::vec2(0.0, golden::CONTROL_HEIGHT_SM))
+                                .corner_radius(egui::CornerRadius::same(golden::RADIUS_SM)),
+                        )
+                        .clicked()
+                    {
                         let _ = self.force_scan_tx.send(());
                     }
                 });
@@ -185,6 +193,8 @@ impl App {
                 let is_running = matches!(status, AppStatus::Running { .. });
                 let is_in_flight = in_flight.contains(&entry.dir);
 
+                // SPACE_3 (12px) vertical padding above each app row.
+                ui.add_space(golden::SPACE[3]);
                 ui.horizontal(|ui| {
                     Badge::new(badge_label, badge_status).ui(ui);
                     ui.label(&entry.name);
@@ -195,29 +205,59 @@ impl App {
                     }
                     ui.label(&port_str);
 
+                    let btn_size = egui::vec2(0.0, golden::CONTROL_HEIGHT_SM);
+                    let radius = egui::CornerRadius::same(golden::RADIUS_SM);
                     if is_in_flight {
                         let lbl = if is_running { "Stopping…" } else { "Starting…" };
-                        ui.add_enabled(false, egui::Button::new(lbl));
+                        ui.add_enabled(
+                            false,
+                            egui::Button::new(lbl)
+                                .min_size(btn_size)
+                                .corner_radius(radius),
+                        );
                     } else if is_running {
                         let pid = if let AppStatus::Running { pid } = status {
                             Some(*pid)
                         } else {
                             None
                         };
-                        if ui.button("Stop").clicked() {
+                        if ui
+                            .add(
+                                egui::Button::new("Stop")
+                                    .min_size(btn_size)
+                                    .corner_radius(radius),
+                            )
+                            .clicked()
+                        {
                             self.dispatch_stop(entry.clone(), pid);
                         }
                         if let Some(port) = port_info.port {
-                            if ui.button("Open").clicked() {
+                            if ui
+                                .add(
+                                    egui::Button::new("Open")
+                                        .min_size(btn_size)
+                                        .corner_radius(radius),
+                                )
+                                .clicked()
+                            {
                                 if let Err(e) = open::that(format!("http://localhost:{}", port)) {
                                     error!("open browser failed: {}", e);
                                 }
                             }
                         }
-                    } else if ui.button("Start").clicked() {
+                    } else if ui
+                        .add(
+                            egui::Button::new("Start")
+                                .min_size(btn_size)
+                                .corner_radius(radius),
+                        )
+                        .clicked()
+                    {
                         self.dispatch_start(entry.clone());
                     }
                 });
+                // SPACE_3 (12px) vertical padding below each app row.
+                ui.add_space(golden::SPACE[3]);
             }
 
             ui.separator();
