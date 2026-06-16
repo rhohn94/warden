@@ -219,7 +219,7 @@ Phase 1 merges first (unblocks all Rust compilation); Phase 2 merges after Phase
 
 | Branch | Design doc | Implemented | Reviewed | Merged into version/0.1 |
 |---|---|---|---|---|
-| `warden/v0.1-gui` (§2.6) | ☐ | ☐ | ☐ | ☐ |
+| `warden/v0.1-gui` (§2.6) | ☑ | ☑ | ☑ | ☑ |
 
 ### Phase 5
 
