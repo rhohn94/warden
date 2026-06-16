@@ -140,39 +140,11 @@ Run in order; first failing **blocking** check stops the merge:
 1. **Type-check / build** (`typecheck: build` → type errors are build failures).
 2. **Coverage** (`coverage-threshold: null` → skip by default).
 3. **Audit gate** (`audit-gate: warn` → file via `feedback-to-issue`, proceed).
-   - **3a. Dependency-channel conformance** (sub-step; **warn-only this
-     release**). When the branch's diff touches `vendor.toml` / `vendor.lock` /
-     `vendor/`, run `python3
-     .claude/skills/dependency-audit/dependency_channel_conformance.py --root .
-     --json` (the `vendor-check` verb's implementation). Reads the **same live
-     `audit-gate` dial**. Each finding is the normalized shape
-     `{check,dep,channel,severity,detail,locked_sha,observed_sha}`. Under
-     `warn`: file each via `feedback-to-issue` (audience `internal`, labels
-     `security` + `dependency-channel`, dedupe key `{channel}:{dep}:{check}`)
-     and **proceed** — it never blocks a merge/release this release. The
-     network "unpublished-release" check degrades gracefully (reported, never a
-     hard fail). A future release flips it to **block** via the same dial with
-     no schema change. Design: `dependency-channel-design.md` §5.
 4. **Auto-Reviewer** (`auto-reviewer: noir` → spawn `reviewer`; blocking
    findings stop, non-blocking become §5 follow-ups).
 
 **On any blocking stop:** `git reset --hard ORIG_HEAD` — undo the merge, leave
 §5 row unticked, record reason in §5 follow-ups. Re-runnable once branch fixed.
-
-### 3b. Doc-assurance --strict gate (v3.36+)
-
-Run `python3 .claude/skills/doc-assurance/doc_assurance.py --strict` as part
-of the release closeout. Response policy based on findings:
-
-- **block** (or `--strict` flag active): If findings from `check_hierarchy` or
-  `check_relative_links` are present, fail the closeout. File each finding via
-  `feedback-to-issue` with label `doc-quality` and type `documentation` before
-  blocking.
-- **warn** (default): Run, print findings, proceed. Route warn-tier findings
-  through `feedback-to-issue` with `doc-quality` area label.
-- **Stealth Mode:** Under `stealth-mode.value: "on"`, suppress the
-  `feedback-to-issue` auto-filing step (per `stealth-guard.sh` restrictions on
-  commit-class actions). Run the check; do not auto-file.
 
 ### 4. Tick §5 ledger
 

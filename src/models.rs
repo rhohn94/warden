@@ -1,0 +1,25 @@
+use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
+
+/// A discovered Grimoire-ecosystem app in the watched directory.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AppEntry {
+    pub name: String,
+    pub dir: PathBuf,
+    pub framework_version: Option<String>,
+    pub server_command: Option<String>,
+}
+
+/// Running state of a discovered app.
+#[derive(Debug, Clone, PartialEq)]
+pub enum AppStatus {
+    Running { pid: u32 },
+    Stopped,
+    Unknown,
+}
+
+/// Port information resolved for an app.
+#[derive(Debug, Clone, Default)]
+pub struct PortInfo {
+    pub port: Option<u16>,
+}
