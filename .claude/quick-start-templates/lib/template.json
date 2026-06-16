@@ -1,0 +1,48 @@
+{
+  "id": "lib-starter",
+  "name": "lib-starter",
+  "profile": "lib",
+  "profiles": [
+    "lib"
+  ],
+  "summary": "Reusable library skeleton: a public API module, a test harness (framework-required baseline for the library shape), and packaging wiring.",
+  "components": [],
+  "requires": [],
+  "config-defaults": {
+    "model-effort-profile": "Medium",
+    "execution-strategy": "Efficient"
+  },
+  "scaffold": [
+    {
+      "from": "files/",
+      "to": "."
+    }
+  ],
+  "languages": {
+    "python": {
+      "test": "pytest",
+      "build": "python -m build",
+      "lint": "ruff check .",
+      "typecheck": "mypy ."
+    },
+    "typescript": {
+      "test": "npm test",
+      "build": "tsc -p .",
+      "lint": "eslint .",
+      "typecheck": "tsc --noEmit"
+    },
+    "go": {
+      "test": "go test ./...",
+      "build": "go build ./...",
+      "lint": "staticcheck ./...",
+      "typecheck": "go vet ./..."
+    },
+    "rust": {
+      "test": "cargo test",
+      "build": "cargo build --release",
+      "lint": "cargo clippy --",
+      "typecheck": "cargo check"
+    }
+  },
+  "post-apply-notes": "Pick the language variant matching the project; quick-start-template applies that variant's test/build/lint/typecheck commands into the CLAUDE.md commands table + the v1.26 code-quality block (not edited inline). Starter payload: README.md + a public-API module stub + a test harness. Config defaults are applied via model-effort-profile-switch + workflow-variant-switch."
+}

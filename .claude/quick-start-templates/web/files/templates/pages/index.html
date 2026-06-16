@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+
+{#
+  Example full-page template (one per route). Pages extend base.html, which
+  binds Aura's app-shell. Page-level layout recipes that reference Aura's
+  ready-made page artifacts live in docs/design/ux/layout.md (emitted by
+  design-language-adapt). Keep pages thin: compose Aura artifacts + fragments.
+#}
+
+{% block title %}Home{% endblock %}
+
+{% block content %}
+  <!-- Reference an Aura page artifact when published; until then this is a
+       minimal Grimoire-owned placeholder per the external seam (design #38). -->
+  <section class="aura-page" aria-label="Home">
+    <h1>Welcome</h1>
+    <p>Replace this with your route content. HTMX partials live in
+       <code>templates/fragments/</code> and are swapped into this page.</p>
+
+    <!-- Example HTMX fragment binding: server returns fragments/example.html. -->
+    <div hx-get="/fragments/example" hx-trigger="load" hx-swap="innerHTML">
+      Loading…
+    </div>
+  </section>
+{% endblock %}

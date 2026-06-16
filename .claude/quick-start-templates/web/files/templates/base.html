@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<!--
+  Grimoire web base shell — thin, Grimoire-owned skeleton.
+
+  This file does NOT contain Aura code. It *includes* Aura's app-shell artifact
+  at the documented default path `vendor/aura`. Aura is consumed by default as a
+  `vendor.toml` dep synced via `sync-deps` (channel stable, kind asset-bundle,
+  dest vendor/aura); Aura ships the framework-neutral app-shell / theme-toggle
+  per rhohn94/design-language#26.
+
+  DEPENDENCY: until the Aura app-shell artifact is published, the include below
+  points at its intended path (vendor/aura/app-shell.html). See
+  docs/web-app-aura-adoption-guide.md.
+
+  SRI: the integrity= values below come from vendor/aura/SRI.txt (per-file
+  subresource-integrity hashes shipped alongside the bundle — an additional
+  browser-defense asset, not the dependency pin). Replace the placeholders with
+  the matching SRI.txt entries.
+
+  Alternative consumption (documented in the adoption guide): a git submodule at
+  `vendor/aura`, or vendor Aura under `static/aura/` via a build step and adjust
+  the include/static paths below. The `vendor/aura` path is invariant across the
+  vendor-dep and submodule mechanisms.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{% block title %}App{% endblock %}</title>
+
+    <!-- Aura design-language stylesheet, served from the default vendor path.
+         integrity value: copy aura.css's entry from vendor/aura/SRI.txt. -->
+    <link rel="stylesheet" href="/vendor/aura/aura.css"
+          integrity="sha384-REPLACE_FROM_vendor_aura_SRI_txt" crossorigin="anonymous" />
+  </head>
+  <body>
+    <!-- Aura app-shell artifact (header / nav / theme-toggle), included by
+         reference at the default path. Replace the include mechanism to match
+         your template engine (Jinja {% include %}, server-side partial, etc.). -->
+    {% include "vendor/aura/app-shell.html" %}
+
+    <main id="content">
+      {% block content %}{% endblock %}
+    </main>
+
+    <!-- Aura theme-toggle behaviour snippet, referenced (not copied).
+         integrity value: copy theme-toggle.js's entry from vendor/aura/SRI.txt. -->
+    <script src="/vendor/aura/theme-toggle.js" defer
+            integrity="sha384-REPLACE_FROM_vendor_aura_SRI_txt" crossorigin="anonymous"></script>
+  </body>
+</html>

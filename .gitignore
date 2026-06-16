@@ -1,0 +1,14 @@
+# Grimoire runtime artifacts (never commit)
+.grimoire-source/
+.sync-deps-staging/
+
+# Rust build artifacts
+/target/
+
+# macOS
+.DS_Store
+
+# Claude Code local-only files
+.claude/settings.local.json
+.claude/integration-allow.local
+.design-language-source/

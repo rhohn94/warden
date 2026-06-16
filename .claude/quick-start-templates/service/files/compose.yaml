@@ -1,0 +1,28 @@
+# Dev-only Dockerized Postgres for the quick-start service.
+#
+# A single shared container (fixed container_name) is reused across all git
+# worktrees — see the `db-up` recipe and the multi-worktree note in justfile.
+# The data lives in a project-prefixed named volume, so recreating the container
+# under a different compose project attaches a DIFFERENT empty volume; never do
+# that from a second worktree (use `just db-up`, which reuses the running one).
+
+services:
+  db:
+    image: postgres:17-alpine
+    container_name: service-db        # keep in sync with justfile `db_name`
+    environment:
+      POSTGRES_USER: app
+      POSTGRES_PASSWORD: app
+      POSTGRES_DB: app
+    ports:
+      - "5432:5432"                   # host DATABASE_URL: postgres://app:app@localhost:5432/app
+    volumes:
+      - service_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U app -d app"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+volumes:
+  service_pgdata:

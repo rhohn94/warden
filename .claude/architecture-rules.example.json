@@ -1,0 +1,21 @@
+{
+  "schema-version": 1,
+  "_comment": "Opt-in architecture fitness rules for the architecture-audit skill. Copy to .claude/architecture-rules.json and adapt globs/edges to this project. Absent file => architecture-audit reports 'no rules declared' and exits clean. Design: docs/design/architecture-fitness-design.md",
+  "layers": {
+    "presentation": ["src/ui/**", "src/views/**", "src/components/**"],
+    "application": ["src/services/**", "src/app/**"],
+    "domain": ["src/domain/**", "src/core/**"],
+    "persistence": ["src/store/**", "src/db/**", "src/repositories/**"]
+  },
+  "allowed-edges": [
+    ["presentation", "application"],
+    ["application", "domain"],
+    ["application", "persistence"],
+    ["persistence", "domain"]
+  ],
+  "forbidden-imports": [
+    { "id": "no-sql-in-view", "from": "presentation", "pattern": "sql|knex|prisma|sqlx|sequelize", "severity": "error" },
+    { "id": "no-internal-reach", "pattern": "/internal/|/_private/", "severity": "warn" }
+  ],
+  "forbid-cycles": true
+}

@@ -1,0 +1,74 @@
+{
+  "id": "web-aura-starter",
+  "name": "web-aura-starter",
+  "profile": "web",
+  "profiles": [
+    "web",
+    "gui"
+  ],
+  "summary": "Server-rendered web app wired to the Aura design language: base app-shell, pages/ + fragments/ layout, Aura consumed as a vendor.toml dep (synced via sync-deps) at vendor/aura.",
+  "components": [
+    "aura-design-language"
+  ],
+  "requires": [
+    "aura-design-language"
+  ],
+  "config-defaults": {
+    "model-effort-profile": "Medium",
+    "execution-strategy": "Efficient"
+  },
+  "scaffold": [
+    {
+      "from": "files/",
+      "to": "."
+    }
+  ],
+  "aura": {
+    "default-path": "vendor/aura",
+    "mechanism": "vendor-dep",
+    "vendor-toml": {
+      "repo": "rhohn94/design-language",
+      "channel": "stable",
+      "kind": "asset-bundle",
+      "dest": "vendor/aura"
+    },
+    "alternatives": [
+      "git-submodule at vendor/aura",
+      "static/aura + build step"
+    ],
+    "artifacts": [
+      "app-shell.html",
+      "theme-toggle.js",
+      "aura.css",
+      "SRI.txt"
+    ],
+    "note": "Aura ships the framework-neutral artifacts (rhohn94/design-language#26). This template references them at vendor/aura and copies no upstream code. The default consumption mechanism is a vendor.toml dep synced via sync-deps (channel stable, kind asset-bundle, dest vendor/aura); git submodule and static/aura + build step are recorded alternatives. vendor/aura/SRI.txt is an additional browser-SRI asset (per-file subresource-integrity hashes), not the dependency pin. Where an artifact is not yet published, the scaffolded payloads point at its intended path; see docs/web-app-aura-adoption-guide.md."
+  },
+  "post-apply-notes": "Add the [deps.aura] entry to vendor.toml (repo rhohn94/design-language, channel stable, kind asset-bundle, dest vendor/aura) and run `recipe.py sync-deps` to land the bundle at vendor/aura (or use the git-submodule / static/aura build-step alternative). Config defaults (model-effort-profile, execution-strategy) are applied via the model-effort-profile-switch and workflow-variant-switch skills \u2014 not edited inline. Scaffolded templates/ (base.html, pages/index.html, fragments/example.html) are thin Grimoire-owned skeletons that include/reference Aura's artifacts; replace the include mechanism to match your template engine. A `justfile` + `compose.yaml` ship the idempotent, multi-worktree-safe Dockerized-Postgres `db-up` recipe (#81 — reuses a running shared container by exact name via `docker ps` filters, starts a stopped one, only `docker compose up`s when none exists; never Go-template `{{...}}` output which collides with just's `{{ }}`); edit `db_name`/`container_name` and the `run`/`test` bodies, and see the inline multi-worktree shared-container note near the DB recipes. Full guidance: docs/web-app-aura-adoption-guide.md.",
+  "languages": {
+    "python": {
+      "test": "pytest",
+      "build": "python -m build",
+      "lint": "ruff check .",
+      "typecheck": "mypy ."
+    },
+    "typescript": {
+      "test": "npm test",
+      "build": "tsc -p .",
+      "lint": "eslint .",
+      "typecheck": "tsc --noEmit"
+    },
+    "go": {
+      "test": "go test ./...",
+      "build": "go build ./...",
+      "lint": "staticcheck ./...",
+      "typecheck": "go vet ./..."
+    },
+    "rust": {
+      "test": "cargo test",
+      "build": "cargo build --release",
+      "lint": "cargo clippy --",
+      "typecheck": "cargo check"
+    }
+  }
+}

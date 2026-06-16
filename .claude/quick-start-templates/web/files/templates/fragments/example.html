@@ -1,0 +1,12 @@
+{#
+  Example HTMX fragment / partial — thin, Grimoire-owned skeleton.
+
+  Fragments are returned by the server in response to HTMX requests and swapped
+  into a page (see templates/pages/index.html). They are NOT full pages: no
+  <html>/<body>, no base.html extension. Style with Aura's component classes
+  (referenced at vendor/aura), not copied Aura markup.
+#}
+<div class="aura-card">
+  <h2>Example fragment</h2>
+  <p>This partial was loaded via HTMX and swapped into the page.</p>
+</div>

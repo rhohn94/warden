@@ -1,0 +1,24 @@
+{
+  "mcpServers": {
+    "grimoire-issue-tracker": {
+      "command": "python3",
+      "args": [".claude/mcp-servers/issue-tracker/server.py"]
+    },
+    "grimoire-release": {
+      "command": "python3",
+      "args": [".claude/mcp-servers/grimoire-release/server.py"]
+    },
+    "grimoire-status": {
+      "command": "python3",
+      "args": [".claude/mcp-servers/grimoire-status/server.py"]
+    },
+    "grimoire-recipe": {
+      "command": "python3",
+      "args": [".claude/mcp-servers/grimoire-recipe/server.py"]
+    },
+    "grimoire-environment": {
+      "command": "python3",
+      "args": [".claude/mcp-servers/grimoire-environment/server.py"]
+    }
+  }
+}

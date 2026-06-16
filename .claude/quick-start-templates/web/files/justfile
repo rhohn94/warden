@@ -1,0 +1,86 @@
+# Quick-start task runner (just — https://github.com/casey/just).
+#
+# Dev-DB recipes use a Dockerized Postgres shared across git worktrees. See the
+# "Multi-worktree shared-container behaviour" note below the db recipes.
+
+set shell := ["bash", "-uc"]
+
+# ---------------------------------------------------------------------------
+# Dev database (Dockerized Postgres)
+# ---------------------------------------------------------------------------
+
+# The compose service's container_name. Keep this in sync with compose.yaml.
+db_name := "web-db"
+
+# Idempotent, multi-worktree-safe DB bring-up (#81).
+#
+# Grimoire encourages one isolated git worktree per agent/task. Each worktree is
+# its own Docker Compose PROJECT (name derived from its directory), but they all
+# share the same hardcoded container_name. So a plain `docker compose up` from
+# worktree B fails when worktree A's container is already up:
+#
+#   Conflict. The container name "/web-db" is already in use ...
+#
+# That container is already running and healthy on the published host port, which
+# is exactly what every worktree needs (same host DATABASE_URL, localhost:5432).
+# Recreating it under a different compose project would attach a different,
+# project-prefixed EMPTY named volume and silently lose the seeded data.
+#
+# So this recipe is idempotent across worktrees: reuse a running container, start
+# a stopped one, and only `docker compose up` when none exists. It detects the
+# container with `docker ps` FILTERS (-f name=… -f health=healthy) rather than
+# Go-template output (`--format '{{...}}'`) — the `{{ }}` collides with just's
+# own interpolation and breaks the recipe.
+db-up:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    name="{{db_name}}"               # the compose container_name
+    filt="name=^/${name}$"           # exact-name filter (docker stores a leading /)
+
+    wait_healthy() {
+        for _ in $(seq 1 60); do
+            [ -n "$(docker ps -q -f "$filt" -f health=healthy)" ] && return 0
+            sleep 0.5
+        done
+        [ -n "$(docker ps -q -f "$filt")" ] && return 0   # no healthcheck → running is enough
+        echo "db-up: timed out waiting for '$name' to become healthy." >&2
+        return 1
+    }
+
+    if [ -n "$(docker ps -q -f "$filt")" ]; then
+        echo "db-up: '$name' is already running — reusing it."
+        wait_healthy
+    elif [ -n "$(docker ps -aq -f "$filt")" ]; then
+        echo "db-up: starting existing stopped container '$name'."
+        docker start "$name" >/dev/null
+        wait_healthy
+    else
+        docker compose up -d --wait db
+    fi
+
+# Stop the shared dev DB. NOTE: other worktrees may still be using this
+# container — only stop it when no worktree needs it. Data persists in the
+# named volume; this does not delete it.
+db-down:
+    docker compose stop db || true
+
+# ---------------------------------------------------------------------------
+# Multi-worktree shared-container behaviour (#81)
+# ---------------------------------------------------------------------------
+# Every worktree connects to the dev DB via the same host DATABASE_URL
+# (localhost:5432), so they intentionally SHARE one Postgres container keyed by
+# `container_name` ({{db_name}}). The first worktree to run `just db-up` creates
+# it; later worktrees reuse it. The data lives in a project-prefixed named volume
+# (see compose.yaml), so do NOT `docker compose down -v` / recreate the container
+# from another worktree — that attaches a different empty volume and loses seeded
+# data. `just db-down` stops (not removes) the container; the volume survives.
+
+# ---------------------------------------------------------------------------
+# App lifecycle (depend on db-up so the DB is ready first)
+# ---------------------------------------------------------------------------
+
+run: db-up
+    @echo "Replace this with the project's run command (e.g. the web app entrypoint)."
+
+test: db-up
+    @echo "Replace this with the project's test command."
