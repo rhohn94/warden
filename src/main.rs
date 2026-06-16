@@ -52,10 +52,10 @@ fn main() {
     // Enter the runtime so tokio::spawn in scanner::start works from the main thread.
     let _runtime_guard = runtime.enter();
     info!("warden v{} starting — watching {}", env!("CARGO_PKG_VERSION"), apps_dir.display());
-    let scanner_rx = scanner::start(apps_dir, Duration::from_secs(refresh_secs));
+    let (scanner_rx, force_scan_tx) = scanner::start(apps_dir, Duration::from_secs(refresh_secs));
     let launcher = Arc::new(TokioMutex::new(Launcher::new()));
     let runtime_handle = runtime.handle().clone();
-    let mut app = App::new(state, scanner_rx, launcher, runtime_handle);
+    let mut app = App::new(state, scanner_rx, force_scan_tx, launcher, runtime_handle);
 
     // AppRunner::run blocks until the window is closed.
     if let Err(e) = AppRunner::run(&mut app) {
