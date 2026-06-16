@@ -205,8 +205,8 @@ Phase 1 merges first (unblocks all Rust compilation); Phase 2 merges after Phase
 
 | Branch | Design doc | Implemented | Reviewed | Merged into version/0.1 |
 |---|---|---|---|---|
-| `warden/v0.1-scanner` (§2.3) | ☐ | ☐ | ☐ | ☐ |
-| `warden/v0.1-detector` (§2.4) | ☐ | ☐ | ☐ | ☐ |
+| `warden/v0.1-scanner` (§2.3) | ☑ | ☑ | ☑ | ☑ |
+| `warden/v0.1-detector` (§2.4) | ☑ | ☑ | ☑ | ☑ |
 
 ### Phase 3
 
