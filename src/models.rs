@@ -14,7 +14,8 @@ pub struct AppEntry {
 }
 
 /// Running state of a discovered app.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(tag = "state")]
 pub enum AppStatus {
     Running { pid: u32 },
     Stopped,
@@ -22,7 +23,7 @@ pub enum AppStatus {
 }
 
 /// Port information resolved for an app.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize)]
 pub struct PortInfo {
     pub port: Option<u16>,
 }
