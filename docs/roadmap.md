@@ -32,11 +32,20 @@ Scan now trigger, stale entry removal, and open-in-browser for web apps.
 - (Pre-committed) Scanner: grimoire-build-info.json detection + tracing
 - (Pre-committed) Justfile run/deploy recipes
 
+## v0.3 — Aura polish + headless inspection
+
+Plan: [`release-planning-v0.3.md`](release-planning-v0.3.md).
+
+Completes the Aura design foundation and ships the Grimoire-baseline headless
+verification surface.
+
+**Scope:**
+- Visual-inspection CLI (`--dump-ui` flag emits AppState JSON to stdout)
+- Apply Aura spacing and radius tokens throughout `src/app.rs`
+- App details pane (`SidePanel::right`, click-to-select row, metadata display)
+
 ## Backlog
 
-- App details pane (tech stack, Grimoire version, Aura version) (#16)
-- Apply Aura spacing and radius tokens throughout UI (#12)
-- Visual-inspection CLI for headless agent verification (#9, Grimoire-Requirement, v0.3)
 - Multi-directory watching
 - Log streaming / tail window
 - macOS NSUserNotification support
