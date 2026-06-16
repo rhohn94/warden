@@ -2,6 +2,8 @@
 
 ## v0.1 — Local fleet deployment manager
 
+Plan: [`release-planning-v0.1.md`](release-planning-v0.1.md).
+
 First release. Warden watches a directory of Grimoire-ecosystem apps, shows
 their running status and port, and provides Start / Stop controls via a native
 egui desktop window.
