@@ -1,5 +1,11 @@
 # Version history
 
+## v0.3.0 (2026-06-16)
+
+- Visual-inspection CLI (`--dump-ui`): prints a stable JSON snapshot of `AppState` (entries, statuses, ports) to stdout and exits — no window or GPU required; suitable for scripting and regression checks
+- Aura spacing and radius tokens: replaced all bare `f32` spacing/radius literals in `src/app.rs` with `obsidian::aura::golden` constants (`SPACE[N]`, `CONTROL_HEIGHT_SM`, `RADIUS_SM`); Start/Stop/Open/Scan buttons sized to 32 pt height with 8 pt corner radius
+- App details pane: clicking any app row opens a `SidePanel::right` (280 pt) showing name, status badge, PID, directory, Grimoire version, tech stack, known/detected ports, server command, and Start/Stop/Open actions; re-clicking deselects; default window widened to 920×540 pt
+
 ## v0.2.0 (2026-06-16)
 
 - Stale entry removal: apps that disappear from the scanned directory are removed from the display on the next scan cycle
