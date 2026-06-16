@@ -1,3 +1,4 @@
+mod app;
 mod detector;
 mod launcher;
 mod models;
