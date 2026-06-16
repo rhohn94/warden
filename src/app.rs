@@ -4,10 +4,10 @@ use crate::{
     models::{AppEntry, AppStatus, PortInfo},
 };
 use tracing::{debug, info};
-use egui::Color32;
 use obsidian::{
-    aura::golden,
     app::window_attributes,
+    theme::{self, Theme},
+    widgets::{Badge, BadgeStatus},
     AppDelegate, EguiOnlyRenderer, EguiWindow,
 };
 use std::{
@@ -129,13 +129,6 @@ impl App {
     }
 
     fn draw_ui(&mut self, ctx: &egui::Context) {
-        // Apply dark Aura theme colours.
-        let mut visuals = egui::Visuals::dark();
-        visuals.window_fill = golden::BG;
-        visuals.panel_fill = golden::BG;
-        visuals.override_text_color = Some(golden::TEXT);
-        ctx.set_visuals(visuals);
-
         let state = self.state.lock().unwrap();
 
         egui::CentralPanel::default().show(ctx, |ui| {
@@ -165,15 +158,10 @@ impl App {
                     .cloned()
                     .unwrap_or((AppStatus::Unknown, PortInfo::default()));
 
-                let badge_color: Color32 = match status {
-                    AppStatus::Running { .. } => golden::SUCCESS,
-                    AppStatus::Stopped => golden::TEXT_MUTED,
-                    AppStatus::Unknown => golden::WARNING,
-                };
-                let badge = match status {
-                    AppStatus::Running { .. } => "●",
-                    AppStatus::Stopped => "○",
-                    AppStatus::Unknown => "?",
+                let (badge_label, badge_status) = match status {
+                    AppStatus::Running { .. } => ("Running", BadgeStatus::Success),
+                    AppStatus::Stopped => ("Stopped", BadgeStatus::Neutral),
+                    AppStatus::Unknown => ("Unknown", BadgeStatus::Warning),
                 };
                 let port_str = port_info
                     .port
@@ -183,7 +171,7 @@ impl App {
                 let is_in_flight = in_flight.contains(&entry.dir);
 
                 ui.horizontal(|ui| {
-                    ui.colored_label(badge_color, badge);
+                    Badge::new(badge_label, badge_status).ui(ui);
                     ui.label(&entry.name);
                     if let Some(v) = &entry.framework_version {
                         ui.label(v);
@@ -334,6 +322,8 @@ impl AppDelegate for App {
         );
 
         let egui_ctx = egui::Context::default();
+        theme::install_bundled_fonts(&egui_ctx);
+        theme::set_active(Theme::aura_default(), &egui_ctx);
         let egui_window = EguiWindow::new(window.clone(), egui_ctx);
 
         self.window = Some(window);

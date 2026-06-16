@@ -9,7 +9,6 @@ path = "src/main.rs"
 
 [dependencies]
 obsidian = { git = "https://github.com/rhohn94/obsidian.git", tag = "v0.44.0" }
-eframe = "0.31"
 egui = "0.31"
 wgpu = "24"
 winit = "0.30"
