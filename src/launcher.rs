@@ -4,6 +4,7 @@ use crate::{
 };
 use std::{collections::HashMap, path::PathBuf, time::Duration};
 use tokio::process::Child;
+use tracing::{info, warn};
 
 /// Starts and stops apps, tracking spawned children for graceful cleanup.
 pub struct Launcher {
@@ -19,6 +20,7 @@ impl Launcher {
 
     /// Start an app. Returns updated (AppStatus, PortInfo) after the 1s settle wait.
     pub async fn start(&mut self, entry: &AppEntry) -> (AppStatus, PortInfo) {
+        info!("starting {}", entry.name);
         let child = if let Some(cmd) = &entry.server_command {
             tokio::process::Command::new("sh")
                 .args(["-c", cmd.as_str()])
@@ -31,6 +33,8 @@ impl Launcher {
 
         if let Some(child) = child {
             self.children.insert(entry.dir.clone(), child);
+        } else {
+            warn!("no launch method found for {}", entry.name);
         }
 
         tokio::time::sleep(Duration::from_secs(1)).await;
@@ -39,6 +43,7 @@ impl Launcher {
 
     /// Stop an app. Returns updated (AppStatus, PortInfo) after the 500 ms settle wait.
     pub async fn stop(&mut self, entry: &AppEntry, last_known_pid: Option<u32>) -> (AppStatus, PortInfo) {
+        info!("stopping {}", entry.name);
         if let Some(mut child) = self.children.remove(&entry.dir) {
             let _ = child.kill().await;
             let _ = child.wait().await;
@@ -107,6 +112,7 @@ mod tests {
             dir,
             framework_version: None,
             server_command: Some(cmd.to_string()),
+            known_port: None,
         }
     }
 

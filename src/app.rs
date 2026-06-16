@@ -1,11 +1,13 @@
 use crate::{
+    detector,
     launcher::Launcher,
     models::{AppEntry, AppStatus, PortInfo},
 };
-use egui::Color32;
+use tracing::{debug, error, info};
 use obsidian::{
-    aura::golden,
     app::window_attributes,
+    theme::{self, Theme},
+    widgets::{Badge, BadgeStatus},
     AppDelegate, EguiOnlyRenderer, EguiWindow,
 };
 use std::{
@@ -58,6 +60,7 @@ pub struct App {
     // shared app state
     state: Arc<Mutex<AppState>>,
     scanner_rx: watch::Receiver<Vec<AppEntry>>,
+    force_scan_tx: watch::Sender<()>,
     launcher: Arc<tokio::sync::Mutex<Launcher>>,
     runtime_handle: tokio::runtime::Handle,
 }
@@ -66,6 +69,7 @@ impl App {
     pub fn new(
         state: Arc<Mutex<AppState>>,
         scanner_rx: watch::Receiver<Vec<AppEntry>>,
+        force_scan_tx: watch::Sender<()>,
         launcher: Arc<tokio::sync::Mutex<Launcher>>,
         runtime_handle: tokio::runtime::Handle,
     ) -> Self {
@@ -79,6 +83,7 @@ impl App {
             renderer: None,
             state,
             scanner_rx,
+            force_scan_tx,
             launcher,
             runtime_handle,
         }
@@ -92,9 +97,30 @@ impl App {
         // Poll scanner for new app entries.
         if self.scanner_rx.has_changed().unwrap_or(false) {
             let entries = self.scanner_rx.borrow_and_update().clone();
+            debug!("scanner update: {} entries", entries.len());
+            let new_paths: HashSet<PathBuf> = entries.iter().map(|e| e.dir.clone()).collect();
             let mut state = self.state.lock().unwrap();
-            state.entries = entries;
+            let removed_paths: Vec<PathBuf> = state
+                .statuses
+                .keys()
+                .filter(|p| !new_paths.contains(*p))
+                .cloned()
+                .collect();
+            for path in removed_paths {
+                state.statuses.remove(&path);
+                state.in_flight.remove(&path);
+                state.entries.retain(|e| e.dir != path);
+            }
+            state.entries = entries.clone();
             state.last_scan = Instant::now();
+            drop(state);
+            // Background-detect status for every entry; skip any with an in-flight op.
+            for entry in entries {
+                let in_flight = self.state.lock().unwrap().in_flight.contains(&entry.dir);
+                if !in_flight {
+                    self.dispatch_detect(entry);
+                }
+            }
         }
 
         // Extract owned values so the borrow of self.egui_window ends before the closure.
@@ -118,13 +144,6 @@ impl App {
     }
 
     fn draw_ui(&mut self, ctx: &egui::Context) {
-        // Apply dark Aura theme colours.
-        let mut visuals = egui::Visuals::dark();
-        visuals.window_fill = golden::BG;
-        visuals.panel_fill = golden::BG;
-        visuals.override_text_color = Some(golden::TEXT);
-        ctx.set_visuals(visuals);
-
         let state = self.state.lock().unwrap();
 
         egui::CentralPanel::default().show(ctx, |ui| {
@@ -135,7 +154,7 @@ impl App {
                 ui.label(state.apps_dir.to_string_lossy().as_ref());
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui.button("Scan now").clicked() {
-                        // scanner auto-refreshes; a manual trigger can be added in v0.2
+                        let _ = self.force_scan_tx.send(());
                     }
                 });
             });
@@ -154,15 +173,10 @@ impl App {
                     .cloned()
                     .unwrap_or((AppStatus::Unknown, PortInfo::default()));
 
-                let badge_color: Color32 = match status {
-                    AppStatus::Running { .. } => golden::SUCCESS,
-                    AppStatus::Stopped => golden::TEXT_MUTED,
-                    AppStatus::Unknown => golden::WARNING,
-                };
-                let badge = match status {
-                    AppStatus::Running { .. } => "●",
-                    AppStatus::Stopped => "○",
-                    AppStatus::Unknown => "?",
+                let (badge_label, badge_status) = match status {
+                    AppStatus::Running { .. } => ("Running", BadgeStatus::Success),
+                    AppStatus::Stopped => ("Stopped", BadgeStatus::Neutral),
+                    AppStatus::Unknown => ("Unknown", BadgeStatus::Warning),
                 };
                 let port_str = port_info
                     .port
@@ -172,7 +186,7 @@ impl App {
                 let is_in_flight = in_flight.contains(&entry.dir);
 
                 ui.horizontal(|ui| {
-                    ui.colored_label(badge_color, badge);
+                    Badge::new(badge_label, badge_status).ui(ui);
                     ui.label(&entry.name);
                     if let Some(v) = &entry.framework_version {
                         ui.label(v);
@@ -192,6 +206,13 @@ impl App {
                         };
                         if ui.button("Stop").clicked() {
                             self.dispatch_stop(entry.clone(), pid);
+                        }
+                        if let Some(port) = port_info.port {
+                            if ui.button("Open").clicked() {
+                                if let Err(e) = open::that(format!("http://localhost:{}", port)) {
+                                    error!("open browser failed: {}", e);
+                                }
+                            }
                         }
                     } else if ui.button("Start").clicked() {
                         self.dispatch_start(entry.clone());
@@ -246,6 +267,23 @@ impl App {
             let mut s = state.lock().unwrap();
             s.in_flight.remove(&entry.dir);
             s.statuses.insert(entry.dir.clone(), (status, port_info));
+        });
+    }
+
+    /// Run detection for `entry` in a blocking thread; update statuses unless in-flight.
+    fn dispatch_detect(&self, entry: AppEntry) {
+        let state = Arc::clone(&self.state);
+        let dir = entry.dir.clone();
+        self.runtime_handle.spawn(async move {
+            let (status, port_info) =
+                tokio::task::spawn_blocking(move || detector::detect(&entry))
+                    .await
+                    .unwrap_or((AppStatus::Unknown, PortInfo::default()));
+            info!("detected {}: {:?}", dir.display(), status);
+            let mut s = state.lock().unwrap();
+            if !s.in_flight.contains(&dir) {
+                s.statuses.insert(dir, (status, port_info));
+            }
         });
     }
 }
@@ -306,6 +344,8 @@ impl AppDelegate for App {
         );
 
         let egui_ctx = egui::Context::default();
+        theme::install_bundled_fonts(&egui_ctx);
+        theme::set_active(Theme::aura_default(), &egui_ctx);
         let egui_window = EguiWindow::new(window.clone(), egui_ctx);
 
         self.window = Some(window);

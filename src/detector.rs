@@ -1,19 +1,24 @@
 use crate::models::{AppEntry, AppStatus, PortInfo};
 use std::process::Command;
+use tracing::debug;
 
 /// Detects the port and running status of a discovered app.
 pub fn detect(entry: &AppEntry) -> (AppStatus, PortInfo) {
     let port_info = detect_port(entry);
     let status = detect_status(entry, port_info.port);
+    debug!("{}: {:?} port={:?}", entry.name, status, port_info.port);
     (status, port_info)
 }
 
-/// Port detection chain: .port file → PORT file → parse server command → None.
+/// Port detection chain: .port file → PORT file → known_port → parse server command → None.
 pub fn detect_port(entry: &AppEntry) -> PortInfo {
     if let Some(port) = read_port_file(entry, ".port") {
         return PortInfo { port: Some(port) };
     }
     if let Some(port) = read_port_file(entry, "PORT") {
+        return PortInfo { port: Some(port) };
+    }
+    if let Some(port) = entry.known_port {
         return PortInfo { port: Some(port) };
     }
     if let Some(cmd) = &entry.server_command {
@@ -135,6 +140,7 @@ mod tests {
             dir,
             framework_version: None,
             server_command: None,
+            known_port: None,
         }
     }
 
@@ -154,6 +160,7 @@ mod tests {
             dir: app_dir,
             framework_version: None,
             server_command: None,
+            known_port: None,
         };
         let (status, port_info) = detect(&entry);
         assert_eq!(port_info.port, Some(port));
@@ -209,6 +216,7 @@ mod tests {
             dir: app_dir,
             framework_version: None,
             server_command: Some("node server.js --port 4321".to_string()),
+            known_port: None,
         };
         let port_info = detect_port(&entry);
         assert_eq!(port_info.port, Some(4321));
@@ -225,6 +233,7 @@ mod tests {
             dir: app_dir,
             framework_version: None,
             server_command: Some("PORT=8080 node server.js".to_string()),
+            known_port: None,
         };
         let port_info = detect_port(&entry);
         assert_eq!(port_info.port, Some(8080));
