@@ -33,6 +33,8 @@ pub struct AppState {
     pub apps_dir: PathBuf,
     pub refresh_secs: u64,
     pub last_scan: Instant,
+    /// The currently selected app directory; `None` means no selection.
+    pub selected_app: Option<PathBuf>,
 }
 
 impl AppState {
@@ -44,6 +46,7 @@ impl AppState {
             apps_dir,
             refresh_secs,
             last_scan: Instant::now(),
+            selected_app: None,
         }
     }
 }
@@ -145,14 +148,52 @@ impl App {
     }
 
     fn draw_ui(&mut self, ctx: &egui::Context) {
-        let state = self.state.lock().unwrap();
+        // Snapshot all shared state before rendering so we can drop the lock.
+        let (entries, statuses, in_flight, apps_dir, refresh_secs, last_scan, current_selected) = {
+            let state = self.state.lock().unwrap();
+            (
+                state.entries.clone(),
+                state.statuses.clone(),
+                state.in_flight.clone(),
+                state.apps_dir.clone(),
+                state.refresh_secs,
+                state.last_scan,
+                state.selected_app.clone(),
+            )
+        };
 
+        // Pending selection change — collected during row rendering, applied after.
+        let mut pending_select: Option<Option<PathBuf>> = None;
+        // Pending action from the details pane — applied after the panel closes.
+        let mut pending_start: Option<AppEntry> = None;
+        let mut pending_stop: Option<(AppEntry, Option<u32>)> = None;
+        let mut pending_open: Option<u16> = None;
+
+        // ── Details side panel (right) — shown when an app is selected ──────
+        if current_selected.is_some() {
+            egui::SidePanel::right("details")
+                .exact_width(280.0)
+                .show(ctx, |ui| {
+                    self.draw_details(
+                        ui,
+                        &current_selected,
+                        &entries,
+                        &statuses,
+                        &in_flight,
+                        &mut pending_start,
+                        &mut pending_stop,
+                        &mut pending_open,
+                    );
+                });
+        }
+
+        // ── Central panel — app list ─────────────────────────────────────────
         egui::CentralPanel::default().show(ctx, |ui| {
             // ── Header ──────────────────────────────────────────────────
             ui.horizontal(|ui| {
                 ui.heading("Warden");
                 ui.add_space(golden::SPACE[2]); // SPACE_2 = 8px
-                ui.label(state.apps_dir.to_string_lossy().as_ref());
+                ui.label(apps_dir.to_string_lossy().as_ref());
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui
                         .add(
@@ -170,11 +211,6 @@ impl App {
             ui.separator();
 
             // ── App rows ─────────────────────────────────────────────────
-            let entries: Vec<AppEntry> = state.entries.clone();
-            let statuses = state.statuses.clone();
-            let in_flight = state.in_flight.clone();
-            drop(state); // release lock before UI interactions call back into state
-
             for entry in &entries {
                 let (ref status, ref port_info) = statuses
                     .get(&entry.dir)
@@ -192,10 +228,11 @@ impl App {
                     .unwrap_or_else(|| "—".to_string());
                 let is_running = matches!(status, AppStatus::Running { .. });
                 let is_in_flight = in_flight.contains(&entry.dir);
+                let is_selected = current_selected.as_ref() == Some(&entry.dir);
 
                 // SPACE_3 (12px) vertical padding above each app row.
                 ui.add_space(golden::SPACE[3]);
-                ui.horizontal(|ui| {
+                let row_resp = ui.horizontal(|ui| {
                     Badge::new(badge_label, badge_status).ui(ui);
                     ui.label(&entry.name);
                     if let Some(v) = &entry.framework_version {
@@ -255,7 +292,24 @@ impl App {
                     {
                         self.dispatch_start(entry.clone());
                     }
+
+                    // Selection indicator — small visual cue when row is active.
+                    if is_selected {
+                        ui.label("◀");
+                    }
                 });
+
+                // Clicking the row background toggles selection (row_resp covers the
+                // horizontal strip; button clicks are consumed first so they don't also
+                // toggle the selection).
+                if row_resp.response.clicked() {
+                    pending_select = Some(if is_selected {
+                        None
+                    } else {
+                        Some(entry.dir.clone())
+                    });
+                }
+
                 // SPACE_3 (12px) vertical padding below each app row.
                 ui.add_space(golden::SPACE[3]);
             }
@@ -265,13 +319,189 @@ impl App {
             // ── Status bar ────────────────────────────────────────────────
             let state = self.state.lock().unwrap();
             ui.horizontal(|ui| {
-                ui.label(format!("Auto-refresh: {}s", state.refresh_secs));
+                ui.label(format!("Auto-refresh: {}s", refresh_secs));
                 ui.label(format!(
                     "Last scan: {}s ago",
-                    state.last_scan.elapsed().as_secs()
+                    last_scan.elapsed().as_secs()
                 ));
+                drop(state);
             });
         });
+
+        // Apply pending selection change.
+        if let Some(sel) = pending_select {
+            self.state.lock().unwrap().selected_app = sel;
+        }
+
+        // Apply pending actions from the details panel.
+        if let Some(entry) = pending_start {
+            self.dispatch_start(entry);
+        }
+        if let Some((entry, pid)) = pending_stop {
+            self.dispatch_stop(entry, pid);
+        }
+        if let Some(port) = pending_open {
+            if let Err(e) = open::that(format!("http://localhost:{}", port)) {
+                error!("open browser failed: {}", e);
+            }
+        }
+    }
+
+    /// Render the details side panel for the selected app.
+    ///
+    /// Actions (start/stop/open) are communicated back via the `pending_*` out-params
+    /// so that dispatch calls happen after the panel borrow is released.
+    #[allow(clippy::too_many_arguments)]
+    fn draw_details(
+        &self,
+        ui: &mut egui::Ui,
+        selected: &Option<PathBuf>,
+        entries: &[AppEntry],
+        statuses: &HashMap<PathBuf, (AppStatus, PortInfo)>,
+        in_flight: &HashSet<PathBuf>,
+        pending_start: &mut Option<AppEntry>,
+        pending_stop: &mut Option<(AppEntry, Option<u32>)>,
+        pending_open: &mut Option<u16>,
+    ) {
+        let Some(ref dir) = selected else { return };
+        let Some(entry) = entries.iter().find(|e| &e.dir == dir) else { return };
+        let (status, port_info) = statuses
+            .get(dir)
+            .cloned()
+            .unwrap_or((AppStatus::Unknown, PortInfo::default()));
+
+        // ── Header ───────────────────────────────────────────────────────
+        ui.add_space(golden::SPACE[2]);
+        ui.heading(&entry.name);
+
+        let (badge_label, badge_status) = match &status {
+            AppStatus::Running { .. } => ("Running", BadgeStatus::Success),
+            AppStatus::Stopped => ("Stopped", BadgeStatus::Neutral),
+            AppStatus::Unknown => ("Unknown", BadgeStatus::Warning),
+        };
+        ui.horizontal(|ui| {
+            Badge::new(badge_label, badge_status).ui(ui);
+            if let AppStatus::Running { pid } = &status {
+                ui.label(format!("PID {}", pid));
+            }
+        });
+        ui.separator();
+
+        // ── Metadata table ───────────────────────────────────────────────
+        egui::Grid::new("details_meta")
+            .num_columns(2)
+            .spacing([golden::SPACE[3], golden::SPACE[2]])
+            .show(ui, |ui| {
+                ui.label("Directory");
+                ui.label(dir.to_string_lossy().as_ref());
+                ui.end_row();
+
+                ui.label("Grimoire version");
+                ui.label(entry.framework_version.as_deref().unwrap_or("—"));
+                ui.end_row();
+
+                ui.label("Tech stack");
+                ui.label(infer_tech_stack(entry.server_command.as_deref()));
+                ui.end_row();
+            });
+        ui.separator();
+
+        // ── Port section ─────────────────────────────────────────────────
+        egui::Grid::new("details_ports")
+            .num_columns(2)
+            .spacing([golden::SPACE[3], golden::SPACE[2]])
+            .show(ui, |ui| {
+                ui.label("Known port");
+                ui.label(
+                    entry
+                        .known_port
+                        .map(|p| p.to_string())
+                        .unwrap_or_else(|| "—".to_string()),
+                );
+                ui.end_row();
+
+                ui.label("Detected port");
+                ui.label(
+                    port_info
+                        .port
+                        .map(|p| p.to_string())
+                        .unwrap_or_else(|| "—".to_string()),
+                );
+                ui.end_row();
+            });
+        if let (Some(k), Some(d)) = (entry.known_port, port_info.port) {
+            if k != d {
+                ui.label("⚠ ports differ");
+            }
+        }
+        ui.separator();
+
+        // ── Command ──────────────────────────────────────────────────────
+        ui.label("Command");
+        ui.add(
+            egui::Label::new(
+                egui::RichText::new(entry.server_command.as_deref().unwrap_or("—")).monospace(),
+            )
+            .wrap(),
+        );
+        ui.separator();
+
+        // ── Actions ──────────────────────────────────────────────────────
+        let is_running = matches!(status, AppStatus::Running { .. });
+        let is_in_flight = in_flight.contains(dir);
+
+        ui.add_space(golden::SPACE[2]);
+        let btn_size = egui::vec2(0.0, golden::CONTROL_HEIGHT_SM);
+        let radius = egui::CornerRadius::same(golden::RADIUS_SM);
+
+        if is_in_flight {
+            let lbl = if is_running { "Stopping…" } else { "Starting…" };
+            ui.add_enabled(
+                false,
+                egui::Button::new(lbl)
+                    .min_size(btn_size)
+                    .corner_radius(radius),
+            );
+        } else if is_running {
+            let pid = if let AppStatus::Running { pid } = &status {
+                Some(*pid)
+            } else {
+                None
+            };
+            ui.horizontal(|ui| {
+                if ui
+                    .add(
+                        egui::Button::new("Stop")
+                            .min_size(btn_size)
+                            .corner_radius(radius),
+                    )
+                    .clicked()
+                {
+                    *pending_stop = Some((entry.clone(), pid));
+                }
+                if let Some(port) = port_info.port {
+                    if ui
+                        .add(
+                            egui::Button::new("Open")
+                                .min_size(btn_size)
+                                .corner_radius(radius),
+                        )
+                        .clicked()
+                    {
+                        *pending_open = Some(port);
+                    }
+                }
+            });
+        } else if ui
+            .add(
+                egui::Button::new("Start")
+                    .min_size(btn_size)
+                    .corner_radius(radius),
+            )
+            .clicked()
+        {
+            *pending_start = Some(entry.clone());
+        }
     }
 
     fn dispatch_start(&self, entry: AppEntry) {
@@ -328,6 +558,19 @@ impl App {
     }
 }
 
+// ── Tech stack heuristic ────────────────────────────────────────────────────
+
+/// Infer the tech stack from the server command string.
+/// Returns a static label suitable for display in the details panel.
+fn infer_tech_stack(cmd: Option<&str>) -> &'static str {
+    match cmd {
+        Some(c) if c.contains("node") => "Node.js",
+        Some(c) if c.contains("python") || c.contains("uvicorn") => "Python",
+        Some(c) if c.contains("ruby") => "Ruby",
+        _ => "Unknown",
+    }
+}
+
 // ── AppDelegate ──────────────────────────────────────────────────────────────
 
 impl AppDelegate for App {
@@ -336,7 +579,7 @@ impl AppDelegate for App {
             return; // Guard against multiple `resumed` calls (macOS behaviour).
         }
 
-        let attrs = window_attributes("Warden", 640, 480);
+        let attrs = window_attributes("Warden", 920, 540);
         let window = Arc::new(event_loop.create_window(attrs).expect("window creation failed"));
 
         // Initialize wgpu synchronously via pollster.
@@ -427,5 +670,72 @@ impl AppDelegate for App {
         if let Some(w) = self.window.as_ref() {
             w.request_redraw();
         }
+    }
+}
+
+// ── Tests ────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_infer_tech_stack_node() {
+        assert_eq!(infer_tech_stack(Some("node server.js")), "Node.js");
+    }
+
+    #[test]
+    fn test_infer_tech_stack_node_npx() {
+        assert_eq!(infer_tech_stack(Some("npx node index.js")), "Node.js");
+    }
+
+    #[test]
+    fn test_infer_tech_stack_python() {
+        assert_eq!(infer_tech_stack(Some("python main.py")), "Python");
+    }
+
+    #[test]
+    fn test_infer_tech_stack_uvicorn() {
+        assert_eq!(infer_tech_stack(Some("uvicorn app:main --reload")), "Python");
+    }
+
+    #[test]
+    fn test_infer_tech_stack_ruby() {
+        assert_eq!(infer_tech_stack(Some("ruby app.rb")), "Ruby");
+    }
+
+    #[test]
+    fn test_infer_tech_stack_unknown_binary() {
+        assert_eq!(infer_tech_stack(Some("./current/bin/myapp")), "Unknown");
+    }
+
+    #[test]
+    fn test_infer_tech_stack_none() {
+        assert_eq!(infer_tech_stack(None), "Unknown");
+    }
+
+    #[test]
+    fn test_app_state_selected_app_defaults_none() {
+        use std::path::PathBuf;
+        let state = AppState::new(PathBuf::from("/tmp/apps"), 30);
+        assert!(state.selected_app.is_none());
+    }
+
+    #[test]
+    fn test_app_state_selected_app_can_be_set() {
+        use std::path::PathBuf;
+        let mut state = AppState::new(PathBuf::from("/tmp/apps"), 30);
+        let path = PathBuf::from("/tmp/apps/myapp");
+        state.selected_app = Some(path.clone());
+        assert_eq!(state.selected_app, Some(path));
+    }
+
+    #[test]
+    fn test_app_state_selected_app_can_be_cleared() {
+        use std::path::PathBuf;
+        let mut state = AppState::new(PathBuf::from("/tmp/apps"), 30);
+        state.selected_app = Some(PathBuf::from("/tmp/apps/myapp"));
+        state.selected_app = None;
+        assert!(state.selected_app.is_none());
     }
 }
