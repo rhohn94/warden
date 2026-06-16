@@ -2599,6 +2599,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "pollster"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "22686f4785f02a4fcc856d3b3bb19bf6c8160d103f7a99cc258bddd0251dc7f2"
+
+[[package]]
 name = "potential_utf"
 version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3603,11 +3609,15 @@ version = "0.1.0"
 dependencies = [
  "dirs",
  "eframe",
+ "egui",
  "obsidian",
+ "pollster",
  "serde",
  "serde_json",
  "tempfile",
  "tokio",
+ "wgpu",
+ "winit",
 ]
 
 [[package]]
