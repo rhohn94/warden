@@ -143,8 +143,11 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let app_dir = tmp.path().join("myapp");
         std::fs::create_dir_all(&app_dir).unwrap();
-        // Write a .port file with a port very unlikely to be in use
-        std::fs::write(app_dir.join(".port"), "59997").unwrap();
+        // Ask the OS for a free port, then release it before calling detect.
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        drop(listener);
+        std::fs::write(app_dir.join(".port"), port.to_string()).unwrap();
 
         let entry = AppEntry {
             name: "myapp".to_string(),
@@ -153,8 +156,7 @@ mod tests {
             server_command: None,
         };
         let (status, port_info) = detect(&entry);
-        assert_eq!(port_info.port, Some(59997));
-        // Nothing is listening on 59997 in CI, so expect Stopped
+        assert_eq!(port_info.port, Some(port));
         assert!(
             matches!(status, AppStatus::Stopped),
             "Expected Stopped, got {status:?}"

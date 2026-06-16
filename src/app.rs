@@ -1,7 +1,6 @@
 use crate::{
     launcher::Launcher,
     models::{AppEntry, AppStatus, PortInfo},
-    scanner,
 };
 use egui::Color32;
 use obsidian::{
@@ -13,7 +12,7 @@ use std::{
     collections::{HashMap, HashSet},
     path::PathBuf,
     sync::{Arc, Mutex},
-    time::{Duration, Instant},
+    time::Instant,
 };
 use tokio::sync::watch;
 use winit::{
