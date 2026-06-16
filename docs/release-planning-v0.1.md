@@ -212,8 +212,8 @@ Phase 1 merges first (unblocks all Rust compilation); Phase 2 merges after Phase
 
 | Branch | Design doc | Implemented | Reviewed | Merged into version/0.1 |
 |---|---|---|---|---|
-| `warden/v0.1-launcher` (§2.5) | ☐ | ☐ | ☐ | ☐ |
-| `warden/v0.1-arch-doc` (§2.8) | ☐ | ☐ | ☐ | ☐ |
+| `warden/v0.1-launcher` (§2.5) | ☑ | ☑ | ☑ | ☑ |
+| `warden/v0.1-arch-doc` (§2.8) | ☑ | ☑ | ☑ | ☑ |
 
 ### Phase 4
 
