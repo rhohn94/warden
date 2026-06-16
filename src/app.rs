@@ -60,6 +60,7 @@ pub struct App {
     // shared app state
     state: Arc<Mutex<AppState>>,
     scanner_rx: watch::Receiver<Vec<AppEntry>>,
+    force_scan_tx: watch::Sender<()>,
     launcher: Arc<tokio::sync::Mutex<Launcher>>,
     runtime_handle: tokio::runtime::Handle,
 }
@@ -68,6 +69,7 @@ impl App {
     pub fn new(
         state: Arc<Mutex<AppState>>,
         scanner_rx: watch::Receiver<Vec<AppEntry>>,
+        force_scan_tx: watch::Sender<()>,
         launcher: Arc<tokio::sync::Mutex<Launcher>>,
         runtime_handle: tokio::runtime::Handle,
     ) -> Self {
@@ -81,6 +83,7 @@ impl App {
             renderer: None,
             state,
             scanner_rx,
+            force_scan_tx,
             launcher,
             runtime_handle,
         }
@@ -151,7 +154,7 @@ impl App {
                 ui.label(state.apps_dir.to_string_lossy().as_ref());
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui.button("Scan now").clicked() {
-                        // scanner auto-refreshes; a manual trigger can be added in v0.2
+                        let _ = self.force_scan_tx.send(());
                     }
                 });
             });
