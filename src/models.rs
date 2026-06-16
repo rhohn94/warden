@@ -8,6 +8,9 @@ pub struct AppEntry {
     pub dir: PathBuf,
     pub framework_version: Option<String>,
     pub server_command: Option<String>,
+    /// Port declared in grimoire-build-info.json environments.local.service_address.
+    #[serde(default)]
+    pub known_port: Option<u16>,
 }
 
 /// Running state of a discovered app.

@@ -1,16 +1,18 @@
 use crate::models::AppEntry;
 use serde_json::Value;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 use tokio::sync::watch;
+use tracing::{debug, info, warn};
 
-/// Starts a background tokio task that scans `root` every `interval` seconds
-/// and sends the discovered apps through the returned `watch::Receiver`.
+/// Starts a background tokio task that scans `root` every `interval` and
+/// sends discovered apps through the returned `watch::Receiver`.
 pub fn start(root: PathBuf, interval: Duration) -> watch::Receiver<Vec<AppEntry>> {
     let (tx, rx) = watch::channel(Vec::new());
     tokio::spawn(async move {
         loop {
             let apps = scan_once(&root);
+            info!("scan complete: {} app(s) in {}", apps.len(), root.display());
             let _ = tx.send(apps);
             tokio::time::sleep(interval).await;
         }
@@ -22,7 +24,10 @@ pub fn start(root: PathBuf, interval: Duration) -> watch::Receiver<Vec<AppEntry>
 pub fn scan_once(root: &PathBuf) -> Vec<AppEntry> {
     let read = match std::fs::read_dir(root) {
         Ok(r) => r,
-        Err(_) => return Vec::new(),
+        Err(e) => {
+            warn!("cannot read apps dir {}: {}", root.display(), e);
+            return Vec::new();
+        }
     };
 
     let mut apps = Vec::new();
@@ -31,49 +36,84 @@ pub fn scan_once(root: &PathBuf) -> Vec<AppEntry> {
         if !dir.is_dir() {
             continue;
         }
-        let config_path = dir.join("grimoire-config.json");
-        if !config_path.exists() {
-            continue;
+        if is_app_dir(&dir) {
+            let app = parse_app_dir(&dir);
+            debug!("discovered app: {} at {}", app.name, dir.display());
+            apps.push(app);
         }
-        let app = parse_app_dir(&dir);
-        apps.push(app);
     }
     apps
 }
 
+/// Returns true if `dir` looks like a deployed or project-root app.
+fn is_app_dir(dir: &Path) -> bool {
+    dir.join("grimoire-build-info.json").exists()
+        || dir.join("grimoire-config.json").exists()
+        || dir.join("current").symlink_metadata().is_ok()
+        || dir.join("versions").is_dir()
+        || dir.join("start.sh").exists()
+}
+
 fn parse_app_dir(dir: &PathBuf) -> AppEntry {
-    let dir_name = dir
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("")
-        .to_string();
-
-    let (name, framework_version) = read_grimoire_config(dir, &dir_name);
-    let server_command = read_server_command(dir);
-
+    if let Some(entry) = parse_from_build_info(dir) {
+        return entry;
+    }
+    if let Some(entry) = parse_from_grimoire_config(dir) {
+        return entry;
+    }
+    // Fallback: use directory name, no metadata.
+    let name = dir_name(dir);
     AppEntry {
         name,
         dir: dir.clone(),
-        framework_version,
-        server_command,
+        framework_version: None,
+        server_command: read_server_command(dir),
+        known_port: None,
     }
 }
 
-fn read_grimoire_config(dir: &PathBuf, dir_name: &str) -> (String, Option<String>) {
-    let path = dir.join("grimoire-config.json");
-    let text = match std::fs::read_to_string(&path) {
-        Ok(t) => t,
-        Err(_) => return (dir_name.to_string(), None),
-    };
-    let val: Value = match serde_json::from_str(&text) {
-        Ok(v) => v,
-        Err(_) => return (dir_name.to_string(), None),
-    };
+/// Parse from Grimoire deployment build info (`grimoire-build-info.json`).
+fn parse_from_build_info(dir: &PathBuf) -> Option<AppEntry> {
+    let text = std::fs::read_to_string(dir.join("grimoire-build-info.json")).ok()?;
+    let val: Value = serde_json::from_str(&text).ok()?;
 
+    let cfg = val.get("grimoire_config")?;
+    let name = cfg
+        .get("name")
+        .and_then(Value::as_str)
+        .map(str::to_string)
+        .unwrap_or_else(|| dir_name(dir));
+
+    // Prefer app_version (the deployed release) over framework_version.
+    let framework_version = val
+        .get("app_version")
+        .and_then(Value::as_str)
+        .map(str::to_string);
+
+    let known_port = cfg
+        .pointer("/environments/local/service_address")
+        .and_then(Value::as_str)
+        .and_then(parse_port_from_url);
+
+    Some(AppEntry {
+        name,
+        dir: dir.clone(),
+        framework_version,
+        server_command: read_server_command(dir),
+        known_port,
+    })
+}
+
+/// Parse from Grimoire project source config (`grimoire-config.json`).
+fn parse_from_grimoire_config(dir: &PathBuf) -> Option<AppEntry> {
+    let text = std::fs::read_to_string(dir.join("grimoire-config.json")).ok()?;
+    let val: Value = serde_json::from_str(&text).ok()?;
+
+    let fallback = dir_name(dir);
     let name = val
         .get("name")
         .and_then(Value::as_str)
-        .unwrap_or(dir_name)
+        .unwrap_or(&fallback)
         .to_string();
 
     let framework_version = val
@@ -81,16 +121,36 @@ fn read_grimoire_config(dir: &PathBuf, dir_name: &str) -> (String, Option<String
         .and_then(Value::as_str)
         .map(str::to_string);
 
-    (name, framework_version)
+    Some(AppEntry {
+        name,
+        dir: dir.clone(),
+        framework_version,
+        server_command: read_server_command(dir),
+        known_port: None,
+    })
 }
 
 fn read_server_command(dir: &PathBuf) -> Option<String> {
-    let path = dir.join("recipes.json");
-    let text = std::fs::read_to_string(&path).ok()?;
+    let text = std::fs::read_to_string(dir.join("recipes.json")).ok()?;
     let val: Value = serde_json::from_str(&text).ok()?;
     val.pointer("/targets/server/command")
         .and_then(Value::as_str)
         .map(str::to_string)
+}
+
+/// Parse the port number out of a URL like `http://localhost:8080`.
+fn parse_port_from_url(url: &str) -> Option<u16> {
+    let after_scheme = url.splitn(3, "//").nth(1)?;
+    let host_port = after_scheme.split('/').next()?;
+    let port_str = host_port.split(':').nth(1)?;
+    port_str.parse().ok()
+}
+
+fn dir_name(dir: &PathBuf) -> String {
+    dir.file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("unknown")
+        .to_string()
 }
 
 #[cfg(test)]
@@ -99,7 +159,12 @@ mod tests {
     use std::fs;
     use tempfile::TempDir;
 
-    fn make_app(root: &std::path::Path, name: &str, framework_version: Option<&str>, server_cmd: Option<&str>) {
+    fn make_app(
+        root: &Path,
+        name: &str,
+        framework_version: Option<&str>,
+        server_cmd: Option<&str>,
+    ) {
         let app_dir = root.join(name);
         fs::create_dir_all(&app_dir).unwrap();
 
@@ -107,10 +172,15 @@ mod tests {
         if let Some(v) = framework_version {
             config["framework-version"] = serde_json::Value::String(v.to_string());
         }
-        fs::write(app_dir.join("grimoire-config.json"), config.to_string()).unwrap();
+        fs::write(
+            app_dir.join("grimoire-config.json"),
+            config.to_string(),
+        )
+        .unwrap();
 
         if let Some(cmd) = server_cmd {
-            let recipes = serde_json::json!({"targets": {"server": {"command": cmd}}});
+            let recipes =
+                serde_json::json!({"targets": {"server": {"command": cmd}}});
             fs::write(app_dir.join("recipes.json"), recipes.to_string()).unwrap();
         }
     }
@@ -121,7 +191,7 @@ mod tests {
         let root = tmp.path().to_path_buf();
 
         make_app(&root, "my-app", Some("3.36"), Some("node server.js"));
-        fs::create_dir_all(root.join("not-an-app")).unwrap(); // no grimoire-config.json
+        fs::create_dir_all(root.join("not-an-app")).unwrap();
 
         let apps = scan_once(&root);
         assert_eq!(apps.len(), 1);
@@ -144,5 +214,60 @@ mod tests {
         assert_eq!(apps[0].name, "my-unnamed-app");
         assert!(apps[0].framework_version.is_none());
         assert!(apps[0].server_command.is_none());
+    }
+
+    #[test]
+    fn discovers_app_via_grimoire_build_info() {
+        let tmp = TempDir::new().unwrap();
+        let app_dir = tmp.path().join("my-deployed-app");
+        fs::create_dir_all(&app_dir).unwrap();
+
+        let build_info = serde_json::json!({
+            "schema_version": 1,
+            "app_version": "1.2.3",
+            "grimoire_config": {
+                "name": "my-deployed-app",
+                "environments": {
+                    "local": {
+                        "service_address": "http://localhost:7700"
+                    }
+                }
+            }
+        });
+        fs::write(
+            app_dir.join("grimoire-build-info.json"),
+            build_info.to_string(),
+        )
+        .unwrap();
+
+        let apps = scan_once(&tmp.path().to_path_buf());
+        assert_eq!(apps.len(), 1);
+        assert_eq!(apps[0].name, "my-deployed-app");
+        assert_eq!(apps[0].framework_version.as_deref(), Some("1.2.3"));
+        assert_eq!(apps[0].known_port, Some(7700));
+    }
+
+    #[test]
+    fn discovers_app_via_current_dir() {
+        let tmp = TempDir::new().unwrap();
+        let app_dir = tmp.path().join("legacy-app");
+        fs::create_dir_all(app_dir.join("current")).unwrap();
+
+        let apps = scan_once(&tmp.path().to_path_buf());
+        assert_eq!(apps.len(), 1);
+        assert_eq!(apps[0].name, "legacy-app");
+    }
+
+    #[test]
+    fn parses_port_from_url() {
+        assert_eq!(
+            parse_port_from_url("http://localhost:8080"),
+            Some(8080)
+        );
+        assert_eq!(
+            parse_port_from_url("http://localhost:8080/api"),
+            Some(8080)
+        );
+        assert_eq!(parse_port_from_url("http://localhost"), None);
     }
 }

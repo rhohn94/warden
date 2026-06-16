@@ -1,7 +1,9 @@
 use crate::{
+    detector,
     launcher::Launcher,
     models::{AppEntry, AppStatus, PortInfo},
 };
+use tracing::{debug, info};
 use egui::Color32;
 use obsidian::{
     aura::golden,
@@ -92,9 +94,18 @@ impl App {
         // Poll scanner for new app entries.
         if self.scanner_rx.has_changed().unwrap_or(false) {
             let entries = self.scanner_rx.borrow_and_update().clone();
+            debug!("scanner update: {} entries", entries.len());
             let mut state = self.state.lock().unwrap();
-            state.entries = entries;
+            state.entries = entries.clone();
             state.last_scan = Instant::now();
+            drop(state);
+            // Background-detect status for every entry; skip any with an in-flight op.
+            for entry in entries {
+                let in_flight = self.state.lock().unwrap().in_flight.contains(&entry.dir);
+                if !in_flight {
+                    self.dispatch_detect(entry);
+                }
+            }
         }
 
         // Extract owned values so the borrow of self.egui_window ends before the closure.
@@ -246,6 +257,23 @@ impl App {
             let mut s = state.lock().unwrap();
             s.in_flight.remove(&entry.dir);
             s.statuses.insert(entry.dir.clone(), (status, port_info));
+        });
+    }
+
+    /// Run detection for `entry` in a blocking thread; update statuses unless in-flight.
+    fn dispatch_detect(&self, entry: AppEntry) {
+        let state = Arc::clone(&self.state);
+        let dir = entry.dir.clone();
+        self.runtime_handle.spawn(async move {
+            let (status, port_info) =
+                tokio::task::spawn_blocking(move || detector::detect(&entry))
+                    .await
+                    .unwrap_or((AppStatus::Unknown, PortInfo::default()));
+            info!("detected {}: {:?}", dir.display(), status);
+            let mut s = state.lock().unwrap();
+            if !s.in_flight.contains(&dir) {
+                s.statuses.insert(dir, (status, port_info));
+            }
         });
     }
 }
