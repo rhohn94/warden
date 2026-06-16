@@ -270,4 +270,23 @@ mod tests {
         );
         assert_eq!(parse_port_from_url("http://localhost"), None);
     }
+
+    #[test]
+    fn removed_app_absent_on_rescan() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path().to_path_buf();
+
+        make_app(&root, "app-a", None, None);
+        make_app(&root, "app-b", None, None);
+
+        let first = scan_once(&root);
+        assert_eq!(first.len(), 2);
+
+        fs::remove_dir_all(root.join("app-b")).unwrap();
+
+        let second = scan_once(&root);
+        assert_eq!(second.len(), 1);
+        assert_eq!(second[0].name, "app-a");
+        assert!(!second.iter().any(|e| e.name == "app-b"));
+    }
 }
