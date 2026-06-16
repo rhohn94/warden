@@ -3,7 +3,7 @@ use crate::{
     launcher::Launcher,
     models::{AppEntry, AppStatus, PortInfo},
 };
-use tracing::{debug, info};
+use tracing::{debug, error, info};
 use obsidian::{
     app::window_attributes,
     theme::{self, Theme},
@@ -203,6 +203,13 @@ impl App {
                         };
                         if ui.button("Stop").clicked() {
                             self.dispatch_stop(entry.clone(), pid);
+                        }
+                        if let Some(port) = port_info.port {
+                            if ui.button("Open").clicked() {
+                                if let Err(e) = open::that(format!("http://localhost:{}", port)) {
+                                    error!("open browser failed: {}", e);
+                                }
+                            }
                         }
                     } else if ui.button("Start").clicked() {
                         self.dispatch_start(entry.clone());
