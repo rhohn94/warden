@@ -41,6 +41,8 @@ fn main() {
         refresh_secs,
     )));
 
+    // Enter the runtime so tokio::spawn in scanner::start works from the main thread.
+    let _runtime_guard = runtime.enter();
     let scanner_rx = scanner::start(apps_dir, Duration::from_secs(refresh_secs));
     let launcher = Arc::new(TokioMutex::new(Launcher::new()));
     let runtime_handle = runtime.handle().clone();
