@@ -2,6 +2,7 @@ use crate::{
     detector,
     launcher::Launcher,
     models::{AppEntry, AppStatus, PortInfo},
+    notifier::Notifier,
 };
 use tracing::{debug, error, info};
 use obsidian::{
@@ -35,10 +36,21 @@ pub struct AppState {
     pub last_scan: Instant,
     /// The currently selected app directory; `None` means no selection.
     pub selected_app: Option<PathBuf>,
+    /// Whether to send desktop notifications on app status changes.
+    pub notifications_enabled: bool,
+    /// Maximum log lines to retain per app in the tail buffer.
+    pub log_tail_lines: usize,
+    /// Tracks previous statuses and fires desktop notifications on transitions.
+    pub notifier: Notifier,
 }
 
 impl AppState {
-    pub fn new(apps_dir: PathBuf, refresh_secs: u64) -> Self {
+    pub fn new(
+        apps_dir: PathBuf,
+        refresh_secs: u64,
+        notifications_enabled: bool,
+        log_tail_lines: usize,
+    ) -> Self {
         AppState {
             entries: Vec::new(),
             statuses: HashMap::new(),
@@ -47,6 +59,9 @@ impl AppState {
             refresh_secs,
             last_scan: Instant::now(),
             selected_app: None,
+            notifications_enabled,
+            log_tail_lines,
+            notifier: Notifier::new(notifications_enabled),
         }
     }
 }
@@ -117,6 +132,18 @@ impl App {
             }
             state.entries = entries.clone();
             state.last_scan = Instant::now();
+            // Fire notifications for any transitions visible at this scan cycle.
+            let pairs: Vec<(String, AppStatus)> = state
+                .entries
+                .iter()
+                .filter_map(|e| {
+                    state
+                        .statuses
+                        .get(&e.dir)
+                        .map(|(s, _)| (e.name.clone(), s.clone()))
+                })
+                .collect();
+            state.notifier.check_transitions(&pairs);
             drop(state);
             // Background-detect status for every entry; skip any with an in-flight op.
             for entry in entries {
@@ -518,7 +545,8 @@ impl App {
             };
             let mut s = state.lock().unwrap();
             s.in_flight.remove(&entry.dir);
-            s.statuses.insert(entry.dir.clone(), (status, port_info));
+            s.statuses.insert(entry.dir.clone(), (status.clone(), port_info));
+            s.notifier.check_transitions(&[(entry.name.clone(), status)]);
         });
     }
 
@@ -536,7 +564,8 @@ impl App {
             };
             let mut s = state.lock().unwrap();
             s.in_flight.remove(&entry.dir);
-            s.statuses.insert(entry.dir.clone(), (status, port_info));
+            s.statuses.insert(entry.dir.clone(), (status.clone(), port_info));
+            s.notifier.check_transitions(&[(entry.name.clone(), status)]);
         });
     }
 
@@ -544,6 +573,7 @@ impl App {
     fn dispatch_detect(&self, entry: AppEntry) {
         let state = Arc::clone(&self.state);
         let dir = entry.dir.clone();
+        let name = entry.name.clone();
         self.runtime_handle.spawn(async move {
             let (status, port_info) =
                 tokio::task::spawn_blocking(move || detector::detect(&entry))
@@ -552,7 +582,8 @@ impl App {
             info!("detected {}: {:?}", dir.display(), status);
             let mut s = state.lock().unwrap();
             if !s.in_flight.contains(&dir) {
-                s.statuses.insert(dir, (status, port_info));
+                s.statuses.insert(dir, (status.clone(), port_info));
+                s.notifier.check_transitions(&[(name, status)]);
             }
         });
     }
@@ -717,14 +748,14 @@ mod tests {
     #[test]
     fn test_app_state_selected_app_defaults_none() {
         use std::path::PathBuf;
-        let state = AppState::new(PathBuf::from("/tmp/apps"), 30);
+        let state = AppState::new(PathBuf::from("/tmp/apps"), 30, true, 500);
         assert!(state.selected_app.is_none());
     }
 
     #[test]
     fn test_app_state_selected_app_can_be_set() {
         use std::path::PathBuf;
-        let mut state = AppState::new(PathBuf::from("/tmp/apps"), 30);
+        let mut state = AppState::new(PathBuf::from("/tmp/apps"), 30, true, 500);
         let path = PathBuf::from("/tmp/apps/myapp");
         state.selected_app = Some(path.clone());
         assert_eq!(state.selected_app, Some(path));
@@ -733,9 +764,17 @@ mod tests {
     #[test]
     fn test_app_state_selected_app_can_be_cleared() {
         use std::path::PathBuf;
-        let mut state = AppState::new(PathBuf::from("/tmp/apps"), 30);
+        let mut state = AppState::new(PathBuf::from("/tmp/apps"), 30, true, 500);
         state.selected_app = Some(PathBuf::from("/tmp/apps/myapp"));
         state.selected_app = None;
         assert!(state.selected_app.is_none());
+    }
+
+    #[test]
+    fn test_app_state_carries_notifications_and_log_tail() {
+        use std::path::PathBuf;
+        let state = AppState::new(PathBuf::from("/tmp/apps"), 10, false, 200);
+        assert!(!state.notifications_enabled);
+        assert_eq!(state.log_tail_lines, 200);
     }
 }
