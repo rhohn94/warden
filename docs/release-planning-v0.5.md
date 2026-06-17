@@ -1,6 +1,6 @@
 # Release Planning — v0.5
 
-> status: draft
+> status: agreed
 > Companion to `docs/design/app-design.md` and `docs/version-history.md`. Captures
 > the scope, pass structure, and implementation ledger for v0.5.
 > Archive into `version-history.md` when the release ships.
