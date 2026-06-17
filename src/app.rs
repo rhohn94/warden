@@ -33,7 +33,8 @@ pub struct AppState {
     pub entries: Vec<AppEntry>,
     pub statuses: HashMap<PathBuf, (AppStatus, PortInfo)>,
     pub in_flight: HashSet<PathBuf>,
-    pub apps_dir: PathBuf,
+    /// All watched root directories.
+    pub apps_dirs: Vec<PathBuf>,
     pub refresh_secs: u64,
     pub last_scan: Instant,
     /// The currently selected app directory; `None` means no selection.
@@ -53,7 +54,7 @@ pub struct AppState {
 
 impl AppState {
     pub fn new(
-        apps_dir: PathBuf,
+        apps_dirs: Vec<PathBuf>,
         refresh_secs: u64,
         notifications_enabled: bool,
         log_tail_lines: usize,
@@ -64,7 +65,7 @@ impl AppState {
             entries: Vec::new(),
             statuses: HashMap::new(),
             in_flight: HashSet::new(),
-            apps_dir,
+            apps_dirs,
             refresh_secs,
             last_scan: Instant::now(),
             selected_app: None,
@@ -225,7 +226,7 @@ impl App {
 
     fn draw_ui(&mut self, ctx: &egui::Context) {
         // Snapshot all shared state before rendering so we can drop the lock.
-        let (entries, statuses, in_flight, apps_dir, refresh_secs, last_scan, current_selected, version_results_snap) = {
+        let (entries, statuses, in_flight, apps_dirs, refresh_secs, last_scan, current_selected, version_results_snap) = {
             let state = self.state.lock().unwrap();
             let ver_snap: HashMap<String, VersionCheckResult> = state
                 .version_results
@@ -236,7 +237,7 @@ impl App {
                 state.entries.clone(),
                 state.statuses.clone(),
                 state.in_flight.clone(),
-                state.apps_dir.clone(),
+                state.apps_dirs.clone(),
                 state.refresh_secs,
                 state.last_scan,
                 state.selected_app.clone(),
@@ -276,7 +277,12 @@ impl App {
             ui.horizontal(|ui| {
                 ui.heading("Warden");
                 ui.add_space(golden::SPACE[2]); // SPACE_2 = 8px
-                ui.label(apps_dir.to_string_lossy().as_ref());
+                let dirs_label = if apps_dirs.len() == 1 {
+                    apps_dirs[0].to_string_lossy().into_owned()
+                } else {
+                    format!("{} directories", apps_dirs.len())
+                };
+                ui.label(&dirs_label);
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui
                         .add(
@@ -329,6 +335,24 @@ impl App {
                         ui.label(format!("↑ {}", latest));
                     }
                     ui.label(&port_str);
+                    // Show which root directory this app came from when multiple roots
+                    // are watched; use a subdued label so it doesn't dominate the row.
+                    if apps_dirs.len() > 1 {
+                        let root_name = entry
+                            .root
+                            .file_name()
+                            .map(|n| n.to_string_lossy().into_owned())
+                            .unwrap_or_else(|| entry.root.to_string_lossy().into_owned());
+                        ui.add(
+                            egui::Label::new(
+                                egui::RichText::new(root_name)
+                                    .small()
+                                    .color(ui.visuals().weak_text_color()),
+                            )
+                            .sense(egui::Sense::hover()),
+                        )
+                        .on_hover_text(entry.root.to_string_lossy().as_ref());
+                    }
 
                     let btn_size = egui::vec2(0.0, golden::CONTROL_HEIGHT_SM);
                     let radius = egui::CornerRadius::same(golden::RADIUS_SM);
@@ -948,7 +972,7 @@ mod tests {
         use std::collections::HashMap;
         use std::sync::RwLock;
         AppState::new(
-            PathBuf::from(apps_dir),
+            vec![PathBuf::from(apps_dir)],
             refresh,
             notif,
             tail,

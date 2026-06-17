@@ -138,6 +138,7 @@ mod tests {
         AppEntry {
             name: dir.file_name().and_then(|n| n.to_str()).unwrap_or("test").to_string(),
             dir,
+            root: PathBuf::new(),
             framework_version: None,
             server_command: None,
             known_port: None,
@@ -158,6 +159,7 @@ mod tests {
         let entry = AppEntry {
             name: "myapp".to_string(),
             dir: app_dir,
+            root: PathBuf::new(),
             framework_version: None,
             server_command: None,
             known_port: None,
@@ -214,6 +216,7 @@ mod tests {
         let entry = AppEntry {
             name: "port-test".to_string(),
             dir: app_dir,
+            root: PathBuf::new(),
             framework_version: None,
             server_command: Some("node server.js --port 4321".to_string()),
             known_port: None,
@@ -231,6 +234,7 @@ mod tests {
         let entry = AppEntry {
             name: "port-env-test".to_string(),
             dir: app_dir,
+            root: PathBuf::new(),
             framework_version: None,
             server_command: Some("PORT=8080 node server.js".to_string()),
             known_port: None,
