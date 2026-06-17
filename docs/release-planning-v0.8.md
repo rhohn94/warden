@@ -116,8 +116,8 @@
 
 | Branch | Design doc | Implemented | Reviewed | Merged into version/0.8 |
 |---|---|---|---|---|
-| `warden/v0.8-restart` (#25) | ☑ | ☐ | ☐ | ☐ |
-| `warden/v0.8-search` (#26) | ☑ | ☐ | ☐ | ☐ |
+| `warden/v0.8-restart` (#25) | ☑ | ☑ | ☑ | ☑ |
+| `warden/v0.8-search` (#26) | ☑ | ☑ | ☑ | ☑ |
 
 ### Phase 2
 
