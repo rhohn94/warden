@@ -14,6 +14,7 @@ const MAX_EVENTS_PER_APP: usize = 100;
 pub enum HistoryEvent {
     Started { at: DateTime<Utc>, pid: u32 },
     Stopped { at: DateTime<Utc>, duration_secs: u64 },
+    Crashed { at: DateTime<Utc>, duration_secs: u64 },
 }
 
 /// Persistent ring-buffer of `HistoryEvent`s, keyed by app name.
@@ -99,6 +100,25 @@ impl HistoryStore {
 
         let buf = self.entries.entry(app_name.to_string()).or_default();
         buf.push_back(HistoryEvent::Stopped { at: Utc::now(), duration_secs });
+        while buf.len() > MAX_EVENTS_PER_APP {
+            buf.pop_front();
+        }
+    }
+
+    /// Record a `Crashed` event for `app_name`.
+    /// `duration_secs` is derived from the last `Started` event; 0 if none exists.
+    /// Caps the ring buffer at 100 entries.
+    pub fn record_crashed(&mut self, app_name: &str) {
+        let duration_secs = self
+            .last_started_at(app_name)
+            .map(|started| {
+                let elapsed = Utc::now().signed_duration_since(started);
+                elapsed.num_seconds().max(0) as u64
+            })
+            .unwrap_or(0);
+
+        let buf = self.entries.entry(app_name.to_string()).or_default();
+        buf.push_back(HistoryEvent::Crashed { at: Utc::now(), duration_secs });
         while buf.len() > MAX_EVENTS_PER_APP {
             buf.pop_front();
         }
@@ -239,5 +259,44 @@ mod tests {
     fn test_recent_returns_empty_for_unknown_app() {
         let store = HistoryStore::new();
         assert!(store.recent("unknown", 10).is_empty());
+    }
+
+    #[test]
+    fn test_record_crashed_emits_crashed_event_with_duration() {
+        let mut store = HistoryStore::new();
+        // Insert a Started event 5 seconds in the past.
+        let started_at = Utc::now() - chrono::Duration::seconds(5);
+        store
+            .entries
+            .entry("app".to_string())
+            .or_default()
+            .push_back(HistoryEvent::Started { at: started_at, pid: 77 });
+
+        store.record_crashed("app");
+
+        let events: Vec<&HistoryEvent> = store.recent("app", 2).into_iter().collect();
+        assert_eq!(events.len(), 2, "should have Started + Crashed");
+        if let HistoryEvent::Crashed { duration_secs, .. } = events[0] {
+            assert!(
+                *duration_secs >= 4 && *duration_secs <= 20,
+                "duration_secs={} expected ~5",
+                duration_secs
+            );
+        } else {
+            panic!("most recent event should be Crashed, got {:?}", events[0]);
+        }
+    }
+
+    #[test]
+    fn test_record_crashed_with_no_prior_start_uses_zero_duration() {
+        let mut store = HistoryStore::new();
+        store.record_crashed("app");
+        let events = store.recent("app", 1);
+        assert_eq!(events.len(), 1);
+        if let HistoryEvent::Crashed { duration_secs, .. } = events[0] {
+            assert_eq!(*duration_secs, 0, "no prior start → duration must be 0");
+        } else {
+            panic!("expected Crashed event");
+        }
     }
 }

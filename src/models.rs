@@ -21,6 +21,8 @@ pub struct AppEntry {
 pub enum AppStatus {
     Running { pid: u32 },
     Stopped,
+    /// App exited unexpectedly — not via Stop or Restart button.
+    Crashed,
     Unknown,
 }
 

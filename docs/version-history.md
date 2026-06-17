@@ -1,5 +1,11 @@
 # Version history
 
+## v0.8.0 (2026-06-17)
+
+- Restart button: Running apps now have a `[Restart]` button that atomically stops and restarts them in one click — no more manual Stop-then-Start cycle; the button disables and shows `[Restarting…]` while the operation is in progress
+- App list search: a `Filter apps…` text field above the app list narrows the displayed rows to apps whose name contains the query (case-insensitive); the status bar shows "Showing N of M apps" when a filter is active; pressing Escape clears the filter
+- Crash detection: when a Warden-managed app exits unexpectedly (not via Stop or Restart), it is shown with a red `Crashed` badge; a desktop notification fires immediately; the history panel records the crash as a distinct event; clicking Start restores normal monitoring
+
 ## v0.7.0 (2026-06-16)
 
 - Scan throttling: force-scan triggers are dropped (not queued) when a scan is already in-flight — a `tracing::debug!` line logs each drop; per-app detector calls now run concurrently via `tokio::task::JoinSet` so one slow `lsof`/`pgrep` no longer serialises the rest; each per-app detector call times out at 2 s and marks the app `Unknown` on timeout
