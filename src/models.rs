@@ -27,3 +27,11 @@ pub enum AppStatus {
 pub struct PortInfo {
     pub port: Option<u16>,
 }
+
+/// Result of a version-update check against the app's remote git tags.
+#[derive(Debug, Clone, PartialEq)]
+pub enum VersionCheckResult {
+    UpToDate,
+    UpdateAvailable { latest: String },
+    Unknown,
+}
