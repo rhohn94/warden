@@ -2,6 +2,7 @@ mod app;
 mod config;
 mod detector;
 mod dump_ui;
+mod history;
 mod launcher;
 mod log_capture;
 mod models;
@@ -11,6 +12,7 @@ mod version_checker;
 
 use app::{App, AppState};
 use config::Config;
+use history::HistoryStore;
 use launcher::Launcher;
 use obsidian::AppRunner;
 use std::{path::PathBuf, sync::Arc, time::Duration};
@@ -90,6 +92,7 @@ fn main() {
     // shared into AppState without an extra clone step.
     let version_checker = VersionChecker::new();
     let version_results = version_checker.results();
+    let history = Arc::new(std::sync::Mutex::new(HistoryStore::load()));
 
     let state = Arc::new(std::sync::Mutex::new(AppState::new(
         apps_dir.clone(),
@@ -97,6 +100,7 @@ fn main() {
         notifications_enabled,
         log_tail_lines,
         Arc::clone(&version_results),
+        history,
     )));
 
     // Enter the runtime so tokio::spawn in scanner::start works from the main thread.
