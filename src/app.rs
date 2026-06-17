@@ -2,7 +2,7 @@ use crate::{
     detector,
     launcher::Launcher,
     log_capture::{LogCapture, LogReceiver},
-    models::{AppEntry, AppStatus, PortInfo},
+    models::{AppEntry, AppStatus, PortInfo, VersionCheckResult},
     notifier::Notifier,
 };
 use tracing::{debug, error, info};
@@ -16,7 +16,7 @@ use obsidian::{
 use std::{
     collections::{HashMap, HashSet},
     path::PathBuf,
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, RwLock},
     time::Instant,
 };
 use tokio::sync::watch;
@@ -38,11 +38,14 @@ pub struct AppState {
     /// The currently selected app directory; `None` means no selection.
     pub selected_app: Option<PathBuf>,
     /// Whether to send desktop notifications on app status changes.
+    #[allow(dead_code)]
     pub notifications_enabled: bool,
     /// Maximum log lines to retain per app in the tail buffer.
     pub log_tail_lines: usize,
     /// Tracks previous statuses and fires desktop notifications on transitions.
     pub notifier: Notifier,
+    /// Version-update check results keyed by app name, shared with VersionChecker.
+    pub version_results: Arc<RwLock<HashMap<String, VersionCheckResult>>>,
 }
 
 impl AppState {
@@ -51,6 +54,7 @@ impl AppState {
         refresh_secs: u64,
         notifications_enabled: bool,
         log_tail_lines: usize,
+        version_results: Arc<RwLock<HashMap<String, VersionCheckResult>>>,
     ) -> Self {
         AppState {
             entries: Vec::new(),
@@ -63,6 +67,7 @@ impl AppState {
             notifications_enabled,
             log_tail_lines,
             notifier: Notifier::new(notifications_enabled),
+            version_results,
         }
     }
 }
@@ -195,19 +200,21 @@ impl App {
                 .log_captures
                 .entry(dir.clone())
                 .or_insert_with(|| LogCapture::new(capacity));
-            loop {
-                match rx.try_recv() {
-                    Ok(line) => capture.push(line),
-                    Err(_) => break, // Empty or sender dropped — nothing more to read.
-                }
+            while let Ok(line) = rx.try_recv() {
+                capture.push(line);
             }
         }
     }
 
     fn draw_ui(&mut self, ctx: &egui::Context) {
         // Snapshot all shared state before rendering so we can drop the lock.
-        let (entries, statuses, in_flight, apps_dir, refresh_secs, last_scan, current_selected) = {
+        let (entries, statuses, in_flight, apps_dir, refresh_secs, last_scan, current_selected, version_results_snap) = {
             let state = self.state.lock().unwrap();
+            let ver_snap: HashMap<String, VersionCheckResult> = state
+                .version_results
+                .read()
+                .map(|m| m.clone())
+                .unwrap_or_default();
             (
                 state.entries.clone(),
                 state.statuses.clone(),
@@ -216,6 +223,7 @@ impl App {
                 state.refresh_secs,
                 state.last_scan,
                 state.selected_app.clone(),
+                ver_snap,
             )
         };
 
@@ -237,6 +245,7 @@ impl App {
                         &entries,
                         &statuses,
                         &in_flight,
+                        &version_results_snap,
                         &mut pending_start,
                         &mut pending_stop,
                         &mut pending_open,
@@ -296,6 +305,11 @@ impl App {
                         ui.label(v);
                     } else {
                         ui.label("—");
+                    }
+                    if let Some(VersionCheckResult::UpdateAvailable { latest }) =
+                        version_results_snap.get(&entry.name)
+                    {
+                        ui.label(format!("↑ {}", latest));
                     }
                     ui.label(&port_str);
 
@@ -416,6 +430,7 @@ impl App {
         entries: &[AppEntry],
         statuses: &HashMap<PathBuf, (AppStatus, PortInfo)>,
         in_flight: &HashSet<PathBuf>,
+        version_results: &HashMap<String, VersionCheckResult>,
         pending_start: &mut Option<AppEntry>,
         pending_stop: &mut Option<(AppEntry, Option<u32>)>,
         pending_open: &mut Option<u16>,
@@ -455,6 +470,17 @@ impl App {
 
                 ui.label("Grimoire version");
                 ui.label(entry.framework_version.as_deref().unwrap_or("—"));
+                ui.end_row();
+
+                ui.label("Update");
+                let update_label = match version_results.get(&entry.name) {
+                    Some(VersionCheckResult::UpdateAvailable { latest }) => {
+                        format!("↑ {} available", latest)
+                    }
+                    Some(VersionCheckResult::UpToDate) => "Up to date".to_string(),
+                    _ => "—".to_string(),
+                };
+                ui.label(update_label);
                 ui.end_row();
 
                 ui.label("Tech stack");
@@ -829,17 +855,27 @@ mod tests {
         assert_eq!(infer_tech_stack(None), "Unknown");
     }
 
+    fn make_state(apps_dir: &str, refresh: u64, notif: bool, tail: usize) -> AppState {
+        use std::collections::HashMap;
+        use std::sync::RwLock;
+        AppState::new(
+            PathBuf::from(apps_dir),
+            refresh,
+            notif,
+            tail,
+            Arc::new(RwLock::new(HashMap::new())),
+        )
+    }
+
     #[test]
     fn test_app_state_selected_app_defaults_none() {
-        use std::path::PathBuf;
-        let state = AppState::new(PathBuf::from("/tmp/apps"), 30, true, 500);
+        let state = make_state("/tmp/apps", 30, true, 500);
         assert!(state.selected_app.is_none());
     }
 
     #[test]
     fn test_app_state_selected_app_can_be_set() {
-        use std::path::PathBuf;
-        let mut state = AppState::new(PathBuf::from("/tmp/apps"), 30, true, 500);
+        let mut state = make_state("/tmp/apps", 30, true, 500);
         let path = PathBuf::from("/tmp/apps/myapp");
         state.selected_app = Some(path.clone());
         assert_eq!(state.selected_app, Some(path));
@@ -847,8 +883,7 @@ mod tests {
 
     #[test]
     fn test_app_state_selected_app_can_be_cleared() {
-        use std::path::PathBuf;
-        let mut state = AppState::new(PathBuf::from("/tmp/apps"), 30, true, 500);
+        let mut state = make_state("/tmp/apps", 30, true, 500);
         state.selected_app = Some(PathBuf::from("/tmp/apps/myapp"));
         state.selected_app = None;
         assert!(state.selected_app.is_none());
@@ -856,8 +891,7 @@ mod tests {
 
     #[test]
     fn test_app_state_carries_notifications_and_log_tail() {
-        use std::path::PathBuf;
-        let state = AppState::new(PathBuf::from("/tmp/apps"), 10, false, 200);
+        let state = make_state("/tmp/apps", 10, false, 200);
         assert!(!state.notifications_enabled);
         assert_eq!(state.log_tail_lines, 200);
     }
