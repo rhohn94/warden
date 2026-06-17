@@ -3,6 +3,7 @@ mod detector;
 mod dump_ui;
 mod launcher;
 mod models;
+mod notifier;
 mod scanner;
 
 use app::{App, AppState};
