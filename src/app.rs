@@ -113,6 +113,10 @@ pub struct App {
     /// Total number of aggregated log lines rendered on the previous frame,
     /// used to detect new output and re-enable auto-scroll tracking.
     log_viewer_prev_line_count: usize,
+
+    // ── App list search / live filter ────────────────────────────────────────
+    /// The current text entered in the app-list filter field; empty means no filter.
+    search_query: String,
 }
 
 impl App {
@@ -144,6 +148,7 @@ impl App {
             log_viewer_filter: HashMap::new(),
             log_viewer_auto_scroll: true,
             log_viewer_prev_line_count: 0,
+            search_query: String::new(),
         }
     }
 
@@ -340,10 +345,40 @@ impl App {
             if self.show_log_viewer {
                 self.draw_log_viewer(ui, &entries, &statuses);
             } else {
+                // ── Search / live filter ──────────────────────────────────────
+                ui.add(
+                    egui::TextEdit::singleline(&mut self.search_query)
+                        .hint_text("Filter apps…"),
+                );
+
+                // Escape clears the search query when it is non-empty.
+                if !self.search_query.is_empty()
+                    && ctx.input(|i| i.key_pressed(egui::Key::Escape))
+                {
+                    self.search_query.clear();
+                    ctx.memory_mut(|m| m.surrender_focus(egui::Id::NULL));
+                }
+
+                // Build filtered entry list (clone matching entries).
+                let total_count = entries.len();
+                let active_query = self.search_query.trim().to_lowercase();
+                let filtered: Vec<AppEntry> =
+                    filter_entries(&entries, &active_query)
+                        .into_iter()
+                        .cloned()
+                        .collect();
+
+                // Clear selection when the selected app is filtered out.
+                if let Some(ref sel_path) = current_selected {
+                    if !filtered.iter().any(|e| &e.dir == sel_path) {
+                        pending_select = Some(None);
+                    }
+                }
+
                 // ── App rows ─────────────────────────────────────────────────
                 self.draw_app_list(
                     ui,
-                    &entries,
+                    &filtered,
                     &statuses,
                     &in_flight,
                     &version_results_snap,
@@ -352,6 +387,8 @@ impl App {
                     &apps_dirs,
                     refresh_secs,
                     last_scan,
+                    total_count,
+                    &active_query,
                 );
             }
         });
@@ -392,6 +429,8 @@ impl App {
         apps_dirs: &[PathBuf],
         refresh_secs: u64,
         last_scan: Instant,
+        total_count: usize,
+        active_query: &str,
     ) {
         for entry in entries {
             let (ref status, ref port_info) = statuses
@@ -528,6 +567,9 @@ impl App {
                 "Last scan: {}s ago",
                 last_scan.elapsed().as_secs()
             ));
+            if !active_query.is_empty() {
+                ui.label(format!("Showing {} of {} apps", entries.len(), total_count));
+            }
         });
     }
 
@@ -987,6 +1029,21 @@ impl App {
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
+/// Filter a slice of `AppEntry` values by a case-insensitive substring query.
+///
+/// Returns refs to entries whose `name` contains `query` (trimmed). An empty
+/// or whitespace-only query returns all entries unchanged.
+pub fn filter_entries<'a>(entries: &'a [AppEntry], query: &str) -> Vec<&'a AppEntry> {
+    let q = query.trim().to_lowercase();
+    if q.is_empty() {
+        return entries.iter().collect();
+    }
+    entries
+        .iter()
+        .filter(|e| e.name.to_lowercase().contains(&q))
+        .collect()
+}
+
 /// Aggregate log lines from multiple apps, apply a per-app filter map, and
 /// prefix each retained line with `[<app_name>] `.
 ///
@@ -1303,5 +1360,63 @@ mod tests {
         // validates AppState construction still works cleanly alongside it.
         assert!(state.entries.is_empty());
         assert!(state.selected_app.is_none());
+    }
+
+    // ── filter_entries ───────────────────────────────────────────────────────
+
+    fn make_entry(name: &str) -> AppEntry {
+        AppEntry {
+            name: name.to_string(),
+            dir: PathBuf::from(format!("/tmp/apps/{}", name)),
+            root: PathBuf::from("/tmp/apps"),
+            framework_version: None,
+            server_command: None,
+            known_port: None,
+        }
+    }
+
+    #[test]
+    fn test_filter_entries_matches_two_of_five() {
+        let entries = vec![
+            make_entry("frontend"),
+            make_entry("backend"),
+            make_entry("database"),
+            make_entry("cache"),
+            make_entry("monitor"),
+        ];
+        // "end" matches "frontend" and "backend" (case-insensitive substring)
+        let result = filter_entries(&entries, "end");
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0].name, "frontend");
+        assert_eq!(result[1].name, "backend");
+    }
+
+    #[test]
+    fn test_filter_entries_case_insensitive() {
+        let entries = vec![make_entry("MyApp"), make_entry("otherapp")];
+        let result = filter_entries(&entries, "MYAPP");
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].name, "MyApp");
+    }
+
+    #[test]
+    fn test_filter_entries_empty_query_returns_all() {
+        let entries = vec![make_entry("foo"), make_entry("bar")];
+        let result = filter_entries(&entries, "");
+        assert_eq!(result.len(), 2);
+    }
+
+    #[test]
+    fn test_filter_entries_whitespace_query_returns_all() {
+        let entries = vec![make_entry("foo"), make_entry("bar")];
+        let result = filter_entries(&entries, "   ");
+        assert_eq!(result.len(), 2);
+    }
+
+    #[test]
+    fn test_filter_entries_no_match_returns_empty() {
+        let entries = vec![make_entry("alpha"), make_entry("beta")];
+        let result = filter_entries(&entries, "xyz");
+        assert!(result.is_empty());
     }
 }
