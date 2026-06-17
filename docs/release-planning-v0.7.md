@@ -89,8 +89,8 @@
 
 | Branch | Design doc | Implemented | Reviewed | Merged into version/0.7 |
 |---|---|---|---|---|
-| `warden/v0.7-scan-throttle` (#24 pt1) | ☑ | ☐ | ☐ | ☐ |
-| `warden/v0.7-perf-telemetry` (#24 pt2) | ☑ | ☐ | ☐ | ☐ |
+| `warden/v0.7-scan-throttle` (#24 pt1) | ☑ | ☑ | ☑ | ☑ |
+| `warden/v0.7-perf-telemetry` (#24 pt2) | ☑ | ☑ | ☑ | ☑ |
 
 ### Release
 
