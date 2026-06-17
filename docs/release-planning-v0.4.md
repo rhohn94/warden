@@ -131,7 +131,7 @@
 
 | Branch | Design doc | Implemented | Reviewed | Merged into version/0.4 |
 |---|---|---|---|---|
-| `warden/v0.4-log-streaming` (#19) | ☐ | ☐ | ☐ | ☐ |
+| `warden/v0.4-log-streaming` (#19) | ☑ | ☑ | ☑ | ☑ |
 
 ### Release
 
