@@ -487,17 +487,15 @@ impl App {
             let is_restarting = restart_in_flight.contains(&entry.dir);
             let is_selected = current_selected.as_ref() == Some(&entry.dir);
 
-            // SPACE_3 (12px) vertical padding above each app row.
-            ui.add_space(golden::SPACE[3]);
-            let fill = if is_selected {
-                egui::Color32::from_white_alpha(golden::SURFACE_1_A)
-            } else {
-                egui::Color32::TRANSPARENT
-            };
-            let frame_resp = egui::Frame::new()
-                .fill(fill)
-                .show(ui, |ui| {
-                    ui.horizontal(|ui| {
+            // SPACE_2 (8px) vertical padding above each app row — card provides inner margin.
+            ui.add_space(golden::SPACE[2]);
+            let frame_resp = theme::card_show(ui, |ui| {
+                if is_selected {
+                    // Paint a subtle selection tint over the card's own background.
+                    let rect = ui.max_rect();
+                    ui.painter().rect_filled(rect, egui::CornerRadius::ZERO, egui::Color32::from_white_alpha(golden::SURFACE_1_A));
+                }
+                ui.horizontal(|ui| {
                         Badge::new(badge_label, badge_status).ui(ui);
                         ui.label(&entry.name);
                         if let Some(v) = &entry.framework_version {
@@ -576,8 +574,8 @@ impl App {
                 });
             }
 
-            // SPACE_3 (12px) vertical padding below each app row.
-            ui.add_space(golden::SPACE[3]);
+            // SPACE_2 (8px) vertical padding below each app row — card provides inner margin.
+            ui.add_space(golden::SPACE[2]);
         }
 
         theme::hairline(ui);
@@ -745,6 +743,7 @@ impl App {
             .cloned()
             .unwrap_or((AppStatus::Unknown, PortInfo::default()));
 
+        theme::elevated_panel_show(ui, 1, |ui| {
         // ── Header ───────────────────────────────────────────────────────
         ui.add_space(golden::SPACE[2]);
         ui.label(theme::apply_type_tokens(egui::RichText::new(&entry.name).size(golden::TEXT_LG).strong(), golden::TEXT_LG));
@@ -948,6 +947,7 @@ impl App {
                 ui.label(line);
             }
         }
+        }); // elevated_panel_show
     }
 
     fn dispatch_start(&mut self, entry: AppEntry) {
