@@ -125,7 +125,7 @@
 | Branch | Design doc | Implemented | Reviewed | Merged into version/0.4 |
 |---|---|---|---|---|
 | `warden/v0.4-persistent-settings` (#17) | ☑ | ☑ | ☑ | ☑ |
-| `warden/v0.4-notifications` (#18) | ☐ | ☐ | ☐ | ☐ |
+| `warden/v0.4-notifications` (#18) | ☑ | ☑ | ☑ | ☑ |
 
 ### Phase 2
 
