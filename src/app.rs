@@ -2,6 +2,7 @@ use crate::{
     detector,
     launcher::Launcher,
     models::{AppEntry, AppStatus, PortInfo},
+    notifier::Notifier,
 };
 use tracing::{debug, error, info};
 use obsidian::{
@@ -39,6 +40,8 @@ pub struct AppState {
     pub notifications_enabled: bool,
     /// Maximum log lines to retain per app in the tail buffer.
     pub log_tail_lines: usize,
+    /// Tracks previous statuses and fires desktop notifications on transitions.
+    pub notifier: Notifier,
 }
 
 impl AppState {
@@ -58,6 +61,7 @@ impl AppState {
             selected_app: None,
             notifications_enabled,
             log_tail_lines,
+            notifier: Notifier::new(notifications_enabled),
         }
     }
 }
@@ -128,6 +132,18 @@ impl App {
             }
             state.entries = entries.clone();
             state.last_scan = Instant::now();
+            // Fire notifications for any transitions visible at this scan cycle.
+            let pairs: Vec<(String, AppStatus)> = state
+                .entries
+                .iter()
+                .filter_map(|e| {
+                    state
+                        .statuses
+                        .get(&e.dir)
+                        .map(|(s, _)| (e.name.clone(), s.clone()))
+                })
+                .collect();
+            state.notifier.check_transitions(&pairs);
             drop(state);
             // Background-detect status for every entry; skip any with an in-flight op.
             for entry in entries {
@@ -529,7 +545,8 @@ impl App {
             };
             let mut s = state.lock().unwrap();
             s.in_flight.remove(&entry.dir);
-            s.statuses.insert(entry.dir.clone(), (status, port_info));
+            s.statuses.insert(entry.dir.clone(), (status.clone(), port_info));
+            s.notifier.check_transitions(&[(entry.name.clone(), status)]);
         });
     }
 
@@ -547,7 +564,8 @@ impl App {
             };
             let mut s = state.lock().unwrap();
             s.in_flight.remove(&entry.dir);
-            s.statuses.insert(entry.dir.clone(), (status, port_info));
+            s.statuses.insert(entry.dir.clone(), (status.clone(), port_info));
+            s.notifier.check_transitions(&[(entry.name.clone(), status)]);
         });
     }
 
@@ -555,6 +573,7 @@ impl App {
     fn dispatch_detect(&self, entry: AppEntry) {
         let state = Arc::clone(&self.state);
         let dir = entry.dir.clone();
+        let name = entry.name.clone();
         self.runtime_handle.spawn(async move {
             let (status, port_info) =
                 tokio::task::spawn_blocking(move || detector::detect(&entry))
@@ -563,7 +582,8 @@ impl App {
             info!("detected {}: {:?}", dir.display(), status);
             let mut s = state.lock().unwrap();
             if !s.in_flight.contains(&dir) {
-                s.statuses.insert(dir, (status, port_info));
+                s.statuses.insert(dir, (status.clone(), port_info));
+                s.notifier.check_transitions(&[(name, status)]);
             }
         });
     }
