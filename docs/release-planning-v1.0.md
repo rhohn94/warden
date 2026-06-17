@@ -85,7 +85,7 @@
 
 | Branch | Design doc | Implemented | Reviewed | Merged into version/1.0 |
 |---|---|---|---|---|
-| `warden/v1.0-changelog-data` (#33) | ☑ | ☐ | ☐ | ☐ |
+| `warden/v1.0-changelog-data` (#33) | ☑ | ☑ | ☑ | ☑ |
 
 ### Phase 2
 
