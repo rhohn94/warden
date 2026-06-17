@@ -152,8 +152,8 @@
 
 | Branch | Design doc | Implemented | Reviewed | Merged into version/0.9 |
 |---|---|---|---|---|
-| `warden/v0.9-tactile-button` (#28) | ☑ | ☐ | ☐ | ☐ |
-| `warden/v0.9-aura-foundation` (#29) | ☑ | ☐ | ☐ | ☐ |
+| `warden/v0.9-tactile-button` (#28) | ☑ | ☑ | ☑ | ☑ |
+| `warden/v0.9-aura-foundation` (#29) | ☑ | ☑ | ☑ | ☑ |
 
 ### Phase 2
 
