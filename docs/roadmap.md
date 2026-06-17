@@ -100,6 +100,15 @@ exits are immediately visible.
 - App list search: live text-filter field above the app list; Escape clears (Issue #26)
 - Crash detection: `AppStatus::Crashed` variant; scanner distinguishes user-stop from unexpected exit; red badge + notification + history entry (Issue #27)
 
+## v1.0 — Changelog Visibility
+
+Shows Warden's own release history inside the app: a clickable version label in the header opens a scrollable changelog window with Aura card surfaces for each release.
+
+**Scope:**
+- Changelog data layer: embed and parse `docs/version-history.md` at compile time; `ChangelogEntry` type (Issue #33)
+- Version label in header: clickable `v1.0.0` label opens the changelog viewer (Issue #33)
+- Changelog viewer window: scrollable Aura-styled `egui::Window` with `card_show` per version, "Close" button (Issue #34)
+
 ## v0.9 — Aura Fidelity
 
 Brings Warden into full alignment with the Obsidian/Aura design system — every widget, surface, and typographic element uses the correct Aura primitive.
