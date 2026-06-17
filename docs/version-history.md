@@ -1,5 +1,10 @@
 # Version history
 
+## v0.5.0 (2026-06-16)
+
+- Version update checks: Warden now runs background checks (hourly by default) against each app's git remote and shows an "↑ vX.Y" badge in the app list when a newer version is available; the details panel shows the full "Update available: current → latest" message; configurable via `version_check_interval_secs` in `config.toml` (set to 0 to disable)
+- History and uptime tracking: Warden now records every start and stop event for each monitored app in a per-app ring buffer (max 100 events); events are persisted to `~/.config/warden/history.json` across sessions; the details panel shows a live uptime counter for running apps and a reverse-chronological history of the last 10 start/stop events with timestamps and durations
+
 ## v0.4.0 (2026-06-16)
 
 - Persistent settings: startup configuration (`--apps-dir`, `--refresh`) is saved to `~/.config/warden/config.toml` automatically; CLI flags still override the config; subsequent launches remember your last-used directory and refresh interval without re-specifying flags
