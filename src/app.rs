@@ -11,7 +11,7 @@ use obsidian::{
     app::window_attributes,
     aura::golden,
     theme::{self, Theme},
-    widgets::{Badge, BadgeStatus},
+    widgets::{Badge, BadgeStatus, TactileButton},
     AppDelegate, EguiOnlyRenderer, EguiWindow,
 };
 use std::{
@@ -364,13 +364,7 @@ impl App {
                     }
                     ui.add_space(golden::SPACE[2]);
                     if !self.show_log_viewer
-                        && ui
-                            .add(
-                                egui::Button::new("Scan now")
-                                    .min_size(egui::vec2(0.0, golden::CONTROL_HEIGHT_SM))
-                                    .corner_radius(egui::CornerRadius::same(golden::RADIUS_SM)),
-                            )
-                            .clicked()
+                        && TactileButton::new("Scan now").secondary().ui(ui).clicked()
                     {
                         let _ = self.force_scan_tx.send(());
                     }
@@ -531,58 +525,25 @@ impl App {
                     .on_hover_text(entry.root.to_string_lossy().as_ref());
                 }
 
-                let btn_size = egui::vec2(0.0, golden::CONTROL_HEIGHT_SM);
-                let radius = egui::CornerRadius::same(golden::RADIUS_SM);
                 if is_restarting {
-                    ui.add_enabled(
-                        false,
-                        egui::Button::new("Restarting…")
-                            .min_size(btn_size)
-                            .corner_radius(radius),
-                    );
+                    TactileButton::new("Restarting…").ghost().enabled(false).ui(ui);
                 } else if is_in_flight {
                     let lbl = if is_running { "Stopping…" } else { "Starting…" };
-                    ui.add_enabled(
-                        false,
-                        egui::Button::new(lbl)
-                            .min_size(btn_size)
-                            .corner_radius(radius),
-                    );
+                    TactileButton::new(lbl).ghost().enabled(false).ui(ui);
                 } else if is_running {
                     let pid = if let AppStatus::Running { pid } = status {
                         Some(*pid)
                     } else {
                         None
                     };
-                    if ui
-                        .add(
-                            egui::Button::new("Stop")
-                                .min_size(btn_size)
-                                .corner_radius(radius),
-                        )
-                        .clicked()
-                    {
+                    if TactileButton::new("Stop").ghost().ui(ui).clicked() {
                         self.dispatch_stop(entry.clone(), pid);
                     }
-                    if ui
-                        .add(
-                            egui::Button::new("Restart")
-                                .min_size(btn_size)
-                                .corner_radius(radius),
-                        )
-                        .clicked()
-                    {
+                    if TactileButton::new("Restart").ghost().ui(ui).clicked() {
                         self.dispatch_restart(entry.clone(), pid);
                     }
                     if let Some(port) = port_info.port {
-                        if ui
-                            .add(
-                                egui::Button::new("Open")
-                                    .min_size(btn_size)
-                                    .corner_radius(radius),
-                            )
-                            .clicked()
-                        {
+                        if TactileButton::new("Open").ghost().ui(ui).clicked() {
                             if let Err(e) = open::that(format!("http://localhost:{}", port)) {
                                 error!("open browser failed: {}", e);
                             }
@@ -590,24 +551,10 @@ impl App {
                     }
                 } else if is_crashed {
                     // Crashed apps show Start (not Stop/Restart) to allow recovery.
-                    if ui
-                        .add(
-                            egui::Button::new("Start")
-                                .min_size(btn_size)
-                                .corner_radius(radius),
-                        )
-                        .clicked()
-                    {
+                    if TactileButton::new("Start").primary().ui(ui).clicked() {
                         self.dispatch_start(entry.clone());
                     }
-                } else if ui
-                    .add(
-                        egui::Button::new("Start")
-                            .min_size(btn_size)
-                            .corner_radius(radius),
-                    )
-                    .clicked()
-                {
+                } else if TactileButton::new("Start").primary().ui(ui).clicked() {
                     self.dispatch_start(entry.clone());
                 }
 
@@ -914,24 +861,12 @@ impl App {
         }
 
         ui.add_space(golden::SPACE[2]);
-        let btn_size = egui::vec2(0.0, golden::CONTROL_HEIGHT_SM);
-        let radius = egui::CornerRadius::same(golden::RADIUS_SM);
 
         if is_restarting {
-            ui.add_enabled(
-                false,
-                egui::Button::new("Restarting…")
-                    .min_size(btn_size)
-                    .corner_radius(radius),
-            );
+            TactileButton::new("Restarting…").ghost().enabled(false).ui(ui);
         } else if is_in_flight {
             let lbl = if is_running { "Stopping…" } else { "Starting…" };
-            ui.add_enabled(
-                false,
-                egui::Button::new(lbl)
-                    .min_size(btn_size)
-                    .corner_radius(radius),
-            );
+            TactileButton::new(lbl).ghost().enabled(false).ui(ui);
         } else if is_running {
             let pid = if let AppStatus::Running { pid } = &status {
                 Some(*pid)
@@ -939,47 +874,19 @@ impl App {
                 None
             };
             ui.horizontal(|ui| {
-                if ui
-                    .add(
-                        egui::Button::new("Stop")
-                            .min_size(btn_size)
-                            .corner_radius(radius),
-                    )
-                    .clicked()
-                {
+                if TactileButton::new("Stop").ghost().ui(ui).clicked() {
                     *pending_stop = Some((entry.clone(), pid));
                 }
-                if ui
-                    .add(
-                        egui::Button::new("Restart")
-                            .min_size(btn_size)
-                            .corner_radius(radius),
-                    )
-                    .clicked()
-                {
+                if TactileButton::new("Restart").ghost().ui(ui).clicked() {
                     *pending_restart = Some((entry.clone(), pid));
                 }
                 if let Some(port) = port_info.port {
-                    if ui
-                        .add(
-                            egui::Button::new("Open")
-                                .min_size(btn_size)
-                                .corner_radius(radius),
-                        )
-                        .clicked()
-                    {
+                    if TactileButton::new("Open").ghost().ui(ui).clicked() {
                         *pending_open = Some(port);
                     }
                 }
             });
-        } else if ui
-            .add(
-                egui::Button::new("Start")
-                    .min_size(btn_size)
-                    .corner_radius(radius),
-            )
-            .clicked()
-        {
+        } else if TactileButton::new("Start").primary().ui(ui).clicked() {
             *pending_start = Some(entry.clone());
         }
 
