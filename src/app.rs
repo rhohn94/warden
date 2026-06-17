@@ -35,10 +35,19 @@ pub struct AppState {
     pub last_scan: Instant,
     /// The currently selected app directory; `None` means no selection.
     pub selected_app: Option<PathBuf>,
+    /// Whether to send desktop notifications on app status changes.
+    pub notifications_enabled: bool,
+    /// Maximum log lines to retain per app in the tail buffer.
+    pub log_tail_lines: usize,
 }
 
 impl AppState {
-    pub fn new(apps_dir: PathBuf, refresh_secs: u64) -> Self {
+    pub fn new(
+        apps_dir: PathBuf,
+        refresh_secs: u64,
+        notifications_enabled: bool,
+        log_tail_lines: usize,
+    ) -> Self {
         AppState {
             entries: Vec::new(),
             statuses: HashMap::new(),
@@ -47,6 +56,8 @@ impl AppState {
             refresh_secs,
             last_scan: Instant::now(),
             selected_app: None,
+            notifications_enabled,
+            log_tail_lines,
         }
     }
 }
@@ -717,14 +728,14 @@ mod tests {
     #[test]
     fn test_app_state_selected_app_defaults_none() {
         use std::path::PathBuf;
-        let state = AppState::new(PathBuf::from("/tmp/apps"), 30);
+        let state = AppState::new(PathBuf::from("/tmp/apps"), 30, true, 500);
         assert!(state.selected_app.is_none());
     }
 
     #[test]
     fn test_app_state_selected_app_can_be_set() {
         use std::path::PathBuf;
-        let mut state = AppState::new(PathBuf::from("/tmp/apps"), 30);
+        let mut state = AppState::new(PathBuf::from("/tmp/apps"), 30, true, 500);
         let path = PathBuf::from("/tmp/apps/myapp");
         state.selected_app = Some(path.clone());
         assert_eq!(state.selected_app, Some(path));
@@ -733,9 +744,17 @@ mod tests {
     #[test]
     fn test_app_state_selected_app_can_be_cleared() {
         use std::path::PathBuf;
-        let mut state = AppState::new(PathBuf::from("/tmp/apps"), 30);
+        let mut state = AppState::new(PathBuf::from("/tmp/apps"), 30, true, 500);
         state.selected_app = Some(PathBuf::from("/tmp/apps/myapp"));
         state.selected_app = None;
         assert!(state.selected_app.is_none());
+    }
+
+    #[test]
+    fn test_app_state_carries_notifications_and_log_tail() {
+        use std::path::PathBuf;
+        let state = AppState::new(PathBuf::from("/tmp/apps"), 10, false, 200);
+        assert!(!state.notifications_enabled);
+        assert_eq!(state.log_tail_lines, 200);
     }
 }
