@@ -1,4 +1,5 @@
 mod app;
+mod config;
 mod detector;
 mod dump_ui;
 mod launcher;
@@ -6,6 +7,7 @@ mod models;
 mod scanner;
 
 use app::{App, AppState};
+use config::Config;
 use launcher::Launcher;
 use obsidian::AppRunner;
 use std::{path::PathBuf, sync::Arc, time::Duration};
@@ -34,7 +36,20 @@ fn main() {
         return;
     }
 
-    let apps_dir = parse_flag(&args, "--apps-dir")
+    // Load persistent config; CLI args override config values.
+    let mut config = Config::load();
+
+    // Resolve apps_dir: CLI flag wins, then config, then hardcoded default.
+    let cli_apps_dir = parse_flag(&args, "--apps-dir");
+    if let Some(dir) = cli_apps_dir {
+        config.apps_dir = Some(dir.to_string());
+        if let Err(e) = config.save() {
+            tracing::warn!("could not save config: {}", e);
+        }
+    }
+    let apps_dir: PathBuf = config
+        .apps_dir
+        .as_deref()
         .map(PathBuf::from)
         .unwrap_or_else(default_apps_dir);
 
@@ -46,9 +61,20 @@ fn main() {
         return;
     }
 
-    let refresh_secs: u64 = parse_flag(&args, "--refresh")
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(5);
+    // Resolve refresh_secs: CLI flag wins, then config, then default 5.
+    let cli_refresh = parse_flag(&args, "--refresh");
+    if let Some(val) = cli_refresh {
+        if let Ok(secs) = val.parse::<u64>() {
+            config.refresh_secs = Some(secs);
+            if let Err(e) = config.save() {
+                tracing::warn!("could not save config: {}", e);
+            }
+        }
+    }
+    let refresh_secs: u64 = config.refresh_secs.unwrap_or(5);
+
+    let notifications_enabled: bool = config.notifications_enabled.unwrap_or(true);
+    let log_tail_lines: usize = config.log_tail_lines.unwrap_or(500);
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -58,6 +84,8 @@ fn main() {
     let state = Arc::new(std::sync::Mutex::new(AppState::new(
         apps_dir.clone(),
         refresh_secs,
+        notifications_enabled,
+        log_tail_lines,
     )));
 
     // Enter the runtime so tokio::spawn in scanner::start works from the main thread.
