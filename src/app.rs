@@ -1,6 +1,7 @@
 use crate::{
     detector,
     launcher::Launcher,
+    log_capture::{LogCapture, LogReceiver},
     models::{AppEntry, AppStatus, PortInfo},
     notifier::Notifier,
 };
@@ -82,6 +83,12 @@ pub struct App {
     force_scan_tx: watch::Sender<()>,
     launcher: Arc<tokio::sync::Mutex<Launcher>>,
     runtime_handle: tokio::runtime::Handle,
+
+    // ── Log capture state (per-app, owned by the render thread) ─────────────
+    /// Ring-buffer of retained log lines per app dir.
+    log_captures: HashMap<PathBuf, LogCapture>,
+    /// Async receivers delivering lines from spawned child processes.
+    log_receivers: HashMap<PathBuf, LogReceiver>,
 }
 
 impl App {
@@ -105,6 +112,8 @@ impl App {
             force_scan_tx,
             launcher,
             runtime_handle,
+            log_captures: HashMap::new(),
+            log_receivers: HashMap::new(),
         }
     }
 
@@ -154,6 +163,9 @@ impl App {
             }
         }
 
+        // Drain pending log lines from all active receivers into the ring buffers.
+        self.drain_log_receivers();
+
         // Extract owned values so the borrow of self.egui_window ends before the closure.
         let ctx = self.egui_window.as_mut().unwrap().ctx_clone();
         let raw_input = self.egui_window.as_mut().unwrap().take_input();
@@ -171,6 +183,24 @@ impl App {
 
         if let Some(renderer) = self.renderer.as_mut() {
             let _ = renderer.render(paint_jobs, full_output.textures_delta, ppp);
+        }
+    }
+
+    /// Non-blocking drain: pull all queued lines from every active log receiver
+    /// into the corresponding ring-buffer. Called once per frame before `draw_ui`.
+    fn drain_log_receivers(&mut self) {
+        let capacity = self.state.lock().unwrap().log_tail_lines;
+        for (dir, rx) in &mut self.log_receivers {
+            let capture = self
+                .log_captures
+                .entry(dir.clone())
+                .or_insert_with(|| LogCapture::new(capacity));
+            loop {
+                match rx.try_recv() {
+                    Ok(line) => capture.push(line),
+                    Err(_) => break, // Empty or sender dropped — nothing more to read.
+                }
+            }
         }
     }
 
@@ -529,20 +559,74 @@ impl App {
         {
             *pending_start = Some(entry.clone());
         }
+
+        // ── Log pane ─────────────────────────────────────────────────────
+        let has_log_receiver = self.log_receivers.contains_key(dir);
+        ui.separator();
+        ui.label("Log output:");
+        if is_running && has_log_receiver {
+            let lines = self
+                .log_captures
+                .get(dir)
+                .map(|c| c.lines())
+                .unwrap_or_default();
+            if lines.is_empty() {
+                ui.label("No log output yet.");
+            } else {
+                egui::ScrollArea::vertical()
+                    .id_salt("log_scroll")
+                    .max_height(160.0)
+                    .stick_to_bottom(true)
+                    .show(ui, |ui| {
+                        for line in &lines {
+                            ui.monospace(line);
+                        }
+                    });
+            }
+        } else if is_running && !has_log_receiver {
+            // Running but not launched by Warden this session.
+            ui.label("Log streaming not available — app was not started by Warden this session.");
+        } else {
+            // Stopped or unknown.
+            ui.label("Log streaming not available — app was not started by Warden this session.");
+        }
     }
 
-    fn dispatch_start(&self, entry: AppEntry) {
+    fn dispatch_start(&mut self, entry: AppEntry) {
         let state = Arc::clone(&self.state);
         let launcher = Arc::clone(&self.launcher);
+        let dir = entry.dir.clone();
         {
             let mut s = state.lock().unwrap();
-            s.in_flight.insert(entry.dir.clone());
+            s.in_flight.insert(dir.clone());
         }
+
+        // Pre-create a log channel whose receiver lives on the render thread.
+        // The sender is cloned into the async task, which forwards lines from
+        // the child-process reader into it once the process starts.
+        use crate::log_capture::log_channel;
+        let (log_tx, log_rx) = log_channel();
+        let capacity = self.state.lock().unwrap().log_tail_lines;
+        self.log_captures
+            .entry(dir.clone())
+            .or_insert_with(|| LogCapture::new(capacity));
+        self.log_receivers.insert(dir.clone(), log_rx);
+
         self.runtime_handle.spawn(async move {
-            let (status, port_info) = {
+            let (status, port_info, process_log_rx) = {
                 let mut l = launcher.lock().await;
                 l.start(&entry).await
             };
+            // Bridge lines from the child process's reader to the render-thread receiver.
+            if let Some(mut lrx) = process_log_rx {
+                tokio::spawn(async move {
+                    while let Some(line) = lrx.recv().await {
+                        if log_tx.send(line).is_err() {
+                            break; // Receiver dropped (e.g. app entry removed).
+                        }
+                    }
+                });
+            }
             let mut s = state.lock().unwrap();
             s.in_flight.remove(&entry.dir);
             s.statuses.insert(entry.dir.clone(), (status.clone(), port_info));
