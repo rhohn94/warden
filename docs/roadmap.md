@@ -44,12 +44,20 @@ verification surface.
 - Apply Aura spacing and radius tokens throughout `src/app.rs`
 - App details pane (`SidePanel::right`, click-to-select row, metadata display)
 
+## v0.4 — Persistent Settings + Notifications
+
+Plan: [`release-planning-v0.4.md`](release-planning-v0.4.md).
+
+Reduces friction at startup and keeps users informed without polling the window.
+
+**Scope:**
+- Persistent settings: TOML config file (`~/.config/warden/config.toml`) saves `--apps-dir` and `--refresh`; CLI args override config on startup
+- macOS status-change notifications: desktop notification via `notify-rust` (or `mac-notification-sys`) when an app transitions Running → Stopped or Stopped → Running
+- Log streaming / tail window: a scrollable log pane in the details panel (`SidePanel::right`) showing the last N stdout/stderr lines from the currently-selected running app's child process
+
 ## Backlog
 
 - Multi-directory watching
-- Log streaming / tail window
-- macOS NSUserNotification support
-- Persistent settings (TOML config file)
 - Ensign HTTP health polling
 - Version update checks
 - History / uptime tracking
