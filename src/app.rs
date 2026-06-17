@@ -11,7 +11,7 @@ use obsidian::{
     app::window_attributes,
     aura::golden,
     theme::{self, Theme},
-    widgets::{Badge, BadgeStatus, TactileButton},
+    widgets::{Badge, BadgeStatus, LabeledDivider, TactileButton},
     AppDelegate, EguiOnlyRenderer, EguiWindow,
 };
 use std::{
@@ -345,14 +345,14 @@ impl App {
         egui::CentralPanel::default().show(ctx, |ui| {
             // ── Header ──────────────────────────────────────────────────
             ui.horizontal(|ui| {
-                ui.heading("Warden");
+                ui.label(theme::apply_type_tokens(egui::RichText::new("Warden").size(golden::TEXT_LG).strong(), golden::TEXT_LG));
                 ui.add_space(golden::SPACE[2]); // SPACE_2 = 8px
                 let dirs_label = if apps_dirs.len() == 1 {
                     apps_dirs[0].to_string_lossy().into_owned()
                 } else {
                     format!("{} directories", apps_dirs.len())
                 };
-                ui.label(&dirs_label);
+                ui.label(egui::RichText::new(&dirs_label).color(golden::TEXT_MUTED).size(golden::TEXT_SM));
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     // [Logs] / [Apps] toggle — swaps the central panel content.
                     let toggle_label = if self.show_log_viewer { "Apps" } else { "Logs" };
@@ -375,7 +375,7 @@ impl App {
                 });
             });
 
-            ui.separator();
+            theme::hairline(ui);
 
             if self.show_log_viewer {
                 self.draw_log_viewer(ui, &entries, &statuses);
@@ -587,7 +587,7 @@ impl App {
             ui.add_space(golden::SPACE[3]);
         }
 
-        ui.separator();
+        theme::hairline(ui);
 
         // ── Status bar ────────────────────────────────────────────────
         ui.horizontal(|ui| {
@@ -770,7 +770,7 @@ impl App {
 
         // ── Header ───────────────────────────────────────────────────────
         ui.add_space(golden::SPACE[2]);
-        ui.heading(&entry.name);
+        ui.label(theme::apply_type_tokens(egui::RichText::new(&entry.name).size(golden::TEXT_LG).strong(), golden::TEXT_LG));
 
         let (badge_label, badge_status) = match &status {
             AppStatus::Running { .. } => ("Running", BadgeStatus::Success),
@@ -784,22 +784,22 @@ impl App {
                 ui.label(format!("PID {}", pid));
             }
         });
-        ui.separator();
+        theme::hairline(ui);
 
         // ── Metadata table ───────────────────────────────────────────────
         egui::Grid::new("details_meta")
             .num_columns(2)
             .spacing([golden::SPACE[3], golden::SPACE[2]])
             .show(ui, |ui| {
-                ui.label("Directory");
+                ui.label(egui::RichText::new("Directory").color(golden::TEXT_MUTED).size(golden::TEXT_SM));
                 ui.label(dir.to_string_lossy().as_ref());
                 ui.end_row();
 
-                ui.label("Grimoire version");
+                ui.label(egui::RichText::new("Grimoire version").color(golden::TEXT_MUTED).size(golden::TEXT_SM));
                 ui.label(entry.framework_version.as_deref().unwrap_or("—"));
                 ui.end_row();
 
-                ui.label("Update");
+                ui.label(egui::RichText::new("Update").color(golden::TEXT_MUTED).size(golden::TEXT_SM));
                 let update_label = match version_results.get(&entry.name) {
                     Some(VersionCheckResult::UpdateAvailable { latest }) => {
                         format!("↑ {} available", latest)
@@ -810,18 +810,18 @@ impl App {
                 ui.label(update_label);
                 ui.end_row();
 
-                ui.label("Tech stack");
+                ui.label(egui::RichText::new("Tech stack").color(golden::TEXT_MUTED).size(golden::TEXT_SM));
                 ui.label(infer_tech_stack(entry.server_command.as_deref()));
                 ui.end_row();
             });
-        ui.separator();
+        theme::hairline(ui);
 
         // ── Port section ─────────────────────────────────────────────────
         egui::Grid::new("details_ports")
             .num_columns(2)
             .spacing([golden::SPACE[3], golden::SPACE[2]])
             .show(ui, |ui| {
-                ui.label("Known port");
+                ui.label(egui::RichText::new("Known port").color(golden::TEXT_MUTED).size(golden::TEXT_SM));
                 ui.label(
                     entry
                         .known_port
@@ -830,7 +830,7 @@ impl App {
                 );
                 ui.end_row();
 
-                ui.label("Detected port");
+                ui.label(egui::RichText::new("Detected port").color(golden::TEXT_MUTED).size(golden::TEXT_SM));
                 ui.label(
                     port_info
                         .port
@@ -844,17 +844,17 @@ impl App {
                 ui.label("⚠ ports differ");
             }
         }
-        ui.separator();
+        theme::hairline(ui);
 
         // ── Command ──────────────────────────────────────────────────────
-        ui.label("Command");
+        ui.label(egui::RichText::new("Command").color(golden::TEXT_MUTED).size(golden::TEXT_SM));
         ui.add(
             egui::Label::new(
                 egui::RichText::new(entry.server_command.as_deref().unwrap_or("—")).monospace(),
             )
             .wrap(),
         );
-        ui.separator();
+        theme::hairline(ui);
 
         // ── Actions ──────────────────────────────────────────────────────
         let is_running = matches!(status, AppStatus::Running { .. });
@@ -900,8 +900,7 @@ impl App {
 
         // ── Log pane ─────────────────────────────────────────────────────
         let has_log_receiver = self.log_receivers.contains_key(dir);
-        ui.separator();
-        ui.label("Log output:");
+        LabeledDivider::new("Log output").ui(ui);
         if is_running && has_log_receiver {
             let lines = self
                 .log_captures
@@ -930,8 +929,7 @@ impl App {
         }
 
         // ── History section ──────────────────────────────────────────────
-        ui.separator();
-        ui.label("History:");
+        LabeledDivider::new("History").ui(ui);
 
         let hist = self.state.lock().unwrap().history.clone();
         let hist = hist.lock().unwrap();
