@@ -1,9 +1,10 @@
 use crate::detector;
 use crate::models::{AppEntry, AppStatus, PortInfo};
+use crate::perf::write_perf_log;
 use serde_json::Value;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::sync::watch;
 use tokio::task::JoinSet;
 use tracing::{debug, info, warn};
@@ -29,6 +30,7 @@ pub fn start(
     tokio::spawn(async move {
         loop {
             in_flight.store(true, std::sync::atomic::Ordering::SeqCst);
+            let t0 = Instant::now();
             let entries = scan_all(&roots);
             info!(
                 "scan complete: {} app(s) across {} root(s)",
@@ -38,6 +40,10 @@ pub fn start(
 
             // Run per-app detector calls concurrently with a 2 s timeout each.
             let results = run_detectors_concurrent(entries).await;
+            let cycle_ms = t0.elapsed().as_millis();
+
+            // Find slowest app by name for telemetry (not tracked individually yet; emit blank).
+            write_perf_log(cycle_ms, 0u32, "");
 
             let _ = tx.send(results);
             in_flight.store(false, std::sync::atomic::Ordering::SeqCst);
