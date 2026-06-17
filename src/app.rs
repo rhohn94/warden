@@ -102,6 +102,11 @@ pub struct App {
     /// Async receivers delivering lines from spawned child processes.
     log_receivers: HashMap<PathBuf, LogReceiver>,
 
+    // ── Restart in-flight tracking (render-thread only) ──────────────────────
+    /// Tracks apps currently undergoing a restart. Separate from `AppState::in_flight`
+    /// so the render thread can show "Restarting…" rather than "Stopping…"/"Starting…".
+    restart_in_flight: HashSet<PathBuf>,
+
     // ── Log viewer state ─────────────────────────────────────────────────────
     /// When true, the central area shows the dedicated log viewer; false shows the app list.
     show_log_viewer: bool,
@@ -140,6 +145,7 @@ impl App {
             runtime_handle,
             log_captures: HashMap::new(),
             log_receivers: HashMap::new(),
+            restart_in_flight: HashSet::new(),
             show_log_viewer: false,
             log_viewer_filter: HashMap::new(),
             log_viewer_auto_scroll: true,
@@ -249,6 +255,13 @@ impl App {
             tracing::warn!(frame_ms = frame_dt_ms as u64, "slow frame");
         }
 
+        // Drain completed restart-in-flight entries: once in_flight no longer contains
+        // the dir (the async task removed it), we can clear our render-thread marker.
+        {
+            let s = self.state.lock().unwrap();
+            self.restart_in_flight.retain(|dir| s.in_flight.contains(dir));
+        }
+
         // Snapshot all shared state before rendering so we can drop the lock.
         let (entries, statuses, in_flight, apps_dirs, refresh_secs, last_scan, current_selected, version_results_snap) = {
             let state = self.state.lock().unwrap();
@@ -274,6 +287,7 @@ impl App {
         // Pending action from the details pane — applied after the panel closes.
         let mut pending_start: Option<AppEntry> = None;
         let mut pending_stop: Option<(AppEntry, Option<u32>)> = None;
+        let mut pending_restart: Option<(AppEntry, Option<u32>)> = None;
         let mut pending_open: Option<u16> = None;
 
         // ── Details side panel (right) — shown when an app is selected ──────
@@ -287,9 +301,11 @@ impl App {
                         &entries,
                         &statuses,
                         &in_flight,
+                        &self.restart_in_flight.clone(),
                         &version_results_snap,
                         &mut pending_start,
                         &mut pending_stop,
+                        &mut pending_restart,
                         &mut pending_open,
                     );
                 });
@@ -346,6 +362,7 @@ impl App {
                     &entries,
                     &statuses,
                     &in_flight,
+                    &self.restart_in_flight.clone(),
                     &version_results_snap,
                     &mut pending_select,
                     &current_selected,
@@ -368,6 +385,9 @@ impl App {
         if let Some((entry, pid)) = pending_stop {
             self.dispatch_stop(entry, pid);
         }
+        if let Some((entry, pid)) = pending_restart {
+            self.dispatch_restart(entry, pid);
+        }
         if let Some(port) = pending_open {
             if let Err(e) = open::that(format!("http://localhost:{}", port)) {
                 error!("open browser failed: {}", e);
@@ -386,6 +406,7 @@ impl App {
         entries: &[AppEntry],
         statuses: &HashMap<PathBuf, (AppStatus, PortInfo)>,
         in_flight: &HashSet<PathBuf>,
+        restart_in_flight: &HashSet<PathBuf>,
         version_results_snap: &HashMap<String, VersionCheckResult>,
         pending_select: &mut Option<Option<PathBuf>>,
         current_selected: &Option<PathBuf>,
@@ -410,6 +431,7 @@ impl App {
                 .unwrap_or_else(|| "—".to_string());
             let is_running = matches!(status, AppStatus::Running { .. });
             let is_in_flight = in_flight.contains(&entry.dir);
+            let is_restarting = restart_in_flight.contains(&entry.dir);
             let is_selected = current_selected.as_ref() == Some(&entry.dir);
 
             // SPACE_3 (12px) vertical padding above each app row.
@@ -449,7 +471,14 @@ impl App {
 
                 let btn_size = egui::vec2(0.0, golden::CONTROL_HEIGHT_SM);
                 let radius = egui::CornerRadius::same(golden::RADIUS_SM);
-                if is_in_flight {
+                if is_restarting {
+                    ui.add_enabled(
+                        false,
+                        egui::Button::new("Restarting…")
+                            .min_size(btn_size)
+                            .corner_radius(radius),
+                    );
+                } else if is_in_flight {
                     let lbl = if is_running { "Stopping…" } else { "Starting…" };
                     ui.add_enabled(
                         false,
@@ -472,6 +501,16 @@ impl App {
                         .clicked()
                     {
                         self.dispatch_stop(entry.clone(), pid);
+                    }
+                    if ui
+                        .add(
+                            egui::Button::new("Restart")
+                                .min_size(btn_size)
+                                .corner_radius(radius),
+                        )
+                        .clicked()
+                    {
+                        self.dispatch_restart(entry.clone(), pid);
                     }
                     if let Some(port) = port_info.port {
                         if ui
@@ -683,9 +722,11 @@ impl App {
         entries: &[AppEntry],
         statuses: &HashMap<PathBuf, (AppStatus, PortInfo)>,
         in_flight: &HashSet<PathBuf>,
+        restart_in_flight: &HashSet<PathBuf>,
         version_results: &HashMap<String, VersionCheckResult>,
         pending_start: &mut Option<AppEntry>,
         pending_stop: &mut Option<(AppEntry, Option<u32>)>,
+        pending_restart: &mut Option<(AppEntry, Option<u32>)>,
         pending_open: &mut Option<u16>,
     ) {
         let Some(ref dir) = selected else { return };
@@ -785,12 +826,20 @@ impl App {
         // ── Actions ──────────────────────────────────────────────────────
         let is_running = matches!(status, AppStatus::Running { .. });
         let is_in_flight = in_flight.contains(dir);
+        let is_restarting = restart_in_flight.contains(dir);
 
         ui.add_space(golden::SPACE[2]);
         let btn_size = egui::vec2(0.0, golden::CONTROL_HEIGHT_SM);
         let radius = egui::CornerRadius::same(golden::RADIUS_SM);
 
-        if is_in_flight {
+        if is_restarting {
+            ui.add_enabled(
+                false,
+                egui::Button::new("Restarting…")
+                    .min_size(btn_size)
+                    .corner_radius(radius),
+            );
+        } else if is_in_flight {
             let lbl = if is_running { "Stopping…" } else { "Starting…" };
             ui.add_enabled(
                 false,
@@ -814,6 +863,16 @@ impl App {
                     .clicked()
                 {
                     *pending_stop = Some((entry.clone(), pid));
+                }
+                if ui
+                    .add(
+                        egui::Button::new("Restart")
+                            .min_size(btn_size)
+                            .corner_radius(radius),
+                    )
+                    .clicked()
+                {
+                    *pending_restart = Some((entry.clone(), pid));
                 }
                 if let Some(port) = port_info.port {
                     if ui
@@ -980,6 +1039,60 @@ impl App {
                 hist.record_stopped(&entry.name);
                 hist.save();
             }
+        });
+    }
+
+    fn dispatch_restart(&mut self, entry: AppEntry, pid: Option<u32>) {
+        let state = Arc::clone(&self.state);
+        let launcher = Arc::clone(&self.launcher);
+        let dir = entry.dir.clone();
+
+        // Mark restart in-flight on the render thread's own set (shows "Restarting…")
+        // and on shared state so the scanner does not overwrite the status mid-flight.
+        // The render thread clears `restart_in_flight` on the next frame after the
+        // async task removes the dir from `state.in_flight`.
+        self.restart_in_flight.insert(dir.clone());
+        {
+            let mut s = state.lock().unwrap();
+            s.in_flight.insert(dir.clone());
+        }
+
+        // Pre-create a log channel for the restarted process; replace the old receiver.
+        use crate::log_capture::log_channel;
+        let (log_tx, log_rx) = log_channel();
+        let capacity = self.state.lock().unwrap().log_tail_lines;
+        self.log_captures
+            .entry(dir.clone())
+            .or_insert_with(|| LogCapture::new(capacity));
+        self.log_receivers.insert(dir.clone(), log_rx);
+
+        self.runtime_handle.spawn(async move {
+            let (status, port_info, process_log_rx) = {
+                let mut l = launcher.lock().await;
+                l.restart(&entry, pid).await
+            };
+            // Bridge lines from the restarted child process to the render thread.
+            if let Some(mut lrx) = process_log_rx {
+                tokio::spawn(async move {
+                    while let Some(line) = lrx.recv().await {
+                        if log_tx.send(line).is_err() {
+                            break;
+                        }
+                    }
+                });
+            }
+            let mut s = state.lock().unwrap();
+            s.in_flight.remove(&entry.dir);
+            s.statuses.insert(entry.dir.clone(), (status.clone(), port_info));
+            // Record history: stopped then started for the restart.
+            {
+                let mut hist = s.history.lock().unwrap();
+                hist.record_stopped(&entry.name);
+                let new_pid = if let AppStatus::Running { pid: p } = status.clone() { p } else { 0 };
+                hist.record_started(&entry.name, new_pid);
+                hist.save();
+            }
+            s.notifier.check_transitions(&[(entry.name.clone(), status)]);
         });
     }
 
