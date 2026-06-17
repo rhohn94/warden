@@ -55,9 +55,19 @@ Reduces friction at startup and keeps users informed without polling the window.
 - macOS status-change notifications: desktop notification via `notify-rust` (or `mac-notification-sys`) when an app transitions Running → Stopped or Stopped → Running
 - Log streaming / tail window: a scrollable log pane in the details panel (`SidePanel::right`) showing the last N stdout/stderr lines from the currently-selected running app's child process
 
+## v0.5 — Runtime Insights
+
+Plan: [`release-planning-v0.5.md`](release-planning-v0.5.md). (implementation complete — pending release)
+
+Adds observable runtime data — per-app version update indicators and
+start/stop history with live uptime — so operators can see at a glance
+whether apps are stale and how stable they have been.
+
+**Scope:**
+- Version update checks: async background checks against each app's git remote; badge in app list and details pane (Issue #20)
+- History / uptime tracking: per-app ring buffer of start/stop events, persisted to `~/.config/warden/history.json`; History sub-section + live Uptime counter in details panel (Issue #21)
+
 ## Backlog
 
 - Multi-directory watching
 - Ensign HTTP health polling
-- Version update checks
-- History / uptime tracking

@@ -30,7 +30,7 @@ pub fn start(
 }
 
 /// Scans `root` synchronously and returns discovered `AppEntry` records.
-pub fn scan_once(root: &PathBuf) -> Vec<AppEntry> {
+pub fn scan_once(root: &Path) -> Vec<AppEntry> {
     let read = match std::fs::read_dir(root) {
         Ok(r) => r,
         Err(e) => {
@@ -63,7 +63,7 @@ fn is_app_dir(dir: &Path) -> bool {
         || dir.join("start.sh").exists()
 }
 
-fn parse_app_dir(dir: &PathBuf) -> AppEntry {
+fn parse_app_dir(dir: &Path) -> AppEntry {
     if let Some(entry) = parse_from_build_info(dir) {
         return entry;
     }
@@ -74,7 +74,7 @@ fn parse_app_dir(dir: &PathBuf) -> AppEntry {
     let name = dir_name(dir);
     AppEntry {
         name,
-        dir: dir.clone(),
+        dir: dir.to_path_buf(),
         framework_version: None,
         server_command: read_server_command(dir),
         known_port: None,
@@ -82,7 +82,7 @@ fn parse_app_dir(dir: &PathBuf) -> AppEntry {
 }
 
 /// Parse from Grimoire deployment build info (`grimoire-build-info.json`).
-fn parse_from_build_info(dir: &PathBuf) -> Option<AppEntry> {
+fn parse_from_build_info(dir: &Path) -> Option<AppEntry> {
     let text = std::fs::read_to_string(dir.join("grimoire-build-info.json")).ok()?;
     let val: Value = serde_json::from_str(&text).ok()?;
 
@@ -106,7 +106,7 @@ fn parse_from_build_info(dir: &PathBuf) -> Option<AppEntry> {
 
     Some(AppEntry {
         name,
-        dir: dir.clone(),
+        dir: dir.to_path_buf(),
         framework_version,
         server_command: read_server_command(dir),
         known_port,
@@ -114,7 +114,7 @@ fn parse_from_build_info(dir: &PathBuf) -> Option<AppEntry> {
 }
 
 /// Parse from Grimoire project source config (`grimoire-config.json`).
-fn parse_from_grimoire_config(dir: &PathBuf) -> Option<AppEntry> {
+fn parse_from_grimoire_config(dir: &Path) -> Option<AppEntry> {
     let text = std::fs::read_to_string(dir.join("grimoire-config.json")).ok()?;
     let val: Value = serde_json::from_str(&text).ok()?;
 
@@ -132,14 +132,14 @@ fn parse_from_grimoire_config(dir: &PathBuf) -> Option<AppEntry> {
 
     Some(AppEntry {
         name,
-        dir: dir.clone(),
+        dir: dir.to_path_buf(),
         framework_version,
         server_command: read_server_command(dir),
         known_port: None,
     })
 }
 
-fn read_server_command(dir: &PathBuf) -> Option<String> {
+fn read_server_command(dir: &Path) -> Option<String> {
     let text = std::fs::read_to_string(dir.join("recipes.json")).ok()?;
     let val: Value = serde_json::from_str(&text).ok()?;
     val.pointer("/targets/server/command")
@@ -149,13 +149,13 @@ fn read_server_command(dir: &PathBuf) -> Option<String> {
 
 /// Parse the port number out of a URL like `http://localhost:8080`.
 fn parse_port_from_url(url: &str) -> Option<u16> {
-    let after_scheme = url.splitn(3, "//").nth(1)?;
+    let after_scheme = url.split("//").nth(1)?;
     let host_port = after_scheme.split('/').next()?;
     let port_str = host_port.split(':').nth(1)?;
     port_str.parse().ok()
 }
 
-fn dir_name(dir: &PathBuf) -> String {
+fn dir_name(dir: &Path) -> String {
     dir.file_name()
         .and_then(|n| n.to_str())
         .unwrap_or("unknown")

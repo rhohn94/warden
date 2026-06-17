@@ -2,19 +2,23 @@ mod app;
 mod config;
 mod detector;
 mod dump_ui;
+mod history;
 mod launcher;
 mod log_capture;
 mod models;
 mod notifier;
 mod scanner;
+mod version_checker;
 
 use app::{App, AppState};
 use config::Config;
+use history::HistoryStore;
 use launcher::Launcher;
 use obsidian::AppRunner;
 use std::{path::PathBuf, sync::Arc, time::Duration};
 use tokio::sync::Mutex as TokioMutex;
 use tracing::info;
+use version_checker::VersionChecker;
 
 fn main() {
     tracing_subscriber::fmt()
@@ -77,17 +81,26 @@ fn main() {
 
     let notifications_enabled: bool = config.notifications_enabled.unwrap_or(true);
     let log_tail_lines: usize = config.log_tail_lines.unwrap_or(500);
+    let version_check_interval_secs: u64 = config.version_check_interval_secs.unwrap_or(3600);
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
         .expect("tokio runtime failed to build");
 
+    // Build the version checker before constructing AppState so the Arc can be
+    // shared into AppState without an extra clone step.
+    let version_checker = VersionChecker::new();
+    let version_results = version_checker.results();
+    let history = Arc::new(std::sync::Mutex::new(HistoryStore::load()));
+
     let state = Arc::new(std::sync::Mutex::new(AppState::new(
         apps_dir.clone(),
         refresh_secs,
         notifications_enabled,
         log_tail_lines,
+        Arc::clone(&version_results),
+        history,
     )));
 
     // Enter the runtime so tokio::spawn in scanner::start works from the main thread.
@@ -96,6 +109,12 @@ fn main() {
     let (scanner_rx, force_scan_tx) = scanner::start(apps_dir, Duration::from_secs(refresh_secs));
     let launcher = Arc::new(TokioMutex::new(Launcher::new()));
     let runtime_handle = runtime.handle().clone();
+
+    // Start the background version-check sweep with an empty initial entries list;
+    // the checker will pick up real entries on its first sweep after the scanner
+    // has populated state.  Pass a clone of the runtime handle.
+    version_checker.start(Vec::new(), version_check_interval_secs, runtime_handle.clone());
+
     let mut app = App::new(state, scanner_rx, force_scan_tx, launcher, runtime_handle);
 
     // AppRunner::run blocks until the window is closed.
