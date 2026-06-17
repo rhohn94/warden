@@ -316,6 +316,10 @@ impl App {
         let mut pending_restart: Option<(AppEntry, Option<u32>)> = None;
         let mut pending_open: Option<u16> = None;
 
+        // Paint Aura wallpaper behind all panel content.
+        let screen_rect = ctx.screen_rect();
+        obsidian::theme::paint_aura_wallpaper_opaque(&ctx.layer_painter(egui::LayerId::background()), screen_rect);
+
         // ── Details side panel (right) — shown when an app is selected ──────
         if current_selected.is_some() {
             egui::SidePanel::right("details")
@@ -498,125 +502,129 @@ impl App {
 
             // SPACE_3 (12px) vertical padding above each app row.
             ui.add_space(golden::SPACE[3]);
-            let row_resp = ui.horizontal(|ui| {
-                Badge::new(badge_label, badge_status).ui(ui);
-                ui.label(&entry.name);
-                if let Some(v) = &entry.framework_version {
-                    ui.label(v);
-                } else {
-                    ui.label("—");
-                }
-                if let Some(VersionCheckResult::UpdateAvailable { latest }) =
-                    version_results_snap.get(&entry.name)
-                {
-                    ui.label(format!("↑ {}", latest));
-                }
-                ui.label(&port_str);
-                // Show which root directory this app came from when multiple roots
-                // are watched; use a subdued label so it doesn't dominate the row.
-                if apps_dirs.len() > 1 {
-                    let root_name = entry
-                        .root
-                        .file_name()
-                        .map(|n| n.to_string_lossy().into_owned())
-                        .unwrap_or_else(|| entry.root.to_string_lossy().into_owned());
-                    ui.add(
-                        egui::Label::new(
-                            egui::RichText::new(root_name)
-                                .small()
-                                .color(ui.visuals().weak_text_color()),
-                        )
-                        .sense(egui::Sense::hover()),
-                    )
-                    .on_hover_text(entry.root.to_string_lossy().as_ref());
-                }
+            let fill = if is_selected {
+                egui::Color32::from_white_alpha(golden::SURFACE_1_A)
+            } else {
+                egui::Color32::TRANSPARENT
+            };
+            let frame_resp = egui::Frame::new()
+                .fill(fill)
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        Badge::new(badge_label, badge_status).ui(ui);
+                        ui.label(&entry.name);
+                        if let Some(v) = &entry.framework_version {
+                            ui.label(v);
+                        } else {
+                            ui.label("—");
+                        }
+                        if let Some(VersionCheckResult::UpdateAvailable { latest }) =
+                            version_results_snap.get(&entry.name)
+                        {
+                            ui.label(format!("↑ {}", latest));
+                        }
+                        ui.label(&port_str);
+                        // Show which root directory this app came from when multiple roots
+                        // are watched; use a subdued label so it doesn't dominate the row.
+                        if apps_dirs.len() > 1 {
+                            let root_name = entry
+                                .root
+                                .file_name()
+                                .map(|n| n.to_string_lossy().into_owned())
+                                .unwrap_or_else(|| entry.root.to_string_lossy().into_owned());
+                            ui.add(
+                                egui::Label::new(
+                                    egui::RichText::new(root_name)
+                                        .small()
+                                        .color(ui.visuals().weak_text_color()),
+                                )
+                                .sense(egui::Sense::hover()),
+                            )
+                            .on_hover_text(entry.root.to_string_lossy().as_ref());
+                        }
 
-                let btn_size = egui::vec2(0.0, golden::CONTROL_HEIGHT_SM);
-                let radius = egui::CornerRadius::same(golden::RADIUS_SM);
-                if is_restarting {
-                    ui.add_enabled(
-                        false,
-                        egui::Button::new("Restarting…")
-                            .min_size(btn_size)
-                            .corner_radius(radius),
-                    );
-                } else if is_in_flight {
-                    let lbl = if is_running { "Stopping…" } else { "Starting…" };
-                    ui.add_enabled(
-                        false,
-                        egui::Button::new(lbl)
-                            .min_size(btn_size)
-                            .corner_radius(radius),
-                    );
-                } else if is_running {
-                    let pid = if let AppStatus::Running { pid } = status {
-                        Some(*pid)
-                    } else {
-                        None
-                    };
-                    if ui
-                        .add(
-                            egui::Button::new("Stop")
-                                .min_size(btn_size)
-                                .corner_radius(radius),
-                        )
-                        .clicked()
-                    {
-                        self.dispatch_stop(entry.clone(), pid);
-                    }
-                    if ui
-                        .add(
-                            egui::Button::new("Restart")
-                                .min_size(btn_size)
-                                .corner_radius(radius),
-                        )
-                        .clicked()
-                    {
-                        self.dispatch_restart(entry.clone(), pid);
-                    }
-                    if let Some(port) = port_info.port {
-                        if ui
+                        let btn_size = egui::vec2(0.0, golden::CONTROL_HEIGHT_SM);
+                        let radius = egui::CornerRadius::same(golden::RADIUS_SM);
+                        if is_restarting {
+                            ui.add_enabled(
+                                false,
+                                egui::Button::new("Restarting…")
+                                    .min_size(btn_size)
+                                    .corner_radius(radius),
+                            );
+                        } else if is_in_flight {
+                            let lbl = if is_running { "Stopping…" } else { "Starting…" };
+                            ui.add_enabled(
+                                false,
+                                egui::Button::new(lbl)
+                                    .min_size(btn_size)
+                                    .corner_radius(radius),
+                            );
+                        } else if is_running {
+                            let pid = if let AppStatus::Running { pid } = status {
+                                Some(*pid)
+                            } else {
+                                None
+                            };
+                            if ui
+                                .add(
+                                    egui::Button::new("Stop")
+                                        .min_size(btn_size)
+                                        .corner_radius(radius),
+                                )
+                                .clicked()
+                            {
+                                self.dispatch_stop(entry.clone(), pid);
+                            }
+                            if ui
+                                .add(
+                                    egui::Button::new("Restart")
+                                        .min_size(btn_size)
+                                        .corner_radius(radius),
+                                )
+                                .clicked()
+                            {
+                                self.dispatch_restart(entry.clone(), pid);
+                            }
+                            if let Some(port) = port_info.port {
+                                if ui
+                                    .add(
+                                        egui::Button::new("Open")
+                                            .min_size(btn_size)
+                                            .corner_radius(radius),
+                                    )
+                                    .clicked()
+                                {
+                                    if let Err(e) = open::that(format!("http://localhost:{}", port)) {
+                                        error!("open browser failed: {}", e);
+                                    }
+                                }
+                            }
+                        } else if is_crashed {
+                            // Crashed apps show Start (not Stop/Restart) to allow recovery.
+                            if ui
+                                .add(
+                                    egui::Button::new("Start")
+                                        .min_size(btn_size)
+                                        .corner_radius(radius),
+                                )
+                                .clicked()
+                            {
+                                self.dispatch_start(entry.clone());
+                            }
+                        } else if ui
                             .add(
-                                egui::Button::new("Open")
+                                egui::Button::new("Start")
                                     .min_size(btn_size)
                                     .corner_radius(radius),
                             )
                             .clicked()
                         {
-                            if let Err(e) = open::that(format!("http://localhost:{}", port)) {
-                                error!("open browser failed: {}", e);
-                            }
+                            self.dispatch_start(entry.clone());
                         }
-                    }
-                } else if is_crashed {
-                    // Crashed apps show Start (not Stop/Restart) to allow recovery.
-                    if ui
-                        .add(
-                            egui::Button::new("Start")
-                                .min_size(btn_size)
-                                .corner_radius(radius),
-                        )
-                        .clicked()
-                    {
-                        self.dispatch_start(entry.clone());
-                    }
-                } else if ui
-                    .add(
-                        egui::Button::new("Start")
-                            .min_size(btn_size)
-                            .corner_radius(radius),
-                    )
-                    .clicked()
-                {
-                    self.dispatch_start(entry.clone());
-                }
-
-                // Selection indicator — small visual cue when row is active.
-                if is_selected {
-                    ui.label("◀");
-                }
-            });
-
+                    })
+                });
+            let row_resp = frame_resp.inner;
             // Clicking the row background toggles selection (row_resp covers the
             // horizontal strip; button clicks are consumed first so they don't also
             // toggle the selection).
@@ -1355,6 +1363,12 @@ impl AppDelegate for App {
         let egui_ctx = egui::Context::default();
         theme::install_bundled_fonts(&egui_ctx);
         theme::set_active(Theme::aura_default(), &egui_ctx);
+        // Apply Aura surface colors.
+        let mut visuals = egui_ctx.style().visuals.clone();
+        visuals.window_fill = golden::BG;
+        visuals.panel_fill = golden::BG2;
+        visuals.override_text_color = Some(golden::TEXT);
+        egui_ctx.set_visuals(visuals);
         let egui_window = EguiWindow::new(window.clone(), egui_ctx);
 
         self.window = Some(window);
