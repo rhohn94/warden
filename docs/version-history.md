@@ -1,5 +1,11 @@
 # Version history
 
+## v0.4.0 (2026-06-16)
+
+- Persistent settings: startup configuration (`--apps-dir`, `--refresh`) is saved to `~/.config/warden/config.toml` automatically; CLI flags still override the config; subsequent launches remember your last-used directory and refresh interval without re-specifying flags
+- Status-change notifications: Warden now fires a macOS desktop notification whenever a monitored app transitions between Running and Stopped (or vice versa); controlled by `notifications_enabled` in `config.toml` (default on)
+- Log streaming tail window: the app details panel (`SidePanel::right`) now includes a scrollable 160-pt log pane showing the last 500 lines of stdout/stderr from the selected app's child process when it was started by Warden in the current session; auto-scrolls to the bottom on new output
+
 ## v0.3.0 (2026-06-16)
 
 - Visual-inspection CLI (`--dump-ui`): prints a stable JSON snapshot of `AppState` (entries, statuses, ports) to stdout and exits — no window or GPU required; suitable for scripting and regression checks

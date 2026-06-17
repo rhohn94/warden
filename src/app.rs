@@ -1,7 +1,9 @@
 use crate::{
     detector,
     launcher::Launcher,
+    log_capture::{LogCapture, LogReceiver},
     models::{AppEntry, AppStatus, PortInfo},
+    notifier::Notifier,
 };
 use tracing::{debug, error, info};
 use obsidian::{
@@ -35,10 +37,21 @@ pub struct AppState {
     pub last_scan: Instant,
     /// The currently selected app directory; `None` means no selection.
     pub selected_app: Option<PathBuf>,
+    /// Whether to send desktop notifications on app status changes.
+    pub notifications_enabled: bool,
+    /// Maximum log lines to retain per app in the tail buffer.
+    pub log_tail_lines: usize,
+    /// Tracks previous statuses and fires desktop notifications on transitions.
+    pub notifier: Notifier,
 }
 
 impl AppState {
-    pub fn new(apps_dir: PathBuf, refresh_secs: u64) -> Self {
+    pub fn new(
+        apps_dir: PathBuf,
+        refresh_secs: u64,
+        notifications_enabled: bool,
+        log_tail_lines: usize,
+    ) -> Self {
         AppState {
             entries: Vec::new(),
             statuses: HashMap::new(),
@@ -47,6 +60,9 @@ impl AppState {
             refresh_secs,
             last_scan: Instant::now(),
             selected_app: None,
+            notifications_enabled,
+            log_tail_lines,
+            notifier: Notifier::new(notifications_enabled),
         }
     }
 }
@@ -67,6 +83,12 @@ pub struct App {
     force_scan_tx: watch::Sender<()>,
     launcher: Arc<tokio::sync::Mutex<Launcher>>,
     runtime_handle: tokio::runtime::Handle,
+
+    // ── Log capture state (per-app, owned by the render thread) ─────────────
+    /// Ring-buffer of retained log lines per app dir.
+    log_captures: HashMap<PathBuf, LogCapture>,
+    /// Async receivers delivering lines from spawned child processes.
+    log_receivers: HashMap<PathBuf, LogReceiver>,
 }
 
 impl App {
@@ -90,6 +112,8 @@ impl App {
             force_scan_tx,
             launcher,
             runtime_handle,
+            log_captures: HashMap::new(),
+            log_receivers: HashMap::new(),
         }
     }
 
@@ -117,6 +141,18 @@ impl App {
             }
             state.entries = entries.clone();
             state.last_scan = Instant::now();
+            // Fire notifications for any transitions visible at this scan cycle.
+            let pairs: Vec<(String, AppStatus)> = state
+                .entries
+                .iter()
+                .filter_map(|e| {
+                    state
+                        .statuses
+                        .get(&e.dir)
+                        .map(|(s, _)| (e.name.clone(), s.clone()))
+                })
+                .collect();
+            state.notifier.check_transitions(&pairs);
             drop(state);
             // Background-detect status for every entry; skip any with an in-flight op.
             for entry in entries {
@@ -126,6 +162,9 @@ impl App {
                 }
             }
         }
+
+        // Drain pending log lines from all active receivers into the ring buffers.
+        self.drain_log_receivers();
 
         // Extract owned values so the borrow of self.egui_window ends before the closure.
         let ctx = self.egui_window.as_mut().unwrap().ctx_clone();
@@ -144,6 +183,24 @@ impl App {
 
         if let Some(renderer) = self.renderer.as_mut() {
             let _ = renderer.render(paint_jobs, full_output.textures_delta, ppp);
+        }
+    }
+
+    /// Non-blocking drain: pull all queued lines from every active log receiver
+    /// into the corresponding ring-buffer. Called once per frame before `draw_ui`.
+    fn drain_log_receivers(&mut self) {
+        let capacity = self.state.lock().unwrap().log_tail_lines;
+        for (dir, rx) in &mut self.log_receivers {
+            let capture = self
+                .log_captures
+                .entry(dir.clone())
+                .or_insert_with(|| LogCapture::new(capacity));
+            loop {
+                match rx.try_recv() {
+                    Ok(line) => capture.push(line),
+                    Err(_) => break, // Empty or sender dropped — nothing more to read.
+                }
+            }
         }
     }
 
@@ -502,23 +559,78 @@ impl App {
         {
             *pending_start = Some(entry.clone());
         }
+
+        // ── Log pane ─────────────────────────────────────────────────────
+        let has_log_receiver = self.log_receivers.contains_key(dir);
+        ui.separator();
+        ui.label("Log output:");
+        if is_running && has_log_receiver {
+            let lines = self
+                .log_captures
+                .get(dir)
+                .map(|c| c.lines())
+                .unwrap_or_default();
+            if lines.is_empty() {
+                ui.label("No log output yet.");
+            } else {
+                egui::ScrollArea::vertical()
+                    .id_salt("log_scroll")
+                    .max_height(160.0)
+                    .stick_to_bottom(true)
+                    .show(ui, |ui| {
+                        for line in &lines {
+                            ui.monospace(line);
+                        }
+                    });
+            }
+        } else if is_running && !has_log_receiver {
+            // Running but not launched by Warden this session.
+            ui.label("Log streaming not available — app was not started by Warden this session.");
+        } else {
+            // Stopped or unknown.
+            ui.label("Log streaming not available — app was not started by Warden this session.");
+        }
     }
 
-    fn dispatch_start(&self, entry: AppEntry) {
+    fn dispatch_start(&mut self, entry: AppEntry) {
         let state = Arc::clone(&self.state);
         let launcher = Arc::clone(&self.launcher);
+        let dir = entry.dir.clone();
         {
             let mut s = state.lock().unwrap();
-            s.in_flight.insert(entry.dir.clone());
+            s.in_flight.insert(dir.clone());
         }
+
+        // Pre-create a log channel whose receiver lives on the render thread.
+        // The sender is cloned into the async task, which forwards lines from
+        // the child-process reader into it once the process starts.
+        use crate::log_capture::log_channel;
+        let (log_tx, log_rx) = log_channel();
+        let capacity = self.state.lock().unwrap().log_tail_lines;
+        self.log_captures
+            .entry(dir.clone())
+            .or_insert_with(|| LogCapture::new(capacity));
+        self.log_receivers.insert(dir.clone(), log_rx);
+
         self.runtime_handle.spawn(async move {
-            let (status, port_info) = {
+            let (status, port_info, process_log_rx) = {
                 let mut l = launcher.lock().await;
                 l.start(&entry).await
             };
+            // Bridge lines from the child process's reader to the render-thread receiver.
+            if let Some(mut lrx) = process_log_rx {
+                tokio::spawn(async move {
+                    while let Some(line) = lrx.recv().await {
+                        if log_tx.send(line).is_err() {
+                            break; // Receiver dropped (e.g. app entry removed).
+                        }
+                    }
+                });
+            }
             let mut s = state.lock().unwrap();
             s.in_flight.remove(&entry.dir);
-            s.statuses.insert(entry.dir.clone(), (status, port_info));
+            s.statuses.insert(entry.dir.clone(), (status.clone(), port_info));
+            s.notifier.check_transitions(&[(entry.name.clone(), status)]);
         });
     }
 
@@ -536,7 +648,8 @@ impl App {
             };
             let mut s = state.lock().unwrap();
             s.in_flight.remove(&entry.dir);
-            s.statuses.insert(entry.dir.clone(), (status, port_info));
+            s.statuses.insert(entry.dir.clone(), (status.clone(), port_info));
+            s.notifier.check_transitions(&[(entry.name.clone(), status)]);
         });
     }
 
@@ -544,6 +657,7 @@ impl App {
     fn dispatch_detect(&self, entry: AppEntry) {
         let state = Arc::clone(&self.state);
         let dir = entry.dir.clone();
+        let name = entry.name.clone();
         self.runtime_handle.spawn(async move {
             let (status, port_info) =
                 tokio::task::spawn_blocking(move || detector::detect(&entry))
@@ -552,7 +666,8 @@ impl App {
             info!("detected {}: {:?}", dir.display(), status);
             let mut s = state.lock().unwrap();
             if !s.in_flight.contains(&dir) {
-                s.statuses.insert(dir, (status, port_info));
+                s.statuses.insert(dir, (status.clone(), port_info));
+                s.notifier.check_transitions(&[(name, status)]);
             }
         });
     }
@@ -717,14 +832,14 @@ mod tests {
     #[test]
     fn test_app_state_selected_app_defaults_none() {
         use std::path::PathBuf;
-        let state = AppState::new(PathBuf::from("/tmp/apps"), 30);
+        let state = AppState::new(PathBuf::from("/tmp/apps"), 30, true, 500);
         assert!(state.selected_app.is_none());
     }
 
     #[test]
     fn test_app_state_selected_app_can_be_set() {
         use std::path::PathBuf;
-        let mut state = AppState::new(PathBuf::from("/tmp/apps"), 30);
+        let mut state = AppState::new(PathBuf::from("/tmp/apps"), 30, true, 500);
         let path = PathBuf::from("/tmp/apps/myapp");
         state.selected_app = Some(path.clone());
         assert_eq!(state.selected_app, Some(path));
@@ -733,9 +848,17 @@ mod tests {
     #[test]
     fn test_app_state_selected_app_can_be_cleared() {
         use std::path::PathBuf;
-        let mut state = AppState::new(PathBuf::from("/tmp/apps"), 30);
+        let mut state = AppState::new(PathBuf::from("/tmp/apps"), 30, true, 500);
         state.selected_app = Some(PathBuf::from("/tmp/apps/myapp"));
         state.selected_app = None;
         assert!(state.selected_app.is_none());
+    }
+
+    #[test]
+    fn test_app_state_carries_notifications_and_log_tail() {
+        use std::path::PathBuf;
+        let state = AppState::new(PathBuf::from("/tmp/apps"), 10, false, 200);
+        assert!(!state.notifications_enabled);
+        assert_eq!(state.log_tail_lines, 200);
     }
 }
