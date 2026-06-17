@@ -107,6 +107,11 @@ pub struct App {
     /// so the render thread can show "Restarting…" rather than "Stopping…"/"Starting…".
     restart_in_flight: HashSet<PathBuf>,
 
+    // ── Crash detection (render-thread only) ─────────────────────────────────
+    /// Names of apps intentionally stopped via Stop or Restart buttons.
+    /// A Running → Stopped transition for names NOT in this set is classified as a crash.
+    user_stopped: HashSet<String>,
+
     // ── Log viewer state ─────────────────────────────────────────────────────
     /// When true, the central area shows the dedicated log viewer; false shows the app list.
     show_log_viewer: bool,
@@ -150,6 +155,7 @@ impl App {
             log_captures: HashMap::new(),
             log_receivers: HashMap::new(),
             restart_in_flight: HashSet::new(),
+            user_stopped: HashSet::new(),
             show_log_viewer: false,
             log_viewer_filter: HashMap::new(),
             log_viewer_auto_scroll: true,
@@ -184,11 +190,25 @@ impl App {
             }
             state.entries = entries;
             state.last_scan = Instant::now();
-            // Apply scanner-provided statuses; skip apps with an in-flight user action.
-            for (entry, status, port_info) in scan_results {
-                if !state.in_flight.contains(&entry.dir) {
-                    state.statuses.insert(entry.dir.clone(), (status, port_info));
+            // Apply scanner-provided statuses with crash classification; skip in-flight apps.
+            for (entry, new_status, port_info) in scan_results {
+                if state.in_flight.contains(&entry.dir) {
+                    continue;
                 }
+                let prev = state.statuses.get(&entry.dir).map(|(s, _)| s);
+                let classified = classify_status(
+                    prev,
+                    new_status,
+                    &entry.name,
+                    &self.user_stopped,
+                    &self.restart_in_flight,
+                    &entry.dir,
+                );
+                // Clear user_stopped once the app is Running again (reset for future detection).
+                if matches!(classified, AppStatus::Running { .. }) {
+                    self.user_stopped.remove(&entry.name);
+                }
+                state.statuses.insert(entry.dir.clone(), (classified, port_info));
             }
             // Fire notifications and record history for any status transitions.
             let pairs: Vec<(String, AppStatus)> = state
@@ -207,6 +227,7 @@ impl App {
                 for (name, new_status) in &transitions {
                     match new_status {
                         AppStatus::Running { .. } => hist.record_started(name, 0),
+                        AppStatus::Crashed => hist.record_crashed(name),
                         AppStatus::Stopped | AppStatus::Unknown => hist.record_stopped(name),
                     }
                 }
@@ -462,6 +483,7 @@ impl App {
             let (badge_label, badge_status) = match status {
                 AppStatus::Running { .. } => ("Running", BadgeStatus::Success),
                 AppStatus::Stopped => ("Stopped", BadgeStatus::Neutral),
+                AppStatus::Crashed => ("Crashed", BadgeStatus::Danger),
                 AppStatus::Unknown => ("Unknown", BadgeStatus::Warning),
             };
             let port_str = port_info
@@ -469,6 +491,7 @@ impl App {
                 .map(|p| p.to_string())
                 .unwrap_or_else(|| "—".to_string());
             let is_running = matches!(status, AppStatus::Running { .. });
+            let is_crashed = matches!(status, AppStatus::Crashed);
             let is_in_flight = in_flight.contains(&entry.dir);
             let is_restarting = restart_in_flight.contains(&entry.dir);
             let is_selected = current_selected.as_ref() == Some(&entry.dir);
@@ -564,6 +587,18 @@ impl App {
                                 error!("open browser failed: {}", e);
                             }
                         }
+                    }
+                } else if is_crashed {
+                    // Crashed apps show Start (not Stop/Restart) to allow recovery.
+                    if ui
+                        .add(
+                            egui::Button::new("Start")
+                                .min_size(btn_size)
+                                .corner_radius(radius),
+                        )
+                        .clicked()
+                    {
+                        self.dispatch_start(entry.clone());
                     }
                 } else if ui
                     .add(
@@ -785,6 +820,7 @@ impl App {
         let (badge_label, badge_status) = match &status {
             AppStatus::Running { .. } => ("Running", BadgeStatus::Success),
             AppStatus::Stopped => ("Stopped", BadgeStatus::Neutral),
+            AppStatus::Crashed => ("Crashed", BadgeStatus::Danger),
             AppStatus::Unknown => ("Unknown", BadgeStatus::Warning),
         };
         ui.horizontal(|ui| {
@@ -867,8 +903,15 @@ impl App {
 
         // ── Actions ──────────────────────────────────────────────────────
         let is_running = matches!(status, AppStatus::Running { .. });
+        let is_crashed = matches!(status, AppStatus::Crashed);
         let is_in_flight = in_flight.contains(dir);
         let is_restarting = restart_in_flight.contains(dir);
+
+        // Crashed apps show a prominent status message.
+        if is_crashed {
+            ui.add_space(golden::SPACE[2]);
+            ui.label("Crashed — click Start to restart");
+        }
 
         ui.add_space(golden::SPACE[2]);
         let btn_size = egui::vec2(0.0, golden::CONTROL_HEIGHT_SM);
@@ -1004,6 +1047,13 @@ impl App {
                             format_uptime(*duration_secs)
                         )
                     }
+                    crate::history::HistoryEvent::Crashed { at, duration_secs } => {
+                        format!(
+                            "{} — Crashed (uptime {})",
+                            at.format("%Y-%m-%d %H:%M"),
+                            format_uptime(*duration_secs)
+                        )
+                    }
                 };
                 ui.label(line);
             }
@@ -1011,6 +1061,8 @@ impl App {
     }
 
     fn dispatch_start(&mut self, entry: AppEntry) {
+        // Explicit start clears user_stopped — app is being deliberately brought up.
+        self.user_stopped.remove(&entry.name);
         let state = Arc::clone(&self.state);
         let launcher = Arc::clone(&self.launcher);
         let dir = entry.dir.clone();
@@ -1059,7 +1111,9 @@ impl App {
         });
     }
 
-    fn dispatch_stop(&self, entry: AppEntry, pid: Option<u32>) {
+    fn dispatch_stop(&mut self, entry: AppEntry, pid: Option<u32>) {
+        // Record intent: this stop is user-initiated, not a crash.
+        self.user_stopped.insert(entry.name.clone());
         let state = Arc::clone(&self.state);
         let launcher = Arc::clone(&self.launcher);
         {
@@ -1085,6 +1139,8 @@ impl App {
     }
 
     fn dispatch_restart(&mut self, entry: AppEntry, pid: Option<u32>) {
+        // The internal stop triggered by restart is intentional — mark to prevent crash detection.
+        self.user_stopped.insert(entry.name.clone());
         let state = Arc::clone(&self.state);
         let launcher = Arc::clone(&self.launcher);
         let dir = entry.dir.clone();
@@ -1138,6 +1194,40 @@ impl App {
         });
     }
 
+}
+
+// ── Crash detection ──────────────────────────────────────────────────────────
+
+/// Classify the scanner-reported status for an app, upgrading `Stopped` to
+/// `Crashed` when the transition from `Running` was not initiated by the user.
+///
+/// # Arguments
+/// - `prev`: the previous status stored for the app (if any).
+/// - `new_status`: the status reported by the latest scanner scan.
+/// - `app_name`: used to check `user_stopped`.
+/// - `user_stopped`: names of apps whose stop was user-initiated (Stop/Restart button).
+/// - `restart_in_flight`: dirs currently undergoing an in-progress restart.
+/// - `dir`: the app's directory path, checked against `restart_in_flight`.
+///
+/// Returns `Crashed` when the app moved from Running to Stopped unexpectedly;
+/// returns `new_status` unchanged in all other cases.
+pub fn classify_status(
+    prev: Option<&AppStatus>,
+    new_status: AppStatus,
+    app_name: &str,
+    user_stopped: &HashSet<String>,
+    restart_in_flight: &HashSet<PathBuf>,
+    dir: &PathBuf,
+) -> AppStatus {
+    if matches!(prev, Some(AppStatus::Running { .. }))
+        && matches!(new_status, AppStatus::Stopped)
+        && !user_stopped.contains(app_name)
+        && !restart_in_flight.contains(dir)
+    {
+        AppStatus::Crashed
+    } else {
+        new_status
+    }
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
@@ -1531,5 +1621,115 @@ mod tests {
         let entries = vec![make_entry("alpha"), make_entry("beta")];
         let result = filter_entries(&entries, "xyz");
         assert!(result.is_empty());
+    }
+
+    // ── classify_status ──────────────────────────────────────────────────────
+
+    fn running_status() -> AppStatus {
+        AppStatus::Running { pid: 42 }
+    }
+
+    #[test]
+    fn crash_detection_when_not_user_stopped() {
+        // prev=Running, new=Stopped, NOT in user_stopped → classified as Crashed.
+        let user_stopped: HashSet<String> = HashSet::new();
+        let restart_in_flight: HashSet<PathBuf> = HashSet::new();
+        let dir = PathBuf::from("/tmp/apps/myapp");
+        let result = classify_status(
+            Some(&running_status()),
+            AppStatus::Stopped,
+            "myapp",
+            &user_stopped,
+            &restart_in_flight,
+            &dir,
+        );
+        assert_eq!(result, AppStatus::Crashed, "unexpected stop must become Crashed");
+    }
+
+    #[test]
+    fn no_crash_when_user_stopped() {
+        // prev=Running, new=Stopped, IS in user_stopped → stays Stopped (intentional).
+        let mut user_stopped: HashSet<String> = HashSet::new();
+        user_stopped.insert("myapp".to_string());
+        let restart_in_flight: HashSet<PathBuf> = HashSet::new();
+        let dir = PathBuf::from("/tmp/apps/myapp");
+        let result = classify_status(
+            Some(&running_status()),
+            AppStatus::Stopped,
+            "myapp",
+            &user_stopped,
+            &restart_in_flight,
+            &dir,
+        );
+        assert_eq!(result, AppStatus::Stopped, "user-initiated stop must stay Stopped");
+    }
+
+    #[test]
+    fn no_crash_when_restart_in_flight() {
+        // prev=Running, new=Stopped, dir in restart_in_flight → stays Stopped (mid-restart).
+        let user_stopped: HashSet<String> = HashSet::new();
+        let dir = PathBuf::from("/tmp/apps/myapp");
+        let mut restart_in_flight: HashSet<PathBuf> = HashSet::new();
+        restart_in_flight.insert(dir.clone());
+        let result = classify_status(
+            Some(&running_status()),
+            AppStatus::Stopped,
+            "myapp",
+            &user_stopped,
+            &restart_in_flight,
+            &dir,
+        );
+        assert_eq!(result, AppStatus::Stopped, "in-flight restart stop must stay Stopped");
+    }
+
+    #[test]
+    fn no_crash_when_prev_was_stopped() {
+        // prev=Stopped, new=Stopped → not a crash (was not Running).
+        let user_stopped: HashSet<String> = HashSet::new();
+        let restart_in_flight: HashSet<PathBuf> = HashSet::new();
+        let dir = PathBuf::from("/tmp/apps/myapp");
+        let result = classify_status(
+            Some(&AppStatus::Stopped),
+            AppStatus::Stopped,
+            "myapp",
+            &user_stopped,
+            &restart_in_flight,
+            &dir,
+        );
+        assert_eq!(result, AppStatus::Stopped, "Stopped→Stopped is not a crash");
+    }
+
+    #[test]
+    fn no_crash_on_first_scan() {
+        // prev=None (first scan), new=Stopped → not a crash.
+        let user_stopped: HashSet<String> = HashSet::new();
+        let restart_in_flight: HashSet<PathBuf> = HashSet::new();
+        let dir = PathBuf::from("/tmp/apps/myapp");
+        let result = classify_status(
+            None,
+            AppStatus::Stopped,
+            "myapp",
+            &user_stopped,
+            &restart_in_flight,
+            &dir,
+        );
+        assert_eq!(result, AppStatus::Stopped, "first scan with no prev must not crash");
+    }
+
+    #[test]
+    fn classify_status_passes_through_running() {
+        // Running → Running stays Running (normal case).
+        let user_stopped: HashSet<String> = HashSet::new();
+        let restart_in_flight: HashSet<PathBuf> = HashSet::new();
+        let dir = PathBuf::from("/tmp/apps/myapp");
+        let result = classify_status(
+            Some(&running_status()),
+            AppStatus::Running { pid: 99 },
+            "myapp",
+            &user_stopped,
+            &restart_in_flight,
+            &dir,
+        );
+        assert_eq!(result, AppStatus::Running { pid: 99 });
     }
 }
