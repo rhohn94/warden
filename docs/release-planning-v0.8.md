@@ -129,10 +129,10 @@
 
 | Step | Status |
 |---|---|
-| Version bump (`Cargo.toml` 0.7.0 → 0.8.0) | ☐ |
-| `version-history.md` entry | ☐ |
-| project-release (merge+tag+push) | ☐ |
-| Issues #25 #26 #27 closed | ☐ |
+| Version bump (`Cargo.toml` 0.7.0 → 0.8.0) | ☑ |
+| `version-history.md` entry | ☑ |
+| project-release (merge+tag+push) | ☑ |
+| Issues #25 #26 #27 closed | ☑ |
 
 ### Follow-ups discovered during implementation
 
