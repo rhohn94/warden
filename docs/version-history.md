@@ -1,5 +1,13 @@
 # Version history
 
+## v0.9.0 (2026-06-17)
+
+- TactileButton migration: every action button (Start, Stop, Restart, Open, Scan now, in-flight disabled labels) now uses `TactileButton` with the correct Aura variant — primary, ghost, or secondary — giving each press/lift motion, correct fill, and hover states per the Aura design language
+- Aura visual foundation: window and panel fills are set to the correct Aura surface hierarchy (`BG`, `BG2`); the aurora wallpaper is painted behind the main panel; selected app rows show a `SURFACE_1` fill tint instead of a `◀` glyph; text override set to the Aura text token
+- Aura typography and dividers: headings use `apply_type_tokens` with the correct `TEXT_LG` size token; secondary labels (directory path, metadata grid keys) use `TEXT_MUTED`; every `ui.separator()` replaced with `hairline`; "Log output" and "History" section dividers use `LabeledDivider`
+- Obsidian navigation widgets: the Apps/Logs toggle is now a `TabStrip` with two `TabItem`s; log viewer filter chips are replaced with `ButtonGroup::selection` — both widgets communicate selection state natively without custom `○`/`●` prefixes
+- Card and elevated panel framing: each app row is wrapped in `card_show` for rounded corners, Aura fill, and shadow; the details side panel body is wrapped in `elevated_panel_show(level: 1)` for the correct Aura elevation hierarchy
+
 ## v0.8.0 (2026-06-17)
 
 - Restart button: Running apps now have a `[Restart]` button that atomically stops and restarts them in one click — no more manual Stop-then-Start cycle; the button disables and shows `[Restarting…]` while the operation is in progress
