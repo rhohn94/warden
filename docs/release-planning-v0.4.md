@@ -139,8 +139,8 @@
 |---|---|
 | Version bump (`Cargo.toml` 0.3.0 → 0.4.0) | ☑ |
 | `version-history.md` entry | ☑ |
-| project-release (merge+tag+push) | ☐ |
-| Issues #17 #18 #19 closed | ☐ |
+| project-release (merge+tag+push) | ☑ |
+| Issues #17 #18 #19 closed | ☑ |
 
 ### Follow-ups discovered during implementation
 
