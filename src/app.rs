@@ -1,4 +1,5 @@
 use crate::{
+    config::Config,
     detector,
     history::HistoryStore,
     launcher::Launcher,
@@ -90,6 +91,7 @@ pub struct App {
 
     // shared app state
     state: Arc<Mutex<AppState>>,
+    config: Config,
     scanner_rx: watch::Receiver<Vec<AppEntry>>,
     force_scan_tx: watch::Sender<()>,
     launcher: Arc<tokio::sync::Mutex<Launcher>>,
@@ -117,6 +119,7 @@ pub struct App {
 impl App {
     pub fn new(
         state: Arc<Mutex<AppState>>,
+        config: Config,
         scanner_rx: watch::Receiver<Vec<AppEntry>>,
         force_scan_tx: watch::Sender<()>,
         launcher: Arc<tokio::sync::Mutex<Launcher>>,
@@ -131,6 +134,7 @@ impl App {
             egui_window: None,
             renderer: None,
             state,
+            config,
             scanner_rx,
             force_scan_tx,
             launcher,
@@ -241,6 +245,13 @@ impl App {
     }
 
     fn draw_ui(&mut self, ctx: &egui::Context) {
+        // Frame-time telemetry: warn when a frame exceeds the configured threshold.
+        let frame_dt_ms = ctx.input(|i| i.stable_dt) * 1000.0;
+        let warn_ms = self.config.frame_warn_ms() as f32;
+        if frame_dt_ms > warn_ms {
+            tracing::warn!(frame_ms = frame_dt_ms as u64, "slow frame");
+        }
+
         // Snapshot all shared state before rendering so we can drop the lock.
         let (entries, statuses, in_flight, apps_dirs, refresh_secs, last_scan, current_selected, version_results_snap) = {
             let state = self.state.lock().unwrap();

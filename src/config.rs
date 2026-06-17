@@ -17,6 +17,8 @@ pub struct Config {
     pub log_tail_lines: Option<usize>,
     /// Interval in seconds between version-update checks; 0 disables (default 3600)
     pub version_check_interval_secs: Option<u64>,
+    /// Performance telemetry settings
+    pub perf: Option<PerfConfig>,
 }
 
 impl Default for Config {
@@ -27,6 +29,22 @@ impl Default for Config {
             notifications_enabled: Some(true),
             log_tail_lines: Some(500),
             version_check_interval_secs: Some(3600),
+            perf: Some(PerfConfig::default()),
+        }
+    }
+}
+
+/// Performance telemetry settings.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PerfConfig {
+    /// Frame time (ms) above which a warning is logged (default 50)
+    pub frame_warn_ms: Option<u64>,
+}
+
+impl Default for PerfConfig {
+    fn default() -> Self {
+        Self {
+            frame_warn_ms: Some(50),
         }
     }
 }
@@ -76,6 +94,14 @@ impl Config {
     pub fn config_path() -> Option<PathBuf> {
         dirs::config_dir().map(|d| d.join("warden").join("config.toml"))
     }
+
+    /// Return the frame-time warning threshold in milliseconds (default 50).
+    pub fn frame_warn_ms(&self) -> u64 {
+        self.perf
+            .as_ref()
+            .and_then(|p| p.frame_warn_ms)
+            .unwrap_or(50)
+    }
 }
 
 // ── Tests ────────────────────────────────────────────────────────────────────
@@ -117,6 +143,7 @@ mod tests {
             notifications_enabled: Some(false),
             log_tail_lines: Some(200),
             version_check_interval_secs: Some(7200),
+            perf: None,
         };
         cfg.save_to(&path).unwrap();
 
@@ -161,5 +188,43 @@ mod tests {
         if let Some(p) = Config::config_path() {
             assert!(p.ends_with("warden/config.toml"));
         }
+    }
+
+    #[test]
+    fn test_frame_warn_ms_default() {
+        let cfg = Config::default();
+        assert_eq!(cfg.frame_warn_ms(), 50);
+    }
+
+    #[test]
+    fn test_frame_warn_ms_custom() {
+        let cfg = Config {
+            apps_dir: None,
+            refresh_secs: None,
+            notifications_enabled: None,
+            log_tail_lines: None,
+            version_check_interval_secs: None,
+            perf: Some(PerfConfig { frame_warn_ms: Some(100) }),
+        };
+        assert_eq!(cfg.frame_warn_ms(), 100);
+    }
+
+    #[test]
+    fn test_frame_warn_ms_none_perf_falls_back_to_default() {
+        let cfg = Config {
+            apps_dir: None,
+            refresh_secs: None,
+            notifications_enabled: None,
+            log_tail_lines: None,
+            version_check_interval_secs: None,
+            perf: None,
+        };
+        assert_eq!(cfg.frame_warn_ms(), 50);
+    }
+
+    #[test]
+    fn test_perf_config_default() {
+        let perf = PerfConfig::default();
+        assert_eq!(perf.frame_warn_ms, Some(50));
     }
 }

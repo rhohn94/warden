@@ -1,7 +1,8 @@
 use crate::models::AppEntry;
+use crate::perf::write_perf_log;
 use serde_json::Value;
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::sync::watch;
 use tracing::{debug, info, warn};
 
@@ -17,12 +18,15 @@ pub fn start(
     let (force_tx, mut force_rx) = watch::channel(());
     tokio::spawn(async move {
         loop {
+            let t0 = Instant::now();
             let apps = scan_all(&roots);
+            let cycle_ms = t0.elapsed().as_millis();
             info!(
                 "scan complete: {} app(s) across {} root(s)",
                 apps.len(),
                 roots.len()
             );
+            write_perf_log(cycle_ms, 0u32, ""); // drop_count = 0 here; will adjust after scan-throttle merges
             let _ = tx.send(apps);
             tokio::select! {
                 _ = tokio::time::sleep(interval) => {}
