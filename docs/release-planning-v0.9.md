@@ -159,16 +159,16 @@
 
 | Branch | Design doc | Implemented | Reviewed | Merged into version/0.9 |
 |---|---|---|---|---|
-| `warden/v0.9-typography` (#30) | ☑ | ☐ | ☐ | ☐ |
-| `warden/v0.9-nav-widgets` (#32) | ☑ | ☐ | ☐ | ☐ |
-| `warden/v0.9-cards` (#31) | ☑ | ☐ | ☐ | ☐ |
+| `warden/v0.9-typography` (#30) | ☑ | ☑ | ☑ | ☑ |
+| `warden/v0.9-nav-widgets` (#32) | ☑ | ☑ | ☑ | ☑ |
+| `warden/v0.9-cards` (#31) | ☑ | ☑ | ☑ | ☑ |
 
 ### Release
 
 | Step | Status |
 |---|---|
-| Version bump (`Cargo.toml` 0.8.0 → 0.9.0) | ☐ |
-| `version-history.md` entry | ☐ |
+| Version bump (`Cargo.toml` 0.8.0 → 0.9.0) | ☑ |
+| `version-history.md` entry | ☑ |
 | project-release (merge+tag+push) | ☐ |
 | Issues #28 #29 #30 #31 #32 closed | ☐ |
 
