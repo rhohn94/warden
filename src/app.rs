@@ -1,5 +1,6 @@
 use crate::{
     detector,
+    history::HistoryStore,
     launcher::Launcher,
     log_capture::{LogCapture, LogReceiver},
     models::{AppEntry, AppStatus, PortInfo},
@@ -38,11 +39,14 @@ pub struct AppState {
     /// The currently selected app directory; `None` means no selection.
     pub selected_app: Option<PathBuf>,
     /// Whether to send desktop notifications on app status changes.
+    #[allow(dead_code)]
     pub notifications_enabled: bool,
     /// Maximum log lines to retain per app in the tail buffer.
     pub log_tail_lines: usize,
     /// Tracks previous statuses and fires desktop notifications on transitions.
     pub notifier: Notifier,
+    /// Per-app start/stop event ring buffer with persistence.
+    pub history: Arc<Mutex<HistoryStore>>,
 }
 
 impl AppState {
@@ -51,6 +55,7 @@ impl AppState {
         refresh_secs: u64,
         notifications_enabled: bool,
         log_tail_lines: usize,
+        history: Arc<Mutex<HistoryStore>>,
     ) -> Self {
         AppState {
             entries: Vec::new(),
@@ -63,6 +68,7 @@ impl AppState {
             notifications_enabled,
             log_tail_lines,
             notifier: Notifier::new(notifications_enabled),
+            history,
         }
     }
 }
@@ -142,6 +148,7 @@ impl App {
             state.entries = entries.clone();
             state.last_scan = Instant::now();
             // Fire notifications for any transitions visible at this scan cycle.
+            // Also record history events for Running↔Stopped transitions.
             let pairs: Vec<(String, AppStatus)> = state
                 .entries
                 .iter()
@@ -152,7 +159,18 @@ impl App {
                         .map(|(s, _)| (e.name.clone(), s.clone()))
                 })
                 .collect();
-            state.notifier.check_transitions(&pairs);
+            let transitions = state.notifier.check_transitions(&pairs);
+            // Record history for scanner-detected transitions.
+            if !transitions.is_empty() {
+                let mut hist = state.history.lock().unwrap();
+                for (name, new_status) in &transitions {
+                    match new_status {
+                        AppStatus::Running { .. } => hist.record_started(name, 0),
+                        AppStatus::Stopped | AppStatus::Unknown => hist.record_stopped(name),
+                    }
+                }
+                hist.save();
+            }
             drop(state);
             // Background-detect status for every entry; skip any with an in-flight op.
             for entry in entries {
@@ -195,11 +213,8 @@ impl App {
                 .log_captures
                 .entry(dir.clone())
                 .or_insert_with(|| LogCapture::new(capacity));
-            loop {
-                match rx.try_recv() {
-                    Ok(line) => capture.push(line),
-                    Err(_) => break, // Empty or sender dropped — nothing more to read.
-                }
+            while let Ok(line) = rx.try_recv() {
+                capture.push(line);
             }
         }
     }
@@ -590,6 +605,44 @@ impl App {
             // Stopped or unknown.
             ui.label("Log streaming not available — app was not started by Warden this session.");
         }
+
+        // ── History section ──────────────────────────────────────────────
+        ui.separator();
+        ui.label("History:");
+
+        let hist = self.state.lock().unwrap().history.clone();
+        let hist = hist.lock().unwrap();
+
+        // If running, show a live uptime counter.
+        if is_running {
+            if let Some(started_at) = hist.last_started_at(&entry.name) {
+                let elapsed = chrono::Utc::now().signed_duration_since(started_at);
+                let total_secs = elapsed.num_seconds().max(0) as u64;
+                let uptime_str = format_uptime(total_secs);
+                ui.label(format!("Uptime: {}", uptime_str));
+            }
+        }
+
+        let recent = hist.recent(&entry.name, 10);
+        if recent.is_empty() {
+            ui.label("No history recorded.");
+        } else {
+            for event in &recent {
+                let line = match event {
+                    crate::history::HistoryEvent::Started { at, pid } => {
+                        format!("{} — Started (PID {})", at.format("%Y-%m-%d %H:%M"), pid)
+                    }
+                    crate::history::HistoryEvent::Stopped { at, duration_secs } => {
+                        format!(
+                            "{} — Stopped (uptime {})",
+                            at.format("%Y-%m-%d %H:%M"),
+                            format_uptime(*duration_secs)
+                        )
+                    }
+                };
+                ui.label(line);
+            }
+        }
     }
 
     fn dispatch_start(&mut self, entry: AppEntry) {
@@ -630,7 +683,14 @@ impl App {
             let mut s = state.lock().unwrap();
             s.in_flight.remove(&entry.dir);
             s.statuses.insert(entry.dir.clone(), (status.clone(), port_info));
-            s.notifier.check_transitions(&[(entry.name.clone(), status)]);
+            s.notifier.check_transitions(&[(entry.name.clone(), status.clone())]);
+            // Record history for explicit start action.
+            let pid = if let AppStatus::Running { pid } = status { pid } else { 0 };
+            {
+                let mut hist = s.history.lock().unwrap();
+                hist.record_started(&entry.name, pid);
+                hist.save();
+            }
         });
     }
 
@@ -650,6 +710,12 @@ impl App {
             s.in_flight.remove(&entry.dir);
             s.statuses.insert(entry.dir.clone(), (status.clone(), port_info));
             s.notifier.check_transitions(&[(entry.name.clone(), status)]);
+            // Record history for explicit stop action.
+            {
+                let mut hist = s.history.lock().unwrap();
+                hist.record_stopped(&entry.name);
+                hist.save();
+            }
         });
     }
 
@@ -670,6 +736,23 @@ impl App {
                 s.notifier.check_transitions(&[(name, status)]);
             }
         });
+    }
+}
+
+// ── Helpers ─────────────────────────────────────────────────────────────────
+
+/// Format a duration in seconds as a human-readable uptime string.
+/// Examples: "5s", "3m", "1h 5m".
+fn format_uptime(secs: u64) -> String {
+    let hours = secs / 3600;
+    let minutes = (secs % 3600) / 60;
+    let seconds = secs % 60;
+    if hours > 0 {
+        format!("{}h {}m", hours, minutes)
+    } else if minutes > 0 {
+        format!("{}m", minutes)
+    } else {
+        format!("{}s", seconds)
     }
 }
 
@@ -829,17 +912,21 @@ mod tests {
         assert_eq!(infer_tech_stack(None), "Unknown");
     }
 
+    fn make_history() -> Arc<Mutex<crate::history::HistoryStore>> {
+        Arc::new(Mutex::new(crate::history::HistoryStore::new()))
+    }
+
     #[test]
     fn test_app_state_selected_app_defaults_none() {
         use std::path::PathBuf;
-        let state = AppState::new(PathBuf::from("/tmp/apps"), 30, true, 500);
+        let state = AppState::new(PathBuf::from("/tmp/apps"), 30, true, 500, make_history());
         assert!(state.selected_app.is_none());
     }
 
     #[test]
     fn test_app_state_selected_app_can_be_set() {
         use std::path::PathBuf;
-        let mut state = AppState::new(PathBuf::from("/tmp/apps"), 30, true, 500);
+        let mut state = AppState::new(PathBuf::from("/tmp/apps"), 30, true, 500, make_history());
         let path = PathBuf::from("/tmp/apps/myapp");
         state.selected_app = Some(path.clone());
         assert_eq!(state.selected_app, Some(path));
@@ -848,7 +935,7 @@ mod tests {
     #[test]
     fn test_app_state_selected_app_can_be_cleared() {
         use std::path::PathBuf;
-        let mut state = AppState::new(PathBuf::from("/tmp/apps"), 30, true, 500);
+        let mut state = AppState::new(PathBuf::from("/tmp/apps"), 30, true, 500, make_history());
         state.selected_app = Some(PathBuf::from("/tmp/apps/myapp"));
         state.selected_app = None;
         assert!(state.selected_app.is_none());
@@ -857,8 +944,23 @@ mod tests {
     #[test]
     fn test_app_state_carries_notifications_and_log_tail() {
         use std::path::PathBuf;
-        let state = AppState::new(PathBuf::from("/tmp/apps"), 10, false, 200);
+        let state = AppState::new(PathBuf::from("/tmp/apps"), 10, false, 200, make_history());
         assert!(!state.notifications_enabled);
         assert_eq!(state.log_tail_lines, 200);
+    }
+
+    #[test]
+    fn test_format_uptime_seconds() {
+        assert_eq!(format_uptime(45), "45s");
+    }
+
+    #[test]
+    fn test_format_uptime_minutes() {
+        assert_eq!(format_uptime(180), "3m");
+    }
+
+    #[test]
+    fn test_format_uptime_hours_and_minutes() {
+        assert_eq!(format_uptime(3725), "1h 2m");
     }
 }
