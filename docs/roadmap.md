@@ -89,6 +89,17 @@ with a machine-readable `perf.log` for diagnostics.
 - Scan throttling: drop force-scan trigger when scan is in-flight; per-app 2 s detector timeout; `tokio::join_all` concurrency for per-app detectors (Issue #24 — part 1)
 - Performance telemetry: `perf.log` writer (cycle duration, drop count, slowest-app); frame-time warn via `ctx.input`; configurable `perf.frame_warn_ms` in `config.toml` (Issue #24 — part 2)
 
+## v0.8 — Operator UX
+
+Improves the day-to-day experience of running a fleet: atomic Restart button,
+live app-list search, and crash detection with a distinct badge so unexpected
+exits are immediately visible.
+
+**Scope:**
+- Restart action: `[Restart]` button for Running apps — stops then starts atomically (Issue #25)
+- App list search: live text-filter field above the app list; Escape clears (Issue #26)
+- Crash detection: `AppStatus::Crashed` variant; scanner distinguishes user-stop from unexpected exit; red badge + notification + history entry (Issue #27)
+
 ## Backlog
 
 - Ensign HTTP health polling
