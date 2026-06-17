@@ -57,7 +57,7 @@ Reduces friction at startup and keeps users informed without polling the window.
 
 ## v0.5 — Runtime Insights
 
-Plan: [`release-planning-v0.5.md`](release-planning-v0.5.md).
+Plan: [`release-planning-v0.5.md`](release-planning-v0.5.md). (implementation complete — pending release)
 
 Adds observable runtime data — per-app version update indicators and
 start/stop history with live uptime — so operators can see at a glance
