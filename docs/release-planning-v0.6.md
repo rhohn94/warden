@@ -97,7 +97,7 @@
 | Branch | Design doc | Implemented | Reviewed | Merged into version/0.6 |
 |---|---|---|---|---|
 | `warden/v0.6-multi-dir` (#23) | ☑ | ☑ | ☑ | ☑ |
-| `warden/v0.6-log-viewer` (#22) | ☐ | ☐ | ☐ | ☐ |
+| `warden/v0.6-log-viewer` (#22) | ☑ | ☑ | ☑ | ☑ |
 
 ### Release
 
