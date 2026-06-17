@@ -69,7 +69,7 @@ details pane can reference Aura tokens already present in `draw_ui`.
 | 5.2 | #9 Visual CLI | `warden/v0.3-visual-cli` | ☑ Merged | Phase 1 |
 | 5.3 | #16 Details pane | `warden/v0.3-details-pane` | ☑ Merged | Phase 2 |
 | 5.4 | Version bump | — | ☑ Done | `Cargo.toml` 0.2.0 → 0.3.0 |
-| 5.5 | project-release | — | ☐ Pending | merge+tag+push |
+| 5.5 | project-release | — | ☑ Done | merge+tag+push; issues #9 #12 #16 closed |
 
 ---
 
