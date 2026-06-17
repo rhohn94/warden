@@ -1,5 +1,5 @@
 // Notifier: tracks previous app statuses and fires desktop notifications
-// on Running <-> Stopped transitions.
+// on Running <-> Stopped/Crashed transitions.
 
 use std::collections::HashMap;
 use crate::models::AppStatus;
@@ -49,10 +49,14 @@ impl Notifier {
                 Some(prev_status) => {
                     if transition_changed(prev_status, status) {
                         if self.enabled {
-                            let label = status_label(status);
+                            let body = if matches!(status, AppStatus::Crashed) {
+                                format!("{} crashed", name)
+                            } else {
+                                format!("{} is now {}", name, status_label(status))
+                            };
                             let _ = notify_rust::Notification::new()
                                 .summary("Warden")
-                                .body(&format!("{} is now {}", name, label))
+                                .body(&body)
                                 .show();
                         }
                         fired.push((name.clone(), status.clone()));
@@ -66,16 +70,21 @@ impl Notifier {
     }
 }
 
-/// Returns `true` when the status change is a meaningful Running↔Stopped
-/// transition worth notifying about.
+/// Returns `true` when the status change is a meaningful transition worth notifying about.
 ///
-/// `AppStatus::Unknown` is treated as equivalent to Stopped for this
-/// comparison so that Unknown→Stopped (or the reverse) is silent, but
-/// Unknown→Running and Running→Unknown still fire.
+/// Rules:
+/// - Running → Stopped/Crashed/Unknown fires (app went down).
+/// - Stopped/Crashed/Unknown → Running fires (app came up).
+/// - Crashed is treated as a distinct non-running state; `Running → Crashed` fires.
+/// - `Stopped → Crashed` does NOT fire (consecutive non-running states are silent).
+/// - `AppStatus::Unknown` is treated as equivalent to Stopped so that
+///   Unknown→Stopped (or the reverse) is silent.
 fn transition_changed(prev: &AppStatus, current: &AppStatus) -> bool {
-    // Normalise Unknown to Stopped so we only fire on real Running changes.
     let prev_running = matches!(prev, AppStatus::Running { .. });
     let curr_running = matches!(current, AppStatus::Running { .. });
+    // Fire on Running <-> non-Running transitions only.
+    // This means Stopped→Crashed is silent (both non-running), which is correct:
+    // crash detection only sets Crashed when the previous state was Running.
     prev_running != curr_running
 }
 
@@ -84,6 +93,7 @@ fn status_label(status: &AppStatus) -> &'static str {
     match status {
         AppStatus::Running { .. } => "Running",
         AppStatus::Stopped => "Stopped",
+        AppStatus::Crashed => "Crashed",
         AppStatus::Unknown => "Stopped",
     }
 }
@@ -202,5 +212,47 @@ mod tests {
         let second = pairs(&[("app-a", stopped())]);
         let fired = n.check_transitions(&second);
         assert_eq!(fired.len(), 1, "transition must be tracked even when notifications are off");
+    }
+
+    fn crashed() -> AppStatus {
+        AppStatus::Crashed
+    }
+
+    #[test]
+    fn test_running_to_crashed_fires_transition() {
+        let mut n = Notifier::new(false);
+        let first = pairs(&[("app-a", running())]);
+        n.check_transitions(&first); // populate
+
+        let second = pairs(&[("app-a", crashed())]);
+        let fired = n.check_transitions(&second);
+
+        assert_eq!(fired.len(), 1, "Running→Crashed must fire exactly one transition");
+        assert_eq!(fired[0].0, "app-a");
+        assert!(matches!(fired[0].1, AppStatus::Crashed));
+    }
+
+    #[test]
+    fn test_stopped_to_crashed_does_not_fire() {
+        // Stopped→Crashed: both are non-running — no notification expected.
+        let mut n = Notifier::new(false);
+        let first = pairs(&[("app-a", stopped())]);
+        n.check_transitions(&first); // populate
+
+        let second = pairs(&[("app-a", crashed())]);
+        let fired = n.check_transitions(&second);
+        assert!(fired.is_empty(), "Stopped→Crashed must not fire (both non-running)");
+    }
+
+    #[test]
+    fn test_crashed_to_running_fires_transition() {
+        let mut n = Notifier::new(false);
+        let first = pairs(&[("app-a", crashed())]);
+        n.check_transitions(&first); // populate
+
+        let second = pairs(&[("app-a", running())]);
+        let fired = n.check_transitions(&second);
+        assert_eq!(fired.len(), 1, "Crashed→Running must fire");
+        assert!(matches!(fired[0].1, AppStatus::Running { .. }));
     }
 }

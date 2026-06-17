@@ -42,6 +42,7 @@ pub fn scan_and_dump(apps_dirs: Vec<PathBuf>) -> Result<(), Box<dyn std::error::
         let (status_str, pid) = match &status {
             AppStatus::Running { pid } => ("Running".to_string(), Some(*pid)),
             AppStatus::Stopped => ("Stopped".to_string(), None),
+            AppStatus::Crashed => ("Crashed".to_string(), None),
             AppStatus::Unknown => ("Unknown".to_string(), None),
         };
 
