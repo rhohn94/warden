@@ -100,6 +100,17 @@ exits are immediately visible.
 - App list search: live text-filter field above the app list; Escape clears (Issue #26)
 - Crash detection: `AppStatus::Crashed` variant; scanner distinguishes user-stop from unexpected exit; red badge + notification + history entry (Issue #27)
 
+## v0.9 — Aura Fidelity
+
+Brings Warden into full alignment with the Obsidian/Aura design system — every widget, surface, and typographic element uses the correct Aura primitive.
+
+**Scope:**
+- TactileButton migration: all action buttons use `TactileButton` with the correct Aura variant (Issue #28)
+- Aura visual foundation: correct surface hierarchy fills, aurora wallpaper, `SURFACE_1` selection tint (Issue #29)
+- Aura typography and dividers: `apply_type_tokens`, `TEXT_MUTED` secondary labels, `hairline`, `LabeledDivider` (Issue #30)
+- Card and elevated panel framing: app rows use `card_show`; details body uses `elevated_panel_show` (Issue #31)
+- Obsidian navigation widgets: `TabStrip` for tab toggle; `ButtonGroup` for log filter chips (Issue #32)
+
 ## Backlog
 
 - Ensign HTTP health polling
