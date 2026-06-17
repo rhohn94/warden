@@ -123,7 +123,7 @@
 
 | Branch | Design doc | Implemented | Reviewed | Merged into version/0.8 |
 |---|---|---|---|---|
-| `warden/v0.8-crash-detection` (#27) | ☑ | ☐ | ☐ | ☐ |
+| `warden/v0.8-crash-detection` (#27) | ☑ | ☑ | ☑ | ☑ |
 
 ### Release
 
