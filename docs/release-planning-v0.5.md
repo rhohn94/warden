@@ -100,7 +100,7 @@
 | Branch | Design doc | Implemented | Reviewed | Merged into version/0.5 |
 |---|---|---|---|---|
 | `warden/v0.5-version-checks` (#20) | ☑ | ☑ | ☑ | ☑ |
-| `warden/v0.5-history-uptime` (#21) | ☐ | ☐ | ☐ | ☐ |
+| `warden/v0.5-history-uptime` (#21) | ☑ | ☑ | ☑ | ☑ |
 
 ### Release
 
