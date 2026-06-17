@@ -5,20 +5,24 @@ use std::time::Duration;
 use tokio::sync::watch;
 use tracing::{debug, info, warn};
 
-/// Starts a background tokio task that scans `root` every `interval` and
-/// sends discovered apps through the returned `watch::Receiver`.
+/// Starts a background tokio task that scans all `roots` every `interval` and
+/// sends the combined discovered apps through the returned `watch::Receiver`.
 /// Also returns a `watch::Sender<()>` — send any value to trigger an
 /// immediate scan without waiting for the interval.
 pub fn start(
-    root: PathBuf,
+    roots: Vec<PathBuf>,
     interval: Duration,
 ) -> (watch::Receiver<Vec<AppEntry>>, watch::Sender<()>) {
     let (tx, rx) = watch::channel(Vec::new());
     let (force_tx, mut force_rx) = watch::channel(());
     tokio::spawn(async move {
         loop {
-            let apps = scan_once(&root);
-            info!("scan complete: {} app(s) in {}", apps.len(), root.display());
+            let apps = scan_all(&roots);
+            info!(
+                "scan complete: {} app(s) across {} root(s)",
+                apps.len(),
+                roots.len()
+            );
             let _ = tx.send(apps);
             tokio::select! {
                 _ = tokio::time::sleep(interval) => {}
@@ -29,7 +33,14 @@ pub fn start(
     (rx, force_tx)
 }
 
+/// Scans all `roots` synchronously and returns a combined list of `AppEntry` records.
+/// Each entry's `root` field identifies which root directory it came from.
+pub fn scan_all(roots: &[PathBuf]) -> Vec<AppEntry> {
+    roots.iter().flat_map(|root| scan_once(root)).collect()
+}
+
 /// Scans `root` synchronously and returns discovered `AppEntry` records.
+/// Each entry's `root` field is set to `root`.
 pub fn scan_once(root: &Path) -> Vec<AppEntry> {
     let read = match std::fs::read_dir(root) {
         Ok(r) => r,
@@ -46,7 +57,8 @@ pub fn scan_once(root: &Path) -> Vec<AppEntry> {
             continue;
         }
         if is_app_dir(&dir) {
-            let app = parse_app_dir(&dir);
+            let mut app = parse_app_dir(&dir);
+            app.root = root.to_path_buf();
             debug!("discovered app: {} at {}", app.name, dir.display());
             apps.push(app);
         }
@@ -71,10 +83,12 @@ fn parse_app_dir(dir: &Path) -> AppEntry {
         return entry;
     }
     // Fallback: use directory name, no metadata.
+    // `root` is populated by `scan_once` after this call.
     let name = dir_name(dir);
     AppEntry {
         name,
         dir: dir.to_path_buf(),
+        root: PathBuf::new(),
         framework_version: None,
         server_command: read_server_command(dir),
         known_port: None,
@@ -107,6 +121,7 @@ fn parse_from_build_info(dir: &Path) -> Option<AppEntry> {
     Some(AppEntry {
         name,
         dir: dir.to_path_buf(),
+        root: PathBuf::new(),
         framework_version,
         server_command: read_server_command(dir),
         known_port,
@@ -133,6 +148,7 @@ fn parse_from_grimoire_config(dir: &Path) -> Option<AppEntry> {
     Some(AppEntry {
         name,
         dir: dir.to_path_buf(),
+        root: PathBuf::new(),
         framework_version,
         server_command: read_server_command(dir),
         known_port: None,
@@ -207,6 +223,7 @@ mod tests {
         assert_eq!(apps[0].name, "my-app");
         assert_eq!(apps[0].framework_version.as_deref(), Some("3.36"));
         assert_eq!(apps[0].server_command.as_deref(), Some("node server.js"));
+        assert_eq!(apps[0].root, root);
     }
 
     #[test]
@@ -306,7 +323,7 @@ mod tests {
         make_app(&root, "app-x", None, None);
 
         // Use a very long interval so the test would stall without a force trigger.
-        let (mut rx, force_tx) = start(root, Duration::from_secs(3600));
+        let (mut rx, force_tx) = start(vec![root], Duration::from_secs(3600));
 
         // Wait for the first scan to arrive (scanner sends before sleeping).
         let deadline = std::time::Instant::now() + Duration::from_secs(5);
@@ -335,5 +352,63 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn scan_all_combines_multiple_roots() {
+        let tmp1 = TempDir::new().unwrap();
+        let tmp2 = TempDir::new().unwrap();
+        let root1 = tmp1.path().to_path_buf();
+        let root2 = tmp2.path().to_path_buf();
+
+        make_app(&root1, "app-alpha", None, None);
+        make_app(&root2, "app-beta", None, None);
+
+        let apps = scan_all(&[root1.clone(), root2.clone()]);
+        assert_eq!(apps.len(), 2);
+
+        let alpha = apps.iter().find(|e| e.name == "app-alpha").unwrap();
+        let beta = apps.iter().find(|e| e.name == "app-beta").unwrap();
+        assert_eq!(alpha.root, root1);
+        assert_eq!(beta.root, root2);
+    }
+
+    #[test]
+    fn scan_all_single_root_matches_scan_once() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path().to_path_buf();
+
+        make_app(&root, "app-solo", Some("1.0"), Some("node index.js"));
+
+        let from_once = scan_once(&root);
+        let from_all = scan_all(&[root.clone()]);
+        assert_eq!(from_once.len(), from_all.len());
+        assert_eq!(from_once[0].name, from_all[0].name);
+        assert_eq!(from_once[0].root, root);
+        assert_eq!(from_all[0].root, root);
+    }
+
+    #[test]
+    fn stale_removal_per_root_independent() {
+        let tmp1 = TempDir::new().unwrap();
+        let tmp2 = TempDir::new().unwrap();
+        let root1 = tmp1.path().to_path_buf();
+        let root2 = tmp2.path().to_path_buf();
+
+        make_app(&root1, "app-keep", None, None);
+        make_app(&root1, "app-gone", None, None);
+        make_app(&root2, "app-stable", None, None);
+
+        let first = scan_all(&[root1.clone(), root2.clone()]);
+        assert_eq!(first.len(), 3);
+
+        // Remove app-gone from root1 only.
+        fs::remove_dir_all(root1.join("app-gone")).unwrap();
+
+        let second = scan_all(&[root1.clone(), root2.clone()]);
+        assert_eq!(second.len(), 2);
+        assert!(second.iter().any(|e| e.name == "app-keep"));
+        assert!(second.iter().any(|e| e.name == "app-stable"));
+        assert!(!second.iter().any(|e| e.name == "app-gone"));
     }
 }

@@ -1,5 +1,10 @@
 # Version history
 
+## v0.6.0 (2026-06-16)
+
+- Dedicated log viewer: a `[Logs]` toggle in the toolbar switches the central panel to an aggregated log view showing stdout/stderr from all Warden-launched apps; per-app chip toggles filter by app; log lines are prefixed with the source app name (`[<app-name>] <line>`); auto-scroll follows new output and pauses when the user scrolls up, resuming when scrolled back to the bottom
+- Multi-directory watching: `--apps-dir` is now a repeatable flag — pass it multiple times to monitor several app directories simultaneously; each app entry shows which root directory it came from (subdued label with full-path tooltip); stale-removal applies independently per root; single-directory behaviour is unchanged
+
 ## v0.5.0 (2026-06-16)
 
 - Version update checks: Warden now runs background checks (hourly by default) against each app's git remote and shows an "↑ vX.Y" badge in the app list when a newer version is available; the details panel shows the full "Update available: current → latest" message; configurable via `version_check_interval_secs` in `config.toml` (set to 0 to disable)

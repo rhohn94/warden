@@ -151,6 +151,7 @@ mod tests {
         AppEntry {
             name: dir.file_name().and_then(|n| n.to_str()).unwrap_or("app").to_string(),
             dir,
+            root: PathBuf::new(),
             framework_version: None,
             server_command: Some(cmd.to_string()),
             known_port: None,

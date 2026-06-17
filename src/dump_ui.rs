@@ -11,6 +11,7 @@ use std::path::PathBuf;
 #[derive(Serialize)]
 struct AppSnapshot {
     dir: PathBuf,
+    root: PathBuf,
     name: String,
     framework_version: Option<String>,
     known_port: Option<u16>,
@@ -23,13 +24,13 @@ struct AppSnapshot {
 /// Top-level `--dump-ui` JSON object.
 #[derive(Serialize)]
 struct UiDump {
-    apps_dir: PathBuf,
+    apps_dirs: Vec<PathBuf>,
     entries: Vec<AppSnapshot>,
 }
 
-/// Scan `apps_dir`, detect status/port for every entry, and print stable JSON to stdout.
-pub fn scan_and_dump(apps_dir: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
-    let mut entries = scanner::scan_once(&apps_dir);
+/// Scan all `apps_dirs`, detect status/port for every entry, and print stable JSON to stdout.
+pub fn scan_and_dump(apps_dirs: Vec<PathBuf>) -> Result<(), Box<dyn std::error::Error>> {
+    let mut entries = scanner::scan_all(&apps_dirs);
 
     // Sort by dir for a stable, diff-friendly ordering.
     entries.sort_by(|a, b| a.dir.cmp(&b.dir));
@@ -46,6 +47,7 @@ pub fn scan_and_dump(apps_dir: PathBuf) -> Result<(), Box<dyn std::error::Error>
 
         snapshots.push(AppSnapshot {
             dir: entry.dir.clone(),
+            root: entry.root.clone(),
             name: entry.name.clone(),
             framework_version: entry.framework_version.clone(),
             known_port: entry.known_port,
@@ -57,7 +59,7 @@ pub fn scan_and_dump(apps_dir: PathBuf) -> Result<(), Box<dyn std::error::Error>
     }
 
     let dump = UiDump {
-        apps_dir,
+        apps_dirs,
         entries: snapshots,
     };
 

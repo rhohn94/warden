@@ -6,6 +6,8 @@ use std::path::PathBuf;
 pub struct AppEntry {
     pub name: String,
     pub dir: PathBuf,
+    /// The watched root directory this app was discovered under.
+    pub root: PathBuf,
     pub framework_version: Option<String>,
     pub server_command: Option<String>,
     /// Port declared in grimoire-build-info.json environments.local.service_address.
