@@ -2138,8 +2138,8 @@ dependencies = [
 
 [[package]]
 name = "obsidian"
-version = "0.44.0"
-source = "git+https://github.com/rhohn94/obsidian.git?tag=v0.44.0#f218495233b82724296e3c7b19513a5fa91245b6"
+version = "0.45.0"
+source = "git+https://github.com/rhohn94/obsidian.git?tag=v0.45.0#5d8a27c7e0e30df5df3a3222e9d7842e78e61eba"
 dependencies = [
  "dirs",
  "egui",
@@ -2164,8 +2164,8 @@ dependencies = [
 
 [[package]]
 name = "obsidian-api"
-version = "0.44.0"
-source = "git+https://github.com/rhohn94/obsidian.git?tag=v0.44.0#f218495233b82724296e3c7b19513a5fa91245b6"
+version = "0.45.0"
+source = "git+https://github.com/rhohn94/obsidian.git?tag=v0.45.0#5d8a27c7e0e30df5df3a3222e9d7842e78e61eba"
 dependencies = [
  "egui",
  "serde",
@@ -3435,7 +3435,7 @@ dependencies = [
 
 [[package]]
 name = "warden"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "chrono",
  "dirs",
