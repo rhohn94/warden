@@ -63,6 +63,14 @@ impl Launcher {
         (status, port_info, log_rx)
     }
 
+    /// Restart an app: stop it (removing the child handle), then start it fresh.
+    /// Returns (AppStatus, PortInfo, Option<LogReceiver>) after both operations settle.
+    pub async fn restart(&mut self, entry: &AppEntry, last_known_pid: Option<u32>) -> (AppStatus, PortInfo, Option<LogReceiver>) {
+        info!("restarting {}", entry.name);
+        self.stop(entry, last_known_pid).await;
+        self.start(entry).await
+    }
+
     /// Stop an app. Returns updated (AppStatus, PortInfo) after the 500 ms settle wait.
     pub async fn stop(&mut self, entry: &AppEntry, last_known_pid: Option<u32>) -> (AppStatus, PortInfo) {
         info!("stopping {}", entry.name);
@@ -183,6 +191,59 @@ mod tests {
         assert!(
             !launcher.children.contains_key(&app_dir),
             "Child handle should be removed after stop"
+        );
+    }
+
+    #[tokio::test]
+    async fn restart_kills_old_child_and_starts_new_process() {
+        let tmp = TempDir::new().unwrap();
+        let app_dir = tmp.path().join("restart-test-app");
+        std::fs::create_dir_all(&app_dir).unwrap();
+
+        let entry = app_entry(app_dir.clone(), "sleep 120");
+        let mut launcher = Launcher::new();
+
+        // Start the process initially.
+        launcher.start(&entry).await;
+        assert!(
+            launcher.children.contains_key(&app_dir),
+            "Child handle should be tracked after initial start"
+        );
+
+        // Capture the pid of the first child (if available).
+        let first_pid = launcher
+            .children
+            .get_mut(&app_dir)
+            .and_then(|c| c.id());
+
+        // Restart: should stop old child and spawn a new one.
+        launcher.restart(&entry, first_pid).await;
+
+        // A new child handle must be tracked after restart.
+        assert!(
+            launcher.children.contains_key(&app_dir),
+            "Child handle should be tracked after restart"
+        );
+
+        // If the original child had a pid, the new child should be different
+        // (or at least a new handle was registered, which is sufficient).
+        let new_pid = launcher
+            .children
+            .get_mut(&app_dir)
+            .and_then(|c| c.id());
+
+        // Both pids may be None if the OS reclaimed them; the key invariant is
+        // that a child is tracked at all, validated above. When both are Some we
+        // confirm they differ.
+        if let (Some(old), Some(new)) = (first_pid, new_pid) {
+            assert_ne!(old, new, "Restarted process should have a different pid");
+        }
+
+        // Clean up.
+        launcher.stop(&entry, None).await;
+        assert!(
+            !launcher.children.contains_key(&app_dir),
+            "Child handle should be removed after final stop"
         );
     }
 }
