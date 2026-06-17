@@ -3,6 +3,7 @@ mod config;
 mod detector;
 mod dump_ui;
 mod launcher;
+mod log_capture;
 mod models;
 mod notifier;
 mod scanner;

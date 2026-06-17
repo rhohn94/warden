@@ -1,9 +1,13 @@
 use crate::{
     detector,
+    log_capture::{log_channel, LogReceiver, LogSender},
     models::{AppEntry, AppStatus, PortInfo},
 };
 use std::{collections::HashMap, path::PathBuf, time::Duration};
-use tokio::process::Child;
+use tokio::{
+    io::{AsyncBufReadExt, BufReader},
+    process::Child,
+};
 use tracing::{info, warn};
 
 /// Starts and stops apps, tracking spawned children for graceful cleanup.
@@ -18,27 +22,45 @@ impl Launcher {
         }
     }
 
-    /// Start an app. Returns updated (AppStatus, PortInfo) after the 1s settle wait.
-    pub async fn start(&mut self, entry: &AppEntry) -> (AppStatus, PortInfo) {
+    /// Start an app. Returns (AppStatus, PortInfo, Option<LogReceiver>) after the 1s settle wait.
+    /// The LogReceiver is `Some` when the process was launched and its output is piped;
+    /// it is `None` when no launch method was found.
+    pub async fn start(&mut self, entry: &AppEntry) -> (AppStatus, PortInfo, Option<LogReceiver>) {
         info!("starting {}", entry.name);
+
+        let (tx, rx) = log_channel();
+
         let child = if let Some(cmd) = &entry.server_command {
             tokio::process::Command::new("sh")
                 .args(["-c", cmd.as_str()])
                 .current_dir(&entry.dir)
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
                 .spawn()
                 .ok()
         } else {
-            self.spawn_binary(entry)
+            self.spawn_binary_piped(entry)
         };
 
-        if let Some(child) = child {
+        let log_rx = if let Some(mut child) = child {
+            // Spawn a reader task for stdout.
+            if let Some(stdout) = child.stdout.take() {
+                spawn_line_reader(BufReader::new(stdout), tx.clone());
+            }
+            // Spawn a reader task for stderr.
+            if let Some(stderr) = child.stderr.take() {
+                spawn_line_reader(BufReader::new(stderr), tx);
+            }
             self.children.insert(entry.dir.clone(), child);
+            Some(rx)
         } else {
             warn!("no launch method found for {}", entry.name);
-        }
+            None
+        };
 
         tokio::time::sleep(Duration::from_secs(1)).await;
-        detector::detect(entry)
+        let (status, port_info) = detector::detect(entry);
+        (status, port_info, log_rx)
     }
 
     /// Stop an app. Returns updated (AppStatus, PortInfo) after the 500 ms settle wait.
@@ -55,12 +77,14 @@ impl Launcher {
         detector::detect(entry)
     }
 
-    fn spawn_binary(&self, entry: &AppEntry) -> Option<Child> {
+    fn spawn_binary_piped(&self, entry: &AppEntry) -> Option<Child> {
         let current = entry.dir.join("current");
         let binary = current.join(&entry.name);
         if binary.exists() {
             return tokio::process::Command::new(&binary)
                 .current_dir(&entry.dir)
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
                 .spawn()
                 .ok();
         }
@@ -68,11 +92,28 @@ impl Launcher {
         if binary.exists() {
             return tokio::process::Command::new(&binary)
                 .current_dir(&entry.dir)
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
                 .spawn()
                 .ok();
         }
         None
     }
+}
+
+/// Spawns an async task that reads lines from `reader` and forwards them to `tx`.
+fn spawn_line_reader<R>(reader: BufReader<R>, tx: LogSender)
+where
+    R: tokio::io::AsyncRead + Unpin + Send + 'static,
+{
+    tokio::spawn(async move {
+        let mut lines = reader.lines();
+        while let Ok(Some(line)) = lines.next_line().await {
+            if tx.send(line).is_err() {
+                break; // Receiver dropped (app stopped).
+            }
+        }
+    });
 }
 
 async fn sigterm_then_sigkill(pid: u32) {
