@@ -31,10 +31,10 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
 
     if args.iter().any(|a| a == "--help" || a == "-h") {
-        println!("Usage: warden [--apps-dir <path>] [--refresh <secs>] [--dump-ui]");
+        println!("Usage: warden [--apps-dir <path>]... [--refresh <secs>] [--dump-ui]");
         println!();
         println!("Options:");
-        println!("  --apps-dir <path>   Directory to watch for deployed apps");
+        println!("  --apps-dir <path>   Directory to watch for deployed apps (repeatable)");
         println!("                      (default: ~/Projects/deployed-apps/)");
         println!("  --refresh <secs>    Scan interval in seconds (default: 5)");
         println!("  --dump-ui           Print a JSON snapshot of app state to stdout and exit");
@@ -45,22 +45,28 @@ fn main() {
     // Load persistent config; CLI args override config values.
     let mut config = Config::load();
 
-    // Resolve apps_dir: CLI flag wins, then config, then hardcoded default.
-    let cli_apps_dir = parse_flag(&args, "--apps-dir");
-    if let Some(dir) = cli_apps_dir {
+    // Collect all --apps-dir values (flag is repeatable).
+    let cli_apps_dirs: Vec<&str> = parse_flag_multi(&args, "--apps-dir");
+
+    // Persist the last explicit --apps-dir value (single-value backward-compat).
+    if let Some(dir) = cli_apps_dirs.last() {
         config.apps_dir = Some(dir.to_string());
         if let Err(e) = config.save() {
             tracing::warn!("could not save config: {}", e);
         }
     }
-    let apps_dir: PathBuf = config
-        .apps_dir
-        .as_deref()
-        .map(PathBuf::from)
-        .unwrap_or_else(default_apps_dir);
+
+    // Build the watched directory list: CLI values win; fall back to config then default.
+    let apps_dirs: Vec<PathBuf> = if !cli_apps_dirs.is_empty() {
+        cli_apps_dirs.iter().map(PathBuf::from).collect()
+    } else if let Some(ref dir) = config.apps_dir {
+        vec![PathBuf::from(dir)]
+    } else {
+        vec![default_apps_dir()]
+    };
 
     if args.iter().any(|a| a == "--dump-ui") {
-        if let Err(e) = dump_ui::scan_and_dump(apps_dir) {
+        if let Err(e) = dump_ui::scan_and_dump(apps_dirs) {
             eprintln!("warden --dump-ui: {}", e);
             std::process::exit(1);
         }
@@ -95,7 +101,7 @@ fn main() {
     let history = Arc::new(std::sync::Mutex::new(HistoryStore::load()));
 
     let state = Arc::new(std::sync::Mutex::new(AppState::new(
-        apps_dir.clone(),
+        apps_dirs.clone(),
         refresh_secs,
         notifications_enabled,
         log_tail_lines,
@@ -105,8 +111,9 @@ fn main() {
 
     // Enter the runtime so tokio::spawn in scanner::start works from the main thread.
     let _runtime_guard = runtime.enter();
-    info!("warden v{} starting — watching {}", env!("CARGO_PKG_VERSION"), apps_dir.display());
-    let (scanner_rx, force_scan_tx) = scanner::start(apps_dir, Duration::from_secs(refresh_secs));
+    let dirs_display: Vec<String> = apps_dirs.iter().map(|d| d.display().to_string()).collect();
+    info!("warden v{} starting — watching [{}]", env!("CARGO_PKG_VERSION"), dirs_display.join(", "));
+    let (scanner_rx, force_scan_tx) = scanner::start(apps_dirs, Duration::from_secs(refresh_secs));
     let launcher = Arc::new(TokioMutex::new(Launcher::new()));
     let runtime_handle = runtime.handle().clone();
 
@@ -128,6 +135,15 @@ fn parse_flag<'a>(args: &'a [String], flag: &str) -> Option<&'a str> {
     args.windows(2)
         .find(|w| w[0] == flag)
         .map(|w| w[1].as_str())
+}
+
+/// Collect all values associated with a repeatable flag.
+/// `--flag val1 --flag val2` returns `["val1", "val2"]`.
+fn parse_flag_multi<'a>(args: &'a [String], flag: &str) -> Vec<&'a str> {
+    args.windows(2)
+        .filter(|w| w[0] == flag)
+        .map(|w| w[1].as_str())
+        .collect()
 }
 
 fn default_apps_dir() -> PathBuf {

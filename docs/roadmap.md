@@ -57,7 +57,7 @@ Reduces friction at startup and keeps users informed without polling the window.
 
 ## v0.5 — Runtime Insights
 
-Plan: [`release-planning-v0.5.md`](release-planning-v0.5.md). (implementation complete — pending release)
+Plan: [`release-planning-v0.5.md`](release-planning-v0.5.md).
 
 Adds observable runtime data — per-app version update indicators and
 start/stop history with live uptime — so operators can see at a glance
@@ -67,7 +67,18 @@ whether apps are stale and how stable they have been.
 - Version update checks: async background checks against each app's git remote; badge in app list and details pane (Issue #20)
 - History / uptime tracking: per-app ring buffer of start/stop events, persisted to `~/.config/warden/history.json`; History sub-section + live Uptime counter in details panel (Issue #21)
 
+## v0.6 — Multi-source Monitoring
+
+Plan: [`release-planning-v0.6.md`](release-planning-v0.6.md). (implementation complete — pending release)
+
+Expands Warden's monitoring surface: a dedicated log viewer aggregates stdout
+from all running apps in one panel, and the app scanner can now watch multiple
+directories simultaneously.
+
+**Scope:**
+- Dedicated log viewer: top-bar `[Logs]` toggle switches the central area to an aggregated log panel with per-app chip filters and auto-scroll (Issue #22)
+- Multi-directory watching: `--apps-dir` becomes repeatable; `Scanner` accepts `Vec<PathBuf>` roots; `AppEntry` gains a `root` field; stale removal per root (Issue #23)
+
 ## Backlog
 
-- Multi-directory watching
 - Ensign HTTP health polling
