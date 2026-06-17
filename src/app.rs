@@ -127,6 +127,14 @@ pub struct App {
     // ── App list search / live filter ────────────────────────────────────────
     /// The current text entered in the app-list filter field; empty means no filter.
     search_query: String,
+
+    // ── Changelog ────────────────────────────────────────────────────────────
+    /// Parsed entries from docs/version-history.md; populated once at startup.
+    /// Will be read by the changelog modal panel (follow-up issue).
+    #[allow(dead_code)]
+    changelog_entries: Vec<crate::changelog::ChangelogEntry>,
+    /// Whether the changelog modal/panel is currently open.
+    changelog_open: bool,
 }
 
 impl App {
@@ -161,6 +169,8 @@ impl App {
             log_viewer_auto_scroll: true,
             log_viewer_prev_line_count: 0,
             search_query: String::new(),
+            changelog_entries: crate::changelog::changelog_entries(),
+            changelog_open: false,
         }
     }
 
@@ -346,6 +356,13 @@ impl App {
             // ── Header ──────────────────────────────────────────────────
             ui.horizontal(|ui| {
                 ui.label(theme::apply_type_tokens(egui::RichText::new("Warden").size(golden::TEXT_LG).strong(), golden::TEXT_LG));
+                if ui.add(egui::Label::new(
+                    egui::RichText::new(format!("v{}", crate::changelog::VERSION))
+                        .color(golden::TEXT_MUTED)
+                        .size(golden::TEXT_SM)
+                ).sense(egui::Sense::click())).clicked() {
+                    self.changelog_open = true;
+                }
                 ui.add_space(golden::SPACE[2]); // SPACE_2 = 8px
                 let dirs_label = if apps_dirs.len() == 1 {
                     apps_dirs[0].to_string_lossy().into_owned()
