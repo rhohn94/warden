@@ -1,36 +1,110 @@
-use crate::models::AppEntry;
+use crate::detector;
+use crate::models::{AppEntry, AppStatus, PortInfo};
 use serde_json::Value;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::watch;
+use tokio::task::JoinSet;
 use tracing::{debug, info, warn};
 
-/// Starts a background tokio task that scans all `roots` every `interval` and
-/// sends the combined discovered apps through the returned `watch::Receiver`.
-/// Also returns a `watch::Sender<()>` — send any value to trigger an
-/// immediate scan without waiting for the interval.
+/// Combined scan result: discovered entry, detected status, and port info.
+pub type ScanResult = Vec<(AppEntry, AppStatus, PortInfo)>;
+
+/// Starts a background tokio task that scans all `roots` every `interval`,
+/// runs per-app detection concurrently, and sends the combined results through
+/// the returned `watch::Receiver`. Also returns a `watch::Sender<()>` — send
+/// any value to trigger an immediate scan without waiting for the interval.
+/// Force-scan signals received while a scan is already in-flight are silently
+/// dropped to prevent queuing redundant scans.
 pub fn start(
     roots: Vec<PathBuf>,
     interval: Duration,
-) -> (watch::Receiver<Vec<AppEntry>>, watch::Sender<()>) {
+) -> (watch::Receiver<ScanResult>, watch::Sender<()>) {
     let (tx, rx) = watch::channel(Vec::new());
     let (force_tx, mut force_rx) = watch::channel(());
+    let in_flight = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let in_flight_force = Arc::clone(&in_flight);
+
     tokio::spawn(async move {
         loop {
-            let apps = scan_all(&roots);
+            in_flight.store(true, std::sync::atomic::Ordering::SeqCst);
+            let entries = scan_all(&roots);
             info!(
                 "scan complete: {} app(s) across {} root(s)",
-                apps.len(),
+                entries.len(),
                 roots.len()
             );
-            let _ = tx.send(apps);
+
+            // Run per-app detector calls concurrently with a 2 s timeout each.
+            let results = run_detectors_concurrent(entries).await;
+
+            let _ = tx.send(results);
+            in_flight.store(false, std::sync::atomic::Ordering::SeqCst);
+
             tokio::select! {
                 _ = tokio::time::sleep(interval) => {}
-                _ = force_rx.changed() => {}
+                _ = force_rx.changed() => {
+                    // Force-scan woke us; check wasn't in-flight at this point
+                    // since we just cleared the flag above.
+                }
             }
         }
     });
-    (rx, force_tx)
+
+    // Wrap force_tx so that sends while a scan is in-flight are dropped.
+    let raw_force_tx = force_tx;
+    // Build a new channel pair for the caller; a relay task forwards non-in-flight triggers.
+    let (caller_force_tx, mut caller_force_rx) = watch::channel(());
+    tokio::spawn(async move {
+        loop {
+            if caller_force_rx.changed().await.is_err() {
+                break;
+            }
+            if in_flight_force.load(std::sync::atomic::Ordering::SeqCst) {
+                debug!("force-scan dropped: scan already in-flight");
+            } else {
+                let _ = raw_force_tx.send(());
+            }
+        }
+    });
+
+    (rx, caller_force_tx)
+}
+
+/// Run `detector::detect` for each entry concurrently using a `JoinSet`,
+/// with a 2-second timeout per app. Timed-out apps are marked Unknown.
+async fn run_detectors_concurrent(
+    entries: Vec<AppEntry>,
+) -> Vec<(AppEntry, AppStatus, PortInfo)> {
+    let mut join_set: JoinSet<(AppEntry, AppStatus, PortInfo)> = JoinSet::new();
+
+    for entry in entries {
+        join_set.spawn(async move {
+            let entry_for_detect = entry.clone();
+            let detect_task = tokio::task::spawn_blocking(move || detector::detect(&entry_for_detect));
+            match tokio::time::timeout(Duration::from_secs(2), detect_task).await {
+                Ok(Ok((status, port_info))) => (entry, status, port_info),
+                Ok(Err(_join_err)) => {
+                    warn!("detector task panicked for {}", entry.name);
+                    (entry, AppStatus::Unknown, PortInfo { port: None })
+                }
+                Err(_timeout) => {
+                    debug!("detector timed out for {}", entry.name);
+                    (entry, AppStatus::Unknown, PortInfo { port: None })
+                }
+            }
+        });
+    }
+
+    let mut results = Vec::new();
+    while let Some(res) = join_set.join_next().await {
+        if let Ok(triple) = res {
+            results.push(triple);
+        }
+        // Err(_) means the task panicked; already handled inside the spawned closure.
+    }
+    results
 }
 
 /// Scans all `roots` synchronously and returns a combined list of `AppEntry` records.
@@ -182,6 +256,8 @@ fn dir_name(dir: &Path) -> String {
 mod tests {
     use super::*;
     use std::fs;
+    use std::sync::atomic::{AtomicU32, Ordering};
+    use std::sync::Arc;
     use tempfile::TempDir;
 
     fn make_app(
@@ -337,17 +413,17 @@ mod tests {
         rx.borrow_and_update(); // consume the first scan
 
         // Trigger a force scan; the scanner should deliver a second update
-        // well within 1 second despite the 3600s interval.
+        // well within 5 seconds despite the 3600s interval.
         force_tx.send(()).unwrap();
-        let timeout = tokio::time::sleep(Duration::from_secs(1));
+        let timeout = tokio::time::sleep(Duration::from_secs(5));
         tokio::pin!(timeout);
         loop {
             tokio::select! {
-                _ = &mut timeout => panic!("force scan did not arrive within 1 second"),
+                _ = &mut timeout => panic!("force scan did not arrive within 5 seconds"),
                 _ = rx.changed() => {
                     let apps = rx.borrow_and_update().clone();
                     assert_eq!(apps.len(), 1);
-                    assert_eq!(apps[0].name, "app-x");
+                    assert_eq!(apps[0].0.name, "app-x");
                     break;
                 }
             }
@@ -410,5 +486,74 @@ mod tests {
         assert!(second.iter().any(|e| e.name == "app-keep"));
         assert!(second.iter().any(|e| e.name == "app-stable"));
         assert!(!second.iter().any(|e| e.name == "app-gone"));
+    }
+
+    /// Verify that a force-scan fired while the in-flight flag is set is
+    /// dropped rather than queued. A relay task drops the trigger and emits
+    /// a tracing::debug! log; we confirm by counting how many scans arrive
+    /// during a window where the flag is manually held high.
+    #[tokio::test]
+    async fn force_scan_dropped_when_in_flight() {
+        use std::sync::atomic::AtomicBool;
+
+        // Build the same relay logic used in `start()` but driven by a test-
+        // controlled in_flight flag so we can hold it true for the entire test.
+        let in_flight = Arc::new(AtomicBool::new(false));
+        let in_flight_relay = Arc::clone(&in_flight);
+
+        let (inner_force_tx, mut inner_force_rx) = watch::channel::<()>(());
+        let (caller_force_tx, mut caller_force_rx) = watch::channel::<()>(());
+
+        // Counter incremented each time a force trigger reaches the inner channel.
+        let pass_count = Arc::new(AtomicU32::new(0));
+        let pass_count_task = Arc::clone(&pass_count);
+
+        // Spawn the relay task (same logic as in `start()`).
+        tokio::spawn(async move {
+            loop {
+                if caller_force_rx.changed().await.is_err() {
+                    break;
+                }
+                if in_flight_relay.load(Ordering::SeqCst) {
+                    debug!("force-scan dropped: scan already in-flight");
+                } else {
+                    let _ = inner_force_tx.send(());
+                    pass_count_task.fetch_add(1, Ordering::SeqCst);
+                }
+            }
+        });
+
+        // Drain the initial sentinel value so changed() only fires on real sends.
+        let _ = inner_force_rx.borrow_and_update();
+
+        // ── Case 1: in_flight = false → trigger should pass through ──────────
+        in_flight.store(false, Ordering::SeqCst);
+        caller_force_tx.send(()).unwrap();
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert_eq!(
+            pass_count.load(Ordering::SeqCst),
+            1,
+            "trigger should pass when not in-flight"
+        );
+
+        // ── Case 2: in_flight = true → trigger should be dropped ─────────────
+        in_flight.store(true, Ordering::SeqCst);
+        caller_force_tx.send(()).unwrap();
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert_eq!(
+            pass_count.load(Ordering::SeqCst),
+            1, // still 1; the second send was dropped
+            "trigger should be dropped when in-flight"
+        );
+
+        // ── Case 3: flag cleared → next trigger passes ────────────────────────
+        in_flight.store(false, Ordering::SeqCst);
+        caller_force_tx.send(()).unwrap();
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert_eq!(
+            pass_count.load(Ordering::SeqCst),
+            2,
+            "trigger should pass again after in-flight cleared"
+        );
     }
 }
