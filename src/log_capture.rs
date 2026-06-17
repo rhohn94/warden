@@ -31,6 +31,7 @@ impl LogCapture {
     }
 
     /// Number of lines currently stored.
+    #[cfg(test)]
     pub fn len(&self) -> usize {
         self.lines.len()
     }

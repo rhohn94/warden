@@ -15,6 +15,8 @@ pub struct Config {
     pub notifications_enabled: Option<bool>,
     /// Maximum log lines to retain per app in the tail buffer (default 500)
     pub log_tail_lines: Option<usize>,
+    /// Interval in seconds between version-update checks; 0 disables (default 3600)
+    pub version_check_interval_secs: Option<u64>,
 }
 
 impl Default for Config {
@@ -24,6 +26,7 @@ impl Default for Config {
             refresh_secs: Some(5),
             notifications_enabled: Some(true),
             log_tail_lines: Some(500),
+            version_check_interval_secs: Some(3600),
         }
     }
 }
@@ -101,6 +104,7 @@ mod tests {
         assert_eq!(cfg.refresh_secs, def.refresh_secs);
         assert_eq!(cfg.notifications_enabled, def.notifications_enabled);
         assert_eq!(cfg.log_tail_lines, def.log_tail_lines);
+        assert_eq!(cfg.version_check_interval_secs, def.version_check_interval_secs);
     }
 
     #[test]
@@ -112,6 +116,7 @@ mod tests {
             refresh_secs: Some(15),
             notifications_enabled: Some(false),
             log_tail_lines: Some(200),
+            version_check_interval_secs: Some(7200),
         };
         cfg.save_to(&path).unwrap();
 
@@ -120,12 +125,14 @@ mod tests {
         assert!(raw.contains("refresh_secs"));
         assert!(raw.contains("notifications_enabled"));
         assert!(raw.contains("log_tail_lines"));
+        assert!(raw.contains("version_check_interval_secs"));
 
         let loaded = Config::load_from(&path);
         assert_eq!(loaded.apps_dir.as_deref(), Some("/tmp/myapps"));
         assert_eq!(loaded.refresh_secs, Some(15));
         assert_eq!(loaded.notifications_enabled, Some(false));
         assert_eq!(loaded.log_tail_lines, Some(200));
+        assert_eq!(loaded.version_check_interval_secs, Some(7200));
     }
 
     #[test]
@@ -144,6 +151,7 @@ mod tests {
         assert_eq!(cfg.refresh_secs, Some(5));
         assert_eq!(cfg.notifications_enabled, Some(true));
         assert_eq!(cfg.log_tail_lines, Some(500));
+        assert_eq!(cfg.version_check_interval_secs, Some(3600));
     }
 
     #[test]
