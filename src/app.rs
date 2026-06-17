@@ -1,12 +1,12 @@
 use crate::{
-    detector,
+    config::Config,
     history::HistoryStore,
     launcher::Launcher,
     log_capture::{LogCapture, LogReceiver},
     models::{AppEntry, AppStatus, PortInfo, VersionCheckResult},
     notifier::Notifier,
 };
-use tracing::{debug, error, info};
+use tracing::{debug, error};
 use obsidian::{
     app::window_attributes,
     aura::golden,
@@ -90,7 +90,8 @@ pub struct App {
 
     // shared app state
     state: Arc<Mutex<AppState>>,
-    scanner_rx: watch::Receiver<Vec<AppEntry>>,
+    config: Config,
+    scanner_rx: watch::Receiver<crate::scanner::ScanResult>,
     force_scan_tx: watch::Sender<()>,
     launcher: Arc<tokio::sync::Mutex<Launcher>>,
     runtime_handle: tokio::runtime::Handle,
@@ -117,7 +118,8 @@ pub struct App {
 impl App {
     pub fn new(
         state: Arc<Mutex<AppState>>,
-        scanner_rx: watch::Receiver<Vec<AppEntry>>,
+        config: Config,
+        scanner_rx: watch::Receiver<crate::scanner::ScanResult>,
         force_scan_tx: watch::Sender<()>,
         launcher: Arc<tokio::sync::Mutex<Launcher>>,
         runtime_handle: tokio::runtime::Handle,
@@ -131,6 +133,7 @@ impl App {
             egui_window: None,
             renderer: None,
             state,
+            config,
             scanner_rx,
             force_scan_tx,
             launcher,
@@ -149,11 +152,13 @@ impl App {
             return;
         }
 
-        // Poll scanner for new app entries.
+        // Poll scanner for new app entries with pre-detected statuses.
         if self.scanner_rx.has_changed().unwrap_or(false) {
-            let entries = self.scanner_rx.borrow_and_update().clone();
-            debug!("scanner update: {} entries", entries.len());
-            let new_paths: HashSet<PathBuf> = entries.iter().map(|e| e.dir.clone()).collect();
+            let scan_results = self.scanner_rx.borrow_and_update().clone();
+            debug!("scanner update: {} entries", scan_results.len());
+            let new_paths: HashSet<PathBuf> =
+                scan_results.iter().map(|(e, _, _)| e.dir.clone()).collect();
+            let entries: Vec<AppEntry> = scan_results.iter().map(|(e, _, _)| e.clone()).collect();
             let mut state = self.state.lock().unwrap();
             let removed_paths: Vec<PathBuf> = state
                 .statuses
@@ -166,10 +171,15 @@ impl App {
                 state.in_flight.remove(&path);
                 state.entries.retain(|e| e.dir != path);
             }
-            state.entries = entries.clone();
+            state.entries = entries;
             state.last_scan = Instant::now();
-            // Fire notifications for any transitions visible at this scan cycle.
-            // Also record history events for Running↔Stopped transitions.
+            // Apply scanner-provided statuses; skip apps with an in-flight user action.
+            for (entry, status, port_info) in scan_results {
+                if !state.in_flight.contains(&entry.dir) {
+                    state.statuses.insert(entry.dir.clone(), (status, port_info));
+                }
+            }
+            // Fire notifications and record history for any status transitions.
             let pairs: Vec<(String, AppStatus)> = state
                 .entries
                 .iter()
@@ -181,7 +191,6 @@ impl App {
                 })
                 .collect();
             let transitions = state.notifier.check_transitions(&pairs);
-            // Record history for scanner-detected transitions.
             if !transitions.is_empty() {
                 let mut hist = state.history.lock().unwrap();
                 for (name, new_status) in &transitions {
@@ -191,14 +200,6 @@ impl App {
                     }
                 }
                 hist.save();
-            }
-            drop(state);
-            // Background-detect status for every entry; skip any with an in-flight op.
-            for entry in entries {
-                let in_flight = self.state.lock().unwrap().in_flight.contains(&entry.dir);
-                if !in_flight {
-                    self.dispatch_detect(entry);
-                }
             }
         }
 
@@ -241,6 +242,13 @@ impl App {
     }
 
     fn draw_ui(&mut self, ctx: &egui::Context) {
+        // Frame-time telemetry: warn when a frame exceeds the configured threshold.
+        let frame_dt_ms = ctx.input(|i| i.stable_dt) * 1000.0;
+        let warn_ms = self.config.frame_warn_ms() as f32;
+        if frame_dt_ms > warn_ms {
+            tracing::warn!(frame_ms = frame_dt_ms as u64, "slow frame");
+        }
+
         // Snapshot all shared state before rendering so we can drop the lock.
         let (entries, statuses, in_flight, apps_dirs, refresh_secs, last_scan, current_selected, version_results_snap) = {
             let state = self.state.lock().unwrap();
@@ -975,24 +983,6 @@ impl App {
         });
     }
 
-    /// Run detection for `entry` in a blocking thread; update statuses unless in-flight.
-    fn dispatch_detect(&self, entry: AppEntry) {
-        let state = Arc::clone(&self.state);
-        let dir = entry.dir.clone();
-        let name = entry.name.clone();
-        self.runtime_handle.spawn(async move {
-            let (status, port_info) =
-                tokio::task::spawn_blocking(move || detector::detect(&entry))
-                    .await
-                    .unwrap_or((AppStatus::Unknown, PortInfo::default()));
-            info!("detected {}: {:?}", dir.display(), status);
-            let mut s = state.lock().unwrap();
-            if !s.in_flight.contains(&dir) {
-                s.statuses.insert(dir, (status.clone(), port_info));
-                s.notifier.check_transitions(&[(name, status)]);
-            }
-        });
-    }
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────────

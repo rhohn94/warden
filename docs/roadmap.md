@@ -79,6 +79,16 @@ directories simultaneously.
 - Dedicated log viewer: top-bar `[Logs]` toggle switches the central area to an aggregated log panel with per-app chip filters and auto-scroll (Issue #22)
 - Multi-directory watching: `--apps-dir` becomes repeatable; `Scanner` accepts `Vec<PathBuf>` roots; `AppEntry` gains a `root` field; stale removal per root (Issue #23)
 
+## v0.7 — Performance + Stability
+
+Resolves UI freeze under load: enforces scan throttling so in-flight scans
+cannot stack, adds per-app detector concurrency, and instruments hot paths
+with a machine-readable `perf.log` for diagnostics.
+
+**Scope:**
+- Scan throttling: drop force-scan trigger when scan is in-flight; per-app 2 s detector timeout; `tokio::join_all` concurrency for per-app detectors (Issue #24 — part 1)
+- Performance telemetry: `perf.log` writer (cycle duration, drop count, slowest-app); frame-time warn via `ctx.input`; configurable `perf.frame_warn_ms` in `config.toml` (Issue #24 — part 2)
+
 ## Backlog
 
 - Ensign HTTP health polling
