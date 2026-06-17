@@ -69,7 +69,7 @@ whether apps are stale and how stable they have been.
 
 ## v0.6 — Multi-source Monitoring
 
-Plan: [`release-planning-v0.6.md`](release-planning-v0.6.md).
+Plan: [`release-planning-v0.6.md`](release-planning-v0.6.md). (implementation complete — pending release)
 
 Expands Warden's monitoring surface: a dedicated log viewer aggregates stdout
 from all running apps in one panel, and the app scanner can now watch multiple
