@@ -11,7 +11,7 @@ use obsidian::{
     app::window_attributes,
     aura::golden,
     theme::{self, Theme},
-    widgets::{Badge, BadgeStatus, LabeledDivider, TactileButton},
+    widgets::{Badge, BadgeStatus, ButtonGroup, ButtonGroupItem, LabeledDivider, TabItem, TabStrip, TactileButton},
     AppDelegate, EguiOnlyRenderer, EguiWindow,
 };
 use std::{
@@ -354,17 +354,10 @@ impl App {
                 };
                 ui.label(egui::RichText::new(&dirs_label).color(golden::TEXT_MUTED).size(golden::TEXT_SM));
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    // [Logs] / [Apps] toggle — swaps the central panel content.
-                    let toggle_label = if self.show_log_viewer { "Apps" } else { "Logs" };
-                    if ui
-                        .add(
-                            egui::Button::new(toggle_label)
-                                .min_size(egui::vec2(0.0, golden::CONTROL_HEIGHT_SM))
-                                .corner_radius(egui::CornerRadius::same(golden::RADIUS_SM)),
-                        )
-                        .clicked()
-                    {
-                        self.show_log_viewer = !self.show_log_viewer;
+                    // Apps/Logs tab strip — swaps the central panel content.
+                    let selected_idx = if self.show_log_viewer { 1 } else { 0 };
+                    if let Some(new_idx) = TabStrip::new(vec![TabItem::new("Apps"), TabItem::new("Logs")]).show(ui, selected_idx) {
+                        self.show_log_viewer = new_idx == 1;
                     }
                     ui.add_space(golden::SPACE[2]);
                     if !self.show_log_viewer
@@ -632,48 +625,32 @@ impl App {
         }
 
         // ── Filter chip bar ──────────────────────────────────────────────────
-        ui.horizontal_wrapped(|ui| {
-            // "All" bulk-select chip.
-            let all_active = running_apps
-                .iter()
-                .all(|e| *self.log_viewer_filter.get(&e.name).unwrap_or(&true));
-            let all_label = if all_active { "● All" } else { "○ All" };
-            if ui
-                .add(
-                    egui::Button::new(all_label)
-                        .min_size(egui::vec2(0.0, golden::CONTROL_HEIGHT_SM))
-                        .corner_radius(egui::CornerRadius::same(golden::RADIUS_SM)),
-                )
-                .clicked()
-            {
-                // Toggle: if all active → deselect all; if any inactive → select all.
+        // Build chip items: "All" first, then one per app.
+        let mut chip_labels: Vec<String> = vec!["All".to_string()];
+        chip_labels.extend(running_apps.iter().map(|e| e.name.clone()));
+
+        let items: Vec<ButtonGroupItem<'_>> = chip_labels.iter().map(|s| ButtonGroupItem::label(s.as_str())).collect();
+
+        // ButtonGroup::selection with selected: None shows no item as highlighted;
+        // we handle toggle state manually on click.
+        if let Some(clicked_idx) = ButtonGroup::selection(items).show(ui, None) {
+            if clicked_idx == 0 {
+                // "All" toggled — bulk select/deselect.
+                let all_active = running_apps
+                    .iter()
+                    .all(|e| *self.log_viewer_filter.get(&e.name).unwrap_or(&true));
                 let new_state = !all_active;
                 for entry in &running_apps {
-                    self.log_viewer_filter
-                        .insert(entry.name.clone(), new_state);
+                    self.log_viewer_filter.insert(entry.name.clone(), new_state);
+                }
+            } else {
+                // Per-app chip toggled (clicked_idx 1..N maps to running_apps[clicked_idx-1]).
+                if let Some(entry) = running_apps.get(clicked_idx - 1) {
+                    let current = *self.log_viewer_filter.get(&entry.name).unwrap_or(&true);
+                    self.log_viewer_filter.insert(entry.name.clone(), !current);
                 }
             }
-
-            // Per-app filter chips.
-            for entry in &running_apps {
-                let active = *self.log_viewer_filter.get(&entry.name).unwrap_or(&true);
-                let chip_label = if active {
-                    format!("● {}", entry.name)
-                } else {
-                    format!("○ {}", entry.name)
-                };
-                if ui
-                    .add(
-                        egui::Button::new(&chip_label)
-                            .min_size(egui::vec2(0.0, golden::CONTROL_HEIGHT_SM))
-                            .corner_radius(egui::CornerRadius::same(golden::RADIUS_SM)),
-                    )
-                    .clicked()
-                {
-                    self.log_viewer_filter.insert(entry.name.clone(), !active);
-                }
-            }
-        });
+        }
 
         ui.add_space(golden::SPACE[2]);
 
