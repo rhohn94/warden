@@ -127,6 +127,12 @@ pub struct App {
     // ── App list search / live filter ────────────────────────────────────────
     /// The current text entered in the app-list filter field; empty means no filter.
     search_query: String,
+
+    // ── Changelog ────────────────────────────────────────────────────────────
+    /// Parsed entries from docs/version-history.md; populated once at startup.
+    changelog_entries: Vec<crate::changelog::ChangelogEntry>,
+    /// Whether the changelog modal/panel is currently open.
+    changelog_open: bool,
 }
 
 impl App {
@@ -161,6 +167,8 @@ impl App {
             log_viewer_auto_scroll: true,
             log_viewer_prev_line_count: 0,
             search_query: String::new(),
+            changelog_entries: crate::changelog::changelog_entries(),
+            changelog_open: false,
         }
     }
 
@@ -341,11 +349,21 @@ impl App {
                 });
         }
 
+        // ── Changelog floating window (rendered before CentralPanel so it floats above) ──
+        self.draw_changelog(ctx);
+
         // ── Central panel — app list or log viewer ───────────────────────────
         egui::CentralPanel::default().show(ctx, |ui| {
             // ── Header ──────────────────────────────────────────────────
             ui.horizontal(|ui| {
                 ui.label(theme::apply_type_tokens(egui::RichText::new("Warden").size(golden::TEXT_LG).strong(), golden::TEXT_LG));
+                if ui.add(egui::Label::new(
+                    egui::RichText::new(format!("v{}", crate::changelog::VERSION))
+                        .color(golden::TEXT_MUTED)
+                        .size(golden::TEXT_SM)
+                ).sense(egui::Sense::click())).clicked() {
+                    self.changelog_open = true;
+                }
                 ui.add_space(golden::SPACE[2]); // SPACE_2 = 8px
                 let dirs_label = if apps_dirs.len() == 1 {
                     apps_dirs[0].to_string_lossy().into_owned()
@@ -442,6 +460,60 @@ impl App {
                 error!("open browser failed: {}", e);
             }
         }
+    }
+
+    /// Render the scrollable Aura-styled changelog viewer as a floating egui window.
+    ///
+    /// Only renders when `self.changelog_open` is true. The standard egui × button
+    /// and the explicit "Close" TactileButton both set `changelog_open` to false.
+    fn draw_changelog(&mut self, ctx: &egui::Context) {
+        if !self.changelog_open {
+            return;
+        }
+        let mut open = self.changelog_open;
+        let mut close_requested = false;
+        egui::Window::new("Changelog")
+            .default_size([480.0, 520.0])
+            .collapsible(false)
+            .resizable(true)
+            .open(&mut open)
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label(theme::apply_type_tokens(
+                        egui::RichText::new("Changelog").strong().size(golden::TEXT_LG),
+                        golden::TEXT_LG,
+                    ));
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if TactileButton::new("Close").ghost().ui(ui).clicked() {
+                            close_requested = true;
+                        }
+                    });
+                });
+                theme::hairline(ui);
+                egui::ScrollArea::vertical().show(ui, |ui| {
+                    let count = self.changelog_entries.len();
+                    for (i, entry) in self.changelog_entries.iter().enumerate() {
+                        theme::card_show(ui, |ui| {
+                            ui.label(theme::apply_type_tokens(
+                                egui::RichText::new(&entry.version).strong().size(golden::TEXT_LG),
+                                golden::TEXT_LG,
+                            ));
+                            ui.add_space(golden::SPACE[2]);
+                            for bullet in &entry.bullets {
+                                ui.label(
+                                    egui::RichText::new(format!("• {}", bullet))
+                                        .color(golden::TEXT_MUTED)
+                                        .size(golden::TEXT_SM),
+                                );
+                            }
+                        });
+                        if i + 1 < count {
+                            theme::hairline(ui);
+                        }
+                    }
+                });
+            });
+        self.changelog_open = open && !close_requested;
     }
 
     /// Render the app list rows and status bar into the central panel.

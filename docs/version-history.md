@@ -1,5 +1,10 @@
 # Version history
 
+## v1.0.0 (2026-06-17)
+
+- Changelog visibility: the current version (`v1.0.0`) is shown as a clickable label next to the "Warden" title; clicking it opens a scrollable Aura-styled changelog window showing release notes for all shipped versions, latest first, in card surfaces with hairline dividers
+- Changelog data layer: `docs/version-history.md` is embedded at compile time via `include_str!` and parsed into typed `ChangelogEntry` values; the window renders each entry's bullet points with Aura `TEXT_MUTED` styling and a "• " prefix
+
 ## v0.9.0 (2026-06-17)
 
 - TactileButton migration: every action button (Start, Stop, Restart, Open, Scan now, in-flight disabled labels) now uses `TactileButton` with the correct Aura variant — primary, ghost, or secondary — giving each press/lift motion, correct fill, and hover states per the Aura design language
