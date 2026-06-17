@@ -1,4 +1,5 @@
 mod app;
+mod changelog;
 mod config;
 mod detector;
 mod dump_ui;
