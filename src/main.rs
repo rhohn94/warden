@@ -7,6 +7,7 @@ mod launcher;
 mod log_capture;
 mod models;
 mod notifier;
+mod perf;
 mod scanner;
 mod version_checker;
 
@@ -122,7 +123,7 @@ fn main() {
     // has populated state.  Pass a clone of the runtime handle.
     version_checker.start(Vec::new(), version_check_interval_secs, runtime_handle.clone());
 
-    let mut app = App::new(state, scanner_rx, force_scan_tx, launcher, runtime_handle);
+    let mut app = App::new(state, config, scanner_rx, force_scan_tx, launcher, runtime_handle);
 
     // AppRunner::run blocks until the window is closed.
     if let Err(e) = AppRunner::run(&mut app) {

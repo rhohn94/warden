@@ -1,3 +1,6 @@
+# Performance log
+perf.log
+
 # Grimoire runtime artifacts (never commit)
 .grimoire-source/
 .sync-deps-staging/

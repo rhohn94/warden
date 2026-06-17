@@ -1,5 +1,10 @@
 # Version history
 
+## v0.7.0 (2026-06-16)
+
+- Scan throttling: force-scan triggers are dropped (not queued) when a scan is already in-flight — a `tracing::debug!` line logs each drop; per-app detector calls now run concurrently via `tokio::task::JoinSet` so one slow `lsof`/`pgrep` no longer serialises the rest; each per-app detector call times out at 2 s and marks the app `Unknown` on timeout
+- Performance telemetry: each scan cycle appends a machine-readable line to `~/.config/warden/perf.log` (cycle duration, drop count, optional slowest-app); egui frame time is logged at warn level when it exceeds a configurable threshold (`perf.frame_warn_ms` in `config.toml`, default 50 ms)
+
 ## v0.6.0 (2026-06-16)
 
 - Dedicated log viewer: a `[Logs]` toggle in the toolbar switches the central panel to an aggregated log view showing stdout/stderr from all Warden-launched apps; per-app chip toggles filter by app; log lines are prefixed with the source app name (`[<app-name>] <line>`); auto-scroll follows new output and pauses when the user scrolls up, resuming when scrolled back to the bottom
