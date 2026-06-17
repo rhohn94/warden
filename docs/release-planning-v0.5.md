@@ -106,8 +106,8 @@
 
 | Step | Status |
 |---|---|
-| Version bump (`Cargo.toml` 0.4.0 → 0.5.0) | ☐ |
-| `version-history.md` entry | ☐ |
+| Version bump (`Cargo.toml` 0.4.0 → 0.5.0) | ☑ |
+| `version-history.md` entry | ☑ |
 | project-release (merge+tag+push) | ☐ |
 | Issues #20 #21 closed | ☐ |
 
