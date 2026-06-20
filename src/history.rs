@@ -5,7 +5,7 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 const MAX_EVENTS_PER_APP: usize = 100;
 
@@ -38,7 +38,9 @@ impl HistoryStore {
         }
     }
 
-    fn load_from(path: &std::path::Path) -> Self {
+    /// Load from the given path (useful for hermetic tests).
+    /// Returns `Self::new()` on missing file or parse error.
+    pub fn load_from(path: &Path) -> Self {
         match std::fs::read_to_string(path) {
             Ok(contents) => serde_json::from_str(&contents).unwrap_or_else(|e| {
                 tracing::warn!("could not parse history file {}: {}", path.display(), e);
@@ -52,28 +54,54 @@ impl HistoryStore {
         }
     }
 
-    /// Save to `~/.config/warden/history.json`.
+    /// Save to `~/.config/warden/history.json` atomically.
     /// Creates parent directories as needed; logs a warning on error but does not panic.
     pub fn save(&self) {
         let Some(path) = Self::history_path() else {
             tracing::warn!("history: cannot determine config directory, skipping save");
             return;
         };
+        self.save_to(&path);
+    }
+
+    /// Save to `path` atomically: serialize to a sibling `.tmp` file in the same
+    /// directory, then rename over the target so the live path is never written
+    /// directly.  A failed temp write leaves any pre-existing `history.json`
+    /// intact.  On rename failure the temp file is removed and a warning is
+    /// logged; the method never panics.
+    pub fn save_to(&self, path: &Path) {
         if let Some(parent) = path.parent() {
             if let Err(e) = std::fs::create_dir_all(parent) {
                 tracing::warn!("history: could not create config dir {}: {}", parent.display(), e);
                 return;
             }
         }
-        match serde_json::to_string_pretty(self) {
-            Ok(json) => {
-                if let Err(e) = std::fs::write(&path, json) {
-                    tracing::warn!("history: could not write {}: {}", path.display(), e);
-                }
-            }
+
+        let json = match serde_json::to_string_pretty(self) {
+            Ok(j) => j,
             Err(e) => {
                 tracing::warn!("history: serialization error: {}", e);
+                return;
             }
+        };
+
+        // Build the temp path next to the target (same filesystem → atomic rename).
+        let tmp_path = path.with_extension("json.tmp");
+
+        if let Err(e) = std::fs::write(&tmp_path, &json) {
+            tracing::warn!("history: could not write temp file {}: {}", tmp_path.display(), e);
+            return;
+        }
+
+        if let Err(e) = std::fs::rename(&tmp_path, path) {
+            tracing::warn!(
+                "history: could not rename {} → {}: {}",
+                tmp_path.display(),
+                path.display(),
+                e
+            );
+            // Clean up the temp file; ignore secondary errors.
+            let _ = std::fs::remove_file(&tmp_path);
         }
     }
 
@@ -298,5 +326,108 @@ mod tests {
         } else {
             panic!("expected Crashed event");
         }
+    }
+
+    // ── save_to / load_from round-trip tests ─────────────────────────────────
+
+    /// Helper: build a store with one started event for "app".
+    fn make_store_with_event() -> HistoryStore {
+        let mut store = HistoryStore::new();
+        store.record_started("app", 42);
+        store
+    }
+
+    #[test]
+    fn test_save_to_load_from_round_trips() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("history.json");
+
+        let original = make_store_with_event();
+        original.save_to(&path);
+
+        let loaded = HistoryStore::load_from(&path);
+        assert_eq!(
+            loaded.entries.len(),
+            original.entries.len(),
+            "loaded store should have same number of entries"
+        );
+        assert!(loaded.entries.contains_key("app"), "entry for 'app' must survive round-trip");
+        assert_eq!(loaded.entries["app"].len(), 1);
+    }
+
+    #[test]
+    fn test_save_to_over_existing_file_succeeds_and_parses() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("history.json");
+
+        // Write an initial store.
+        let mut first = HistoryStore::new();
+        first.record_started("alpha", 1);
+        first.save_to(&path);
+        assert!(path.exists(), "first save must create the file");
+
+        // Overwrite with a different store.
+        let mut second = HistoryStore::new();
+        second.record_started("beta", 2);
+        second.save_to(&path);
+
+        let loaded = HistoryStore::load_from(&path);
+        assert!(loaded.entries.contains_key("beta"), "overwritten store must have 'beta'");
+        assert!(!loaded.entries.contains_key("alpha"), "stale 'alpha' entry must not appear");
+    }
+
+    #[test]
+    fn test_temp_write_failure_leaves_original_intact() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("history.json");
+
+        // Write a valid original store.
+        let mut good = HistoryStore::new();
+        good.record_started("original", 99);
+        good.save_to(&path);
+
+        // Simulate a failed temp write by making the DIRECTORY read-only so
+        // writing any new file fails.  Then call save_to with a path in that dir.
+        let ro_dir = dir.path().join("readonly");
+        std::fs::create_dir(&ro_dir).unwrap();
+        let ro_path = ro_dir.join("history.json");
+
+        // First, write a valid file there.
+        let mut existing = HistoryStore::new();
+        existing.record_started("safe", 7);
+        existing.save_to(&ro_path);
+
+        // Make the directory read-only to prevent new temp files.
+        let mut perms = std::fs::metadata(&ro_dir).unwrap().permissions();
+        #[allow(clippy::permissions_set_readonly_false)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            perms.set_mode(0o555);
+        }
+        std::fs::set_permissions(&ro_dir, perms.clone()).unwrap();
+
+        // Attempt a save that must fail at the temp-write step.
+        let mut bad = HistoryStore::new();
+        bad.record_started("should-not-appear", 0);
+        bad.save_to(&ro_path); // must warn, not panic
+
+        // Restore permissions so tempdir cleanup works.
+        #[allow(clippy::permissions_set_readonly_false)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            perms.set_mode(0o755);
+        }
+        std::fs::set_permissions(&ro_dir, perms).unwrap();
+
+        // The original file must still parse correctly.
+        let recovered = HistoryStore::load_from(&ro_path);
+        assert!(
+            recovered.entries.contains_key("safe"),
+            "original 'safe' entry must survive a failed overwrite"
+        );
+        assert!(
+            !recovered.entries.contains_key("should-not-appear"),
+            "failed write must not corrupt the existing file"
+        );
     }
 }

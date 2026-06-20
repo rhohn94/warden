@@ -100,6 +100,17 @@ exits are immediately visible.
 - App list search: live text-filter field above the app list; Escape clears (Issue #26)
 - Crash detection: `AppStatus::Crashed` variant; scanner distinguishes user-stop from unexpected exit; red badge + notification + history entry (Issue #27)
 
+## v1.1 — Hardened Foundation
+
+Reliability release closing four confirmed correctness gaps so Warden is a
+trustworthy base for later feature work. No new features, no new dependencies.
+
+**Scope:**
+- Graceful shutdown: `Launcher::shutdown_all` kills managed children (SIGTERM → grace → SIGKILL) on exit, including the error path (Issue #38)
+- Atomic `history.json` writes via temp-file + rename, removing the crash corruption window (Issue #39)
+- Robust detection: distinguish probe/permission errors from "not running" (→ `Unknown`, not `Stopped`); skip zombie processes (Issue #40)
+- Config validation: floor `refresh_secs` / `log_tail_lines` to 1 and bound `LogCapture`, preventing a busy-loop and unbounded buffer (Issue #41)
+
 ## v1.0.1 — Stability fixes
 
 Patch release resolving three operator-facing defects in process control,
