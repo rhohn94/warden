@@ -1,5 +1,12 @@
 # Version history
 
+## v1.2.0 (2026-06-20)
+
+- Bulk fleet actions: `Start all` / `Stop all` / `Restart all` buttons in the Apps-view toolbar act on the currently visible (filtered) apps at once, skipping any already in the target state or mid-operation — bringing a whole environment up or down is now one click instead of one-per-app
+- Fleet health summary bar: a compact line under the header shows live counts (e.g. `6 running · 2 stopped · 1 crashed`), so overall fleet state is visible at a glance without scanning the list
+- Sort & group controls: a Default / Name / Status / Port selector reorders the app list, with the choice persisted to `config.toml`; "Default" restores the scanner's stable order, and the selection always reflects the active sort
+- Auto-start on launch: apps can be flagged (via a toggle in the details panel) to start automatically — each flagged app is started once, the first time Warden sees it definitively Stopped or Crashed, so an already-running app is never double-started
+
 ## v1.1.0 (2026-06-20)
 
 - Graceful shutdown: Warden now terminates every app it launched when it exits — `Launcher::shutdown_all` sends SIGTERM, waits a short grace period, then SIGKILLs survivors and reaps them; spawned processes also carry `kill_on_drop`. Shutdown runs on both clean window-close and event-loop-error exits, so managed children are never orphaned

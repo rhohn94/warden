@@ -19,6 +19,10 @@ pub struct Config {
     pub version_check_interval_secs: Option<u64>,
     /// Performance telemetry settings
     pub perf: Option<PerfConfig>,
+    /// App-list sort key: "name" | "status" | "port"; None = scanner order
+    pub sort_order: Option<String>,
+    /// App names to start automatically on first populated scan
+    pub auto_start: Option<Vec<String>>,
 }
 
 impl Default for Config {
@@ -30,6 +34,8 @@ impl Default for Config {
             log_tail_lines: Some(500),
             version_check_interval_secs: Some(3600),
             perf: Some(PerfConfig::default()),
+            sort_order: None,
+            auto_start: Some(vec![]),
         }
     }
 }
@@ -175,6 +181,8 @@ mod tests {
             log_tail_lines: Some(200),
             version_check_interval_secs: Some(7200),
             perf: None,
+            sort_order: None,
+            auto_start: None,
         };
         cfg.save_to(&path).unwrap();
 
@@ -236,6 +244,8 @@ mod tests {
             log_tail_lines: None,
             version_check_interval_secs: None,
             perf: Some(PerfConfig { frame_warn_ms: Some(100) }),
+            sort_order: None,
+            auto_start: None,
         };
         assert_eq!(cfg.frame_warn_ms(), 100);
     }
@@ -249,6 +259,8 @@ mod tests {
             log_tail_lines: None,
             version_check_interval_secs: None,
             perf: None,
+            sort_order: None,
+            auto_start: None,
         };
         assert_eq!(cfg.frame_warn_ms(), 50);
     }
@@ -307,9 +319,89 @@ mod tests {
             log_tail_lines: None,
             version_check_interval_secs: None,
             perf: None,
+            sort_order: None,
+            auto_start: None,
         };
         cfg.sanitize();
         assert_eq!(cfg.refresh_secs, None);
         assert_eq!(cfg.log_tail_lines, None);
+    }
+
+    // ── Fleet Control config fields (#43, #44) ───────────────────────────────
+
+    #[test]
+    fn test_default_sort_order_is_none() {
+        let cfg = Config::default();
+        assert_eq!(cfg.sort_order, None, "default sort_order must be None (scanner order)");
+    }
+
+    #[test]
+    fn test_default_auto_start_is_empty_vec() {
+        let cfg = Config::default();
+        assert_eq!(cfg.auto_start, Some(vec![]), "default auto_start must be Some(empty vec)");
+    }
+
+    #[test]
+    fn test_sort_order_round_trips() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        let cfg = Config {
+            apps_dir: None,
+            refresh_secs: None,
+            notifications_enabled: None,
+            log_tail_lines: None,
+            version_check_interval_secs: None,
+            perf: None,
+            sort_order: Some("status".to_string()),
+            auto_start: None,
+        };
+        cfg.save_to(&path).unwrap();
+        let loaded = Config::load_from(&path);
+        assert_eq!(loaded.sort_order.as_deref(), Some("status"),
+            "sort_order must round-trip through save/load");
+    }
+
+    #[test]
+    fn test_auto_start_round_trips() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        let cfg = Config {
+            apps_dir: None,
+            refresh_secs: None,
+            notifications_enabled: None,
+            log_tail_lines: None,
+            version_check_interval_secs: None,
+            perf: None,
+            sort_order: None,
+            auto_start: Some(vec!["frontend".to_string(), "backend".to_string()]),
+        };
+        cfg.save_to(&path).unwrap();
+        let loaded = Config::load_from(&path);
+        assert_eq!(
+            loaded.auto_start.as_deref(),
+            Some(["frontend".to_string(), "backend".to_string()].as_slice()),
+            "auto_start must round-trip through save/load"
+        );
+    }
+
+    #[test]
+    fn test_sanitize_preserves_sort_order() {
+        let mut cfg = Config::default();
+        cfg.sort_order = Some("port".to_string());
+        cfg.sanitize();
+        assert_eq!(cfg.sort_order.as_deref(), Some("port"),
+            "sanitize must not clobber sort_order");
+    }
+
+    #[test]
+    fn test_sanitize_preserves_auto_start() {
+        let mut cfg = Config::default();
+        cfg.auto_start = Some(vec!["myapp".to_string()]);
+        cfg.sanitize();
+        assert_eq!(
+            cfg.auto_start.as_deref(),
+            Some(["myapp".to_string()].as_slice()),
+            "sanitize must not clobber auto_start"
+        );
     }
 }
