@@ -94,18 +94,35 @@ coherently, followed by an adversarial verify pass before release.
 
 | Branch | Implemented | Reviewed | Merged into version/1.2 |
 |---|---|---|---|
-| `warden/v1.2-fleet-control` (#42–#45) | ☐ | ☐ | ☐ |
+| `warden/v1.2-fleet-control` (#42–#45) | ☑ | ☑ | ☑ |
 
 ### Release
 
 | Step | Status |
 |---|---|
-| Version bump (`Cargo.toml` 1.1.0 → 1.2.0) | ☐ |
-| `version-history.md` entry | ☐ |
-| `roadmap.md` v1.2 section | ☐ |
+| Version bump (`Cargo.toml` 1.1.0 → 1.2.0) | ☑ |
+| `version-history.md` entry | ☑ |
+| `roadmap.md` v1.2 section | ☑ |
 | project-release (merge + tag + push) | ☐ |
 | Issues #42 #43 #44 #45 closed | ☐ |
 
 ### Follow-ups discovered during implementation
 
-_(empty at start)_
+- Reviewed via a 4-agent adversarial verify-workflow (sonnet). #43 passed clean.
+  Three findings folded in before release:
+  - **#45 (high):** auto-start used a Running-only denylist, so an `Unknown`
+    status (common when a first-scan detector times out) was treated as
+    start-eligible — risking a double-start of an already-running app. Fixed:
+    extracted a pure `autostart_targets` allowlisting only `Stopped`/`Crashed`,
+    and replaced the one-shot `did_autostart` bool with a per-app `autostarted`
+    set so a flagged app still auto-starts once its status resolves on a later
+    scan.
+  - **#42 (low):** auto-start reused the single `pending_bulk` slot and could
+    clobber a user's bulk-button click on the first populated frame. Fixed by a
+    separate `pending_autostart` application path.
+  - **#44 (medium):** the sort `ButtonGroup` conflated ScannerOrder and Name on
+    index 0, so the default order (case-sensitive scanner) was unreachable once
+    the user navigated away. Fixed with a 4-button [Default, Name, Status, Port]
+    bijective mapping + round-trip tests.
+- Deferred (out of scope): dependency/order-aware startup sequencing beyond the
+  flat auto-start set.
