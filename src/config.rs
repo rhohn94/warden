@@ -49,6 +49,11 @@ impl Default for PerfConfig {
     }
 }
 
+/// Minimum allowed value for `refresh_secs`; 0 causes a busy-loop in the scanner.
+const MIN_REFRESH_SECS: u64 = 1;
+/// Minimum allowed value for `log_tail_lines`; 0 makes the LogCapture ring buffer unbounded.
+const MIN_LOG_TAIL_LINES: usize = 1;
+
 impl Config {
     /// Load config from ~/.config/warden/config.toml.
     /// Returns default config if the file does not exist.
@@ -62,12 +67,38 @@ impl Config {
     /// Load config from the given path (useful for hermetic tests).
     /// Returns default config if the file does not exist.
     pub fn load_from(path: &Path) -> Self {
-        match std::fs::read_to_string(path) {
+        let mut cfg = match std::fs::read_to_string(path) {
             Ok(contents) => toml::from_str(&contents).unwrap_or_default(),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Self::default(),
             Err(e) => {
                 tracing::warn!("could not read config file {}: {}", path.display(), e);
                 Self::default()
+            }
+        };
+        cfg.sanitize();
+        cfg
+    }
+
+    /// Clamp out-of-range config values to their minimums, logging a warning for each
+    /// correction. `version_check_interval_secs = 0` is intentionally left untouched
+    /// because 0 means "disabled" for that field.
+    pub fn sanitize(&mut self) {
+        if let Some(v) = self.refresh_secs {
+            if v < MIN_REFRESH_SECS {
+                tracing::warn!(
+                    "config: refresh_secs={} is below minimum ({}); clamping to {}",
+                    v, MIN_REFRESH_SECS, MIN_REFRESH_SECS
+                );
+                self.refresh_secs = Some(MIN_REFRESH_SECS);
+            }
+        }
+        if let Some(v) = self.log_tail_lines {
+            if v < MIN_LOG_TAIL_LINES {
+                tracing::warn!(
+                    "config: log_tail_lines={} is below minimum ({}); clamping to {}",
+                    v, MIN_LOG_TAIL_LINES, MIN_LOG_TAIL_LINES
+                );
+                self.log_tail_lines = Some(MIN_LOG_TAIL_LINES);
             }
         }
     }
@@ -226,5 +257,59 @@ mod tests {
     fn test_perf_config_default() {
         let perf = PerfConfig::default();
         assert_eq!(perf.frame_warn_ms, Some(50));
+    }
+
+    #[test]
+    fn test_sanitize_clamps_zero_refresh_secs() {
+        let mut f = NamedTempFile::new().unwrap();
+        writeln!(f, "refresh_secs = 0").unwrap();
+        let cfg = Config::load_from(f.path());
+        assert_eq!(cfg.refresh_secs, Some(MIN_REFRESH_SECS),
+            "refresh_secs=0 should be clamped to {}", MIN_REFRESH_SECS);
+    }
+
+    #[test]
+    fn test_sanitize_clamps_zero_log_tail_lines() {
+        let mut f = NamedTempFile::new().unwrap();
+        writeln!(f, "log_tail_lines = 0").unwrap();
+        let cfg = Config::load_from(f.path());
+        assert_eq!(cfg.log_tail_lines, Some(MIN_LOG_TAIL_LINES),
+            "log_tail_lines=0 should be clamped to {}", MIN_LOG_TAIL_LINES);
+    }
+
+    #[test]
+    fn test_sanitize_preserves_valid_values() {
+        let mut f = NamedTempFile::new().unwrap();
+        writeln!(f, "refresh_secs = 10").unwrap();
+        writeln!(f, "log_tail_lines = 200").unwrap();
+        let cfg = Config::load_from(f.path());
+        assert_eq!(cfg.refresh_secs, Some(10));
+        assert_eq!(cfg.log_tail_lines, Some(200));
+    }
+
+    #[test]
+    fn test_sanitize_preserves_version_check_interval_zero() {
+        // version_check_interval_secs = 0 means "disabled" and must NOT be clamped.
+        let mut f = NamedTempFile::new().unwrap();
+        writeln!(f, "version_check_interval_secs = 0").unwrap();
+        let cfg = Config::load_from(f.path());
+        assert_eq!(cfg.version_check_interval_secs, Some(0),
+            "version_check_interval_secs=0 must be preserved (it means disabled)");
+    }
+
+    #[test]
+    fn test_sanitize_leaves_none_unchanged() {
+        // None values are left for downstream callers to handle with .unwrap_or(default).
+        let mut cfg = Config {
+            apps_dir: None,
+            refresh_secs: None,
+            notifications_enabled: None,
+            log_tail_lines: None,
+            version_check_interval_secs: None,
+            perf: None,
+        };
+        cfg.sanitize();
+        assert_eq!(cfg.refresh_secs, None);
+        assert_eq!(cfg.log_tail_lines, None);
     }
 }
