@@ -117,6 +117,36 @@ obsidian uses internally.
 
 ---
 
+## 4a. Fleet Control (v1.2)
+
+Operator-facing controls for managing many apps at once, all in the Apps view
+of `src/app.rs`. No new modules or dependencies.
+
+- **Bulk actions** — `Start all` / `Stop all` / `Restart all` buttons in the
+  header toolbar (Apps view only). Each folds over the currently *visible*
+  (filtered) entries and dispatches the existing per-app `dispatch_start` /
+  `dispatch_stop` / `dispatch_restart`, skipping apps already in the target
+  state or in-flight. Bulk dispatch is just a loop over the existing single-app
+  paths — no new launcher API.
+- **Fleet health summary bar** — a compact one-line summary (e.g.
+  `6 running · 2 stopped · 1 crashed`) rendered under the header hairline,
+  computed as a fold over the `statuses` snapshot already in scope. Purely
+  additive, no new state.
+- **Sort & group controls** — a `ButtonGroup` selecting the app-list sort key
+  (Name / Status / Port). A pure `sort_entries(entries, key, statuses)` helper
+  (testable, alongside `filter_entries`) orders the filtered list before
+  `draw_app_list`. The chosen key persists in `Config.sort_order` and is saved
+  on change; the scanner's own `(name, dir)` order remains the stable default.
+- **Auto-start-on-launch** — `Config.auto_start: Vec<String>` holds app names
+  flagged to start automatically. A per-app toggle in the details panel adds/
+  removes the name and saves. On the first populated scan (guarded by a
+  one-shot `did_autostart` flag on `App`), each flagged app not already running
+  is dispatched via `dispatch_start`.
+
+State added to `App`: a one-shot `did_autostart: bool`. State added to
+`Config`: `sort_order: Option<String>`, `auto_start: Option<Vec<String>>`
+(both with sane defaults, preserved by `sanitize`).
+
 ## 5. Out-of-scope decisions and why
 
 | Decision | Reason |
