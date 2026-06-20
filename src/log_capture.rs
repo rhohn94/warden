@@ -9,8 +9,13 @@ pub struct LogCapture {
     capacity: usize,
 }
 
+/// Minimum ring-buffer capacity; prevents an unbounded buffer when the caller passes 0.
+const MIN_LOG_CAPACITY: usize = 1;
+
 impl LogCapture {
+    /// Create a new ring buffer with the given capacity, clamped to at least MIN_LOG_CAPACITY.
     pub fn new(capacity: usize) -> Self {
+        let capacity = capacity.max(MIN_LOG_CAPACITY);
         Self {
             lines: VecDeque::with_capacity(capacity),
             capacity,
@@ -84,5 +89,17 @@ mod tests {
         cap.push("z".to_string());
         assert_eq!(cap.len(), 3);
         assert_eq!(cap.lines(), vec!["x", "y", "z"]);
+    }
+
+    #[test]
+    fn test_zero_capacity_clamped_to_one() {
+        // LogCapture::new(0) must produce a bounded buffer clamped to capacity 1.
+        let mut cap = LogCapture::new(0);
+        for i in 0..5 {
+            cap.push(format!("line {}", i));
+        }
+        // Only the most-recent line is retained; buffer never grows unbounded.
+        assert_eq!(cap.len(), 1);
+        assert_eq!(cap.lines(), vec!["line 4"]);
     }
 }
