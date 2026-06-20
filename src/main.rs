@@ -112,7 +112,7 @@ fn main() {
     )));
 
     // Enter the runtime so tokio::spawn in scanner::start works from the main thread.
-    let _runtime_guard = runtime.enter();
+    let runtime_guard = runtime.enter();
     let dirs_display: Vec<String> = apps_dirs.iter().map(|d| d.display().to_string()).collect();
     info!("warden v{} starting — watching [{}]", env!("CARGO_PKG_VERSION"), dirs_display.join(", "));
     let (scanner_rx, force_scan_tx) = scanner::start(apps_dirs, Duration::from_secs(refresh_secs));
@@ -124,10 +124,22 @@ fn main() {
     // has populated state.  Pass a clone of the runtime handle.
     version_checker.start(Vec::new(), version_check_interval_secs, runtime_handle.clone());
 
-    let mut app = App::new(state, config, scanner_rx, force_scan_tx, launcher, runtime_handle);
+    let mut app = App::new(state, config, scanner_rx, force_scan_tx, Arc::clone(&launcher), runtime_handle);
 
     // AppRunner::run blocks until the window is closed.
-    if let Err(e) = AppRunner::run(&mut app) {
+    let run_result = AppRunner::run(&mut app);
+
+    // Always shut managed children down before exiting — on success or error.
+    // Done before any std::process::exit so child processes are never orphaned
+    // (exit() skips destructors, so kill_on_drop alone would not fire here).
+    // Drop the runtime guard first; entering a runtime from within a runtime
+    // context causes a panic.
+    drop(runtime_guard);
+    runtime.block_on(async {
+        launcher.lock().await.shutdown_all().await;
+    });
+
+    if let Err(e) = run_result {
         eprintln!("warden: event loop error: {e}");
         std::process::exit(1);
     }
