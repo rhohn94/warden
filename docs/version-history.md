@@ -1,5 +1,12 @@
 # Version history
 
+## v1.1.0 (2026-06-20)
+
+- Graceful shutdown: Warden now terminates every app it launched when it exits — `Launcher::shutdown_all` sends SIGTERM, waits a short grace period, then SIGKILLs survivors and reaps them; spawned processes also carry `kill_on_drop`. Shutdown runs on both clean window-close and event-loop-error exits, so managed children are never orphaned
+- Atomic history writes: `history.json` is now written to a temp file and atomically renamed into place, eliminating the corruption window where a crash mid-write could truncate the file and silently reset all start/stop/crash history
+- Robust process detection: the detector now distinguishes a genuine "not running" from a permission/probe error — apps it cannot inspect (e.g. SIP- or other-user-restricted) are shown `Unknown` instead of being silently mislabelled `Stopped`, and zombie/defunct processes are no longer counted as `Running`
+- Config validation: out-of-range settings are corrected at startup with a warning — `refresh_secs` and `log_tail_lines` are floored to 1 (preventing a scanner busy-loop and an unbounded log buffer), while `version_check_interval_secs = 0` still means "disabled"
+
 ## v1.0.1 (2026-06-19)
 
 - Stop no longer hangs the UI: the start/stop/restart dispatch tasks now release the shared `AppState` lock before the blocking `history.save()` disk write, so the render thread is never starved waiting on disk I/O while an app is being stopped

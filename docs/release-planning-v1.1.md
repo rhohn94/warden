@@ -133,21 +133,29 @@ master merges each returned branch in any order.
 
 | Branch | Implemented | Reviewed | Merged into version/1.1 |
 |---|---|---|---|
-| `warden/v1.1-graceful-shutdown` (#38) | ☐ | ☐ | ☐ |
-| `warden/v1.1-atomic-history` (#39) | ☐ | ☐ | ☐ |
-| `warden/v1.1-detector-robustness` (#40) | ☐ | ☐ | ☐ |
-| `warden/v1.1-config-validation` (#41) | ☐ | ☐ | ☐ |
+| `warden/v1.1-graceful-shutdown` (#38) | ☑ | ☑ | ☑ |
+| `warden/v1.1-atomic-history` (#39) | ☑ | ☑ | ☑ |
+| `warden/v1.1-detector-robustness` (#40) | ☑ | ☑ | ☑ |
+| `warden/v1.1-config-validation` (#41) | ☑ | ☑ | ☑ |
 
 ### Release
 
 | Step | Status |
 |---|---|
-| Version bump (`Cargo.toml` 1.0.1 → 1.1.0) | ☐ |
-| `version-history.md` entry | ☐ |
-| `roadmap.md` v1.1 section | ☐ |
+| Version bump (`Cargo.toml` 1.0.1 → 1.1.0) | ☑ |
+| `version-history.md` entry | ☑ |
+| `roadmap.md` v1.1 section | ☑ |
 | project-release (merge + tag + push) | ☐ |
 | Issues #38 #39 #40 #41 closed | ☐ |
 
 ### Follow-ups discovered during implementation
 
-_(empty at start)_
+- Reviewed via a 4-agent adversarial verify-workflow (sonnet) on the merged
+  `version/1.1`. Three lanes passed clean (#39 none, #40 low/no-regression, #41
+  none). One blocking finding on #38: the `main.rs` `std::process::exit(1)`
+  error path skipped destructors, so `shutdown_all` was unreachable and children
+  leaked on an event-loop error. **Folded in before release** — shutdown now runs
+  on both the clean-close and error paths.
+- Deferred (out of scope): unify `sigterm_then_sigkill` and `shutdown_all` around
+  a shared configurable grace duration; iterate all PIDs (not just the first) for
+  zombie filtering in the detector.
