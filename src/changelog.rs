@@ -63,8 +63,18 @@ mod tests {
     #[test]
     fn parse_produces_entries_for_all_versions() {
         let entries = parse_changelog(CHANGELOG_MD);
-        assert!(entries.len() >= 10, "expected at least 10 versions");
-        assert!(entries[0].version.starts_with("v1.0"), "first entry should be v1.0.x");
+        assert!(entries.len() >= 11, "expected at least 11 versions");
+        // Assert the newest entry matches the current crate version rather than a
+        // hardcoded string, so the test never goes stale on a release and also
+        // enforces that every version bump ships a matching changelog entry.
+        // The parsed version retains the heading's date suffix (e.g.
+        // "v1.1.0 (2026-06-20)"), so match by prefix.
+        assert!(
+            entries[0].version.starts_with(&format!("v{}", VERSION)),
+            "newest changelog entry ({}) must match crate version v{}",
+            entries[0].version,
+            VERSION
+        );
         assert!(!entries[0].bullets.is_empty(), "first entry should have bullets");
     }
 }
