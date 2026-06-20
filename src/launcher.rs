@@ -10,6 +10,9 @@ use tokio::{
 };
 use tracing::{info, warn};
 
+/// Grace period for SIGTERM before escalating to SIGKILL during shutdown_all.
+const SHUTDOWN_GRACE_MS: u64 = 1500;
+
 /// Starts and stops apps, tracking spawned children for graceful cleanup.
 pub struct Launcher {
     children: HashMap<PathBuf, Child>,
@@ -36,6 +39,7 @@ impl Launcher {
                 .current_dir(&entry.dir)
                 .stdout(std::process::Stdio::piped())
                 .stderr(std::process::Stdio::piped())
+                .kill_on_drop(true)
                 .spawn()
                 .ok()
         } else {
@@ -85,6 +89,75 @@ impl Launcher {
         detector::detect(entry)
     }
 
+    /// Gracefully shut down all tracked children on Warden exit.
+    ///
+    /// Sends SIGTERM to every tracked child, waits up to `SHUTDOWN_GRACE_MS`
+    /// milliseconds polling for them to exit, then SIGKILLs any survivors.
+    /// Clears `children` when done so the launcher is left in a clean state.
+    pub async fn shutdown_all(&mut self) {
+        if self.children.is_empty() {
+            return;
+        }
+        info!("shutdown_all: terminating {} child process(es)", self.children.len());
+
+        // Collect pids and send SIGTERM to every tracked child.
+        let pids: Vec<u32> = self
+            .children
+            .values_mut()
+            .filter_map(|c| c.id())
+            .collect();
+
+        for pid in &pids {
+            let _ = std::process::Command::new("kill")
+                .args(["-TERM", &pid.to_string()])
+                .output();
+        }
+
+        // Poll until all pids have exited or the grace period expires.
+        let poll_interval = Duration::from_millis(100);
+        let mut elapsed = Duration::ZERO;
+        let grace = Duration::from_millis(SHUTDOWN_GRACE_MS);
+
+        while elapsed < grace {
+            tokio::time::sleep(poll_interval).await;
+            elapsed += poll_interval;
+
+            let any_alive = pids.iter().any(|pid| {
+                std::process::Command::new("kill")
+                    .args(["-0", &pid.to_string()])
+                    .output()
+                    .map(|o| o.status.success())
+                    .unwrap_or(false)
+            });
+
+            if !any_alive {
+                break;
+            }
+        }
+
+        // SIGKILL any survivors still alive after the grace period.
+        for pid in &pids {
+            let alive = std::process::Command::new("kill")
+                .args(["-0", &pid.to_string()])
+                .output()
+                .map(|o| o.status.success())
+                .unwrap_or(false);
+            if alive {
+                warn!("shutdown_all: pid {} did not exit within grace period, sending SIGKILL", pid);
+                let _ = std::process::Command::new("kill")
+                    .args(["-KILL", &pid.to_string()])
+                    .output();
+            }
+        }
+
+        // Wait on each child handle to reap them and avoid zombies.
+        for (_, mut child) in self.children.drain() {
+            let _ = child.wait().await;
+        }
+
+        info!("shutdown_all: all children terminated");
+    }
+
     fn spawn_binary_piped(&self, entry: &AppEntry) -> Option<Child> {
         let current = entry.dir.join("current");
         let binary = current.join(&entry.name);
@@ -93,6 +166,7 @@ impl Launcher {
                 .current_dir(&entry.dir)
                 .stdout(std::process::Stdio::piped())
                 .stderr(std::process::Stdio::piped())
+                .kill_on_drop(true)
                 .spawn()
                 .ok();
         }
@@ -102,6 +176,7 @@ impl Launcher {
                 .current_dir(&entry.dir)
                 .stdout(std::process::Stdio::piped())
                 .stderr(std::process::Stdio::piped())
+                .kill_on_drop(true)
                 .spawn()
                 .ok();
         }
@@ -245,5 +320,47 @@ mod tests {
             !launcher.children.contains_key(&app_dir),
             "Child handle should be removed after final stop"
         );
+    }
+
+    #[tokio::test]
+    async fn shutdown_all_terminates_children_and_empties_map() {
+        let tmp = TempDir::new().unwrap();
+        let app_dir = tmp.path().join("shutdown-test-app");
+        std::fs::create_dir_all(&app_dir).unwrap();
+
+        let entry = app_entry(app_dir.clone(), "sleep 120");
+        let mut launcher = Launcher::new();
+
+        // Start a long-lived child.
+        launcher.start(&entry).await;
+        assert!(
+            launcher.children.contains_key(&app_dir),
+            "Child handle should be tracked after start"
+        );
+
+        // Capture the pid before shutdown_all drains the map.
+        let pid = launcher
+            .children
+            .get_mut(&app_dir)
+            .and_then(|c| c.id());
+
+        // Shut down all children.
+        launcher.shutdown_all().await;
+
+        // The children map must be empty after shutdown_all.
+        assert!(
+            launcher.children.is_empty(),
+            "children map must be empty after shutdown_all"
+        );
+
+        // The process must no longer be alive.
+        if let Some(pid) = pid {
+            let alive = std::process::Command::new("kill")
+                .args(["-0", &pid.to_string()])
+                .output()
+                .map(|o| o.status.success())
+                .unwrap_or(false);
+            assert!(!alive, "child process (pid {}) should be dead after shutdown_all", pid);
+        }
     }
 }
