@@ -145,8 +145,8 @@ master merges each returned branch in any order.
 | Version bump (`Cargo.toml` 1.0.1 → 1.1.0) | ☑ |
 | `version-history.md` entry | ☑ |
 | `roadmap.md` v1.1 section | ☑ |
-| project-release (merge + tag + push) | ☐ |
-| Issues #38 #39 #40 #41 closed | ☐ |
+| project-release (merge + tag + push) | ☑ |
+| Issues #38 #39 #40 #41 closed | ☑ |
 
 ### Follow-ups discovered during implementation
 
