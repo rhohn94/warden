@@ -127,17 +127,22 @@ fn main() {
     let mut app = App::new(state, config, scanner_rx, force_scan_tx, Arc::clone(&launcher), runtime_handle);
 
     // AppRunner::run blocks until the window is closed.
-    if let Err(e) = AppRunner::run(&mut app) {
-        eprintln!("warden: event loop error: {e}");
-        std::process::exit(1);
-    }
+    let run_result = AppRunner::run(&mut app);
 
-    // Drop the runtime guard before calling block_on; entering a runtime
-    // from within a runtime context causes a panic.
+    // Always shut managed children down before exiting — on success or error.
+    // Done before any std::process::exit so child processes are never orphaned
+    // (exit() skips destructors, so kill_on_drop alone would not fire here).
+    // Drop the runtime guard first; entering a runtime from within a runtime
+    // context causes a panic.
     drop(runtime_guard);
     runtime.block_on(async {
         launcher.lock().await.shutdown_all().await;
     });
+
+    if let Err(e) = run_result {
+        eprintln!("warden: event loop error: {e}");
+        std::process::exit(1);
+    }
 }
 
 fn parse_flag<'a>(args: &'a [String], flag: &str) -> Option<&'a str> {
