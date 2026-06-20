@@ -74,5 +74,5 @@ parse precedence documented. Regression test added.
 | Version bump (`Cargo.toml` 1.0.0 → 1.0.1) | ☑ |
 | `version-history.md` entry | ☑ |
 | `roadmap.md` v1.0.1 section | ☑ |
-| project-release (merge + tag + push) | ☐ |
-| Issues #35 #36 #37 closed | ☐ |
+| project-release (merge + tag + push) | ☑ |
+| Issues #35 #36 #37 closed | ☑ |
