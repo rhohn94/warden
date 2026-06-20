@@ -103,8 +103,8 @@ coherently, followed by an adversarial verify pass before release.
 | Version bump (`Cargo.toml` 1.1.0 → 1.2.0) | ☑ |
 | `version-history.md` entry | ☑ |
 | `roadmap.md` v1.2 section | ☑ |
-| project-release (merge + tag + push) | ☐ |
-| Issues #42 #43 #44 #45 closed | ☐ |
+| project-release (merge + tag + push) | ☑ |
+| Issues #42 #43 #44 #45 closed | ☑ |
 
 ### Follow-ups discovered during implementation
 
