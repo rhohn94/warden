@@ -67,10 +67,13 @@ mod tests {
         // Assert the newest entry matches the current crate version rather than a
         // hardcoded string, so the test never goes stale on a release and also
         // enforces that every version bump ships a matching changelog entry.
-        assert_eq!(
+        // The parsed version retains the heading's date suffix (e.g.
+        // "v1.1.0 (2026-06-20)"), so match by prefix.
+        assert!(
+            entries[0].version.starts_with(&format!("v{}", VERSION)),
+            "newest changelog entry ({}) must match crate version v{}",
             entries[0].version,
-            format!("v{}", VERSION),
-            "newest changelog entry must match the crate version"
+            VERSION
         );
         assert!(!entries[0].bullets.is_empty(), "first entry should have bullets");
     }
