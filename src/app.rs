@@ -230,8 +230,14 @@ impl App {
                 })
                 .collect();
             let transitions = state.notifier.check_transitions(&pairs);
+            // Clone the history handle and release the state lock before the
+            // blocking disk write so the render thread never holds the state
+            // Mutex across I/O on the scanner-transition path (mirrors the
+            // dispatch_* tasks).
+            let hist_arc = state.history.clone();
+            drop(state);
             if !transitions.is_empty() {
-                let mut hist = state.history.lock().unwrap();
+                let mut hist = hist_arc.lock().unwrap();
                 for (name, new_status) in &transitions {
                     match new_status {
                         AppStatus::Running { .. } => hist.record_started(name, 0),
@@ -1059,17 +1065,18 @@ impl App {
                     }
                 });
             }
-            let mut s = state.lock().unwrap();
-            s.in_flight.remove(&entry.dir);
-            s.statuses.insert(entry.dir.clone(), (status.clone(), port_info));
-            s.notifier.check_transitions(&[(entry.name.clone(), status.clone())]);
-            // Record history for explicit start action.
+            // Release the state lock before disk I/O to avoid blocking the render thread.
+            let hist_arc = {
+                let mut s = state.lock().unwrap();
+                s.in_flight.remove(&entry.dir);
+                s.statuses.insert(entry.dir.clone(), (status.clone(), port_info));
+                s.notifier.check_transitions(&[(entry.name.clone(), status.clone())]);
+                s.history.clone()
+            };
             let pid = if let AppStatus::Running { pid } = status { pid } else { 0 };
-            {
-                let mut hist = s.history.lock().unwrap();
-                hist.record_started(&entry.name, pid);
-                hist.save();
-            }
+            let mut hist = hist_arc.lock().unwrap();
+            hist.record_started(&entry.name, pid);
+            hist.save();
         });
     }
 
@@ -1087,16 +1094,17 @@ impl App {
                 let mut l = launcher.lock().await;
                 l.stop(&entry, pid).await
             };
-            let mut s = state.lock().unwrap();
-            s.in_flight.remove(&entry.dir);
-            s.statuses.insert(entry.dir.clone(), (status.clone(), port_info));
-            s.notifier.check_transitions(&[(entry.name.clone(), status)]);
-            // Record history for explicit stop action.
-            {
-                let mut hist = s.history.lock().unwrap();
-                hist.record_stopped(&entry.name);
-                hist.save();
-            }
+            // Release the state lock before disk I/O to avoid blocking the render thread.
+            let hist_arc = {
+                let mut s = state.lock().unwrap();
+                s.in_flight.remove(&entry.dir);
+                s.statuses.insert(entry.dir.clone(), (status.clone(), port_info));
+                s.notifier.check_transitions(&[(entry.name.clone(), status)]);
+                s.history.clone()
+            };
+            let mut hist = hist_arc.lock().unwrap();
+            hist.record_stopped(&entry.name);
+            hist.save();
         });
     }
 
@@ -1141,18 +1149,19 @@ impl App {
                     }
                 });
             }
-            let mut s = state.lock().unwrap();
-            s.in_flight.remove(&entry.dir);
-            s.statuses.insert(entry.dir.clone(), (status.clone(), port_info));
-            // Record history: stopped then started for the restart.
-            {
-                let mut hist = s.history.lock().unwrap();
-                hist.record_stopped(&entry.name);
-                let new_pid = if let AppStatus::Running { pid: p } = status.clone() { p } else { 0 };
-                hist.record_started(&entry.name, new_pid);
-                hist.save();
-            }
-            s.notifier.check_transitions(&[(entry.name.clone(), status)]);
+            // Release the state lock before disk I/O to avoid blocking the render thread.
+            let hist_arc = {
+                let mut s = state.lock().unwrap();
+                s.in_flight.remove(&entry.dir);
+                s.statuses.insert(entry.dir.clone(), (status.clone(), port_info));
+                s.notifier.check_transitions(&[(entry.name.clone(), status.clone())]);
+                s.history.clone()
+            };
+            let new_pid = if let AppStatus::Running { pid: p } = status { p } else { 0 };
+            let mut hist = hist_arc.lock().unwrap();
+            hist.record_stopped(&entry.name);
+            hist.record_started(&entry.name, new_pid);
+            hist.save();
         });
     }
 

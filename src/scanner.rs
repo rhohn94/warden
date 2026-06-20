@@ -110,6 +110,10 @@ async fn run_detectors_concurrent(
         }
         // Err(_) means the task panicked; already handled inside the spawned closure.
     }
+    // Sort by app name, then dir, so the list order is a deterministic total
+    // order across scan cycles — including when two apps in different watched
+    // roots share the same name (dir is always unique).
+    results.sort_by(|a, b| a.0.name.cmp(&b.0.name).then_with(|| a.0.dir.cmp(&b.0.dir)));
     results
 }
 
@@ -156,6 +160,9 @@ fn is_app_dir(dir: &Path) -> bool {
 }
 
 fn parse_app_dir(dir: &Path) -> AppEntry {
+    // Precedence: a deployed build-info (root or `current/` symlink) wins over
+    // project-source `grimoire-config.json` so the deployed `app_version` and
+    // service address are surfaced; the bare dir-name fallback is last.
     if let Some(entry) = parse_from_build_info(dir) {
         return entry;
     }
@@ -176,8 +183,21 @@ fn parse_app_dir(dir: &Path) -> AppEntry {
 }
 
 /// Parse from Grimoire deployment build info (`grimoire-build-info.json`).
+/// Checks `dir/grimoire-build-info.json` first, then `dir/current/grimoire-build-info.json`
+/// for apps deployed with a versioned `current/` symlink structure.
 fn parse_from_build_info(dir: &Path) -> Option<AppEntry> {
-    let text = std::fs::read_to_string(dir.join("grimoire-build-info.json")).ok()?;
+    let build_info_path = {
+        let direct = dir.join("grimoire-build-info.json");
+        let via_current = dir.join("current").join("grimoire-build-info.json");
+        if direct.exists() {
+            direct
+        } else if via_current.exists() {
+            via_current
+        } else {
+            return None;
+        }
+    };
+    let text = std::fs::read_to_string(build_info_path).ok()?;
     let val: Value = serde_json::from_str(&text).ok()?;
 
     let cfg = val.get("grimoire_config")?;
@@ -364,6 +384,38 @@ mod tests {
         let apps = scan_once(&tmp.path().to_path_buf());
         assert_eq!(apps.len(), 1);
         assert_eq!(apps[0].name, "legacy-app");
+    }
+
+    /// Regression (v1.0.1): apps deployed with a versioned `current/` layout
+    /// keep `grimoire-build-info.json` under `current/`, not at the app root.
+    /// The version must still be read so it displays in the GUI.
+    #[test]
+    fn discovers_version_via_current_build_info() {
+        let tmp = TempDir::new().unwrap();
+        let app_dir = tmp.path().join("deployed-app");
+        fs::create_dir_all(app_dir.join("current")).unwrap();
+
+        let build_info = serde_json::json!({
+            "schema_version": 1,
+            "app_version": "2.5.0",
+            "grimoire_config": {
+                "name": "deployed-app",
+                "environments": {
+                    "local": { "service_address": "http://localhost:8800" }
+                }
+            }
+        });
+        fs::write(
+            app_dir.join("current").join("grimoire-build-info.json"),
+            build_info.to_string(),
+        )
+        .unwrap();
+
+        let apps = scan_once(&tmp.path().to_path_buf());
+        assert_eq!(apps.len(), 1);
+        assert_eq!(apps[0].name, "deployed-app");
+        assert_eq!(apps[0].framework_version.as_deref(), Some("2.5.0"));
+        assert_eq!(apps[0].known_port, Some(8800));
     }
 
     #[test]

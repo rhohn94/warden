@@ -1,5 +1,11 @@
 # Version history
 
+## v1.0.1 (2026-06-19)
+
+- Stop no longer hangs the UI: the start/stop/restart dispatch tasks now release the shared `AppState` lock before the blocking `history.save()` disk write, so the render thread is never starved waiting on disk I/O while an app is being stopped
+- Running-apps list is now stably ordered: concurrent per-app detection results are sorted by app name after collection, so the list no longer reshuffles every scan cycle as detector tasks finish in non-deterministic order
+- Versions now display for all deployed apps: `grimoire-build-info.json` is read from `<app>/current/grimoire-build-info.json` (the versioned `current/` symlink layout) when it is not present at the app root, so `app_version` is surfaced for every deployment, not only root-level layouts
+
 ## v1.0.0 (2026-06-17)
 
 - Changelog visibility: the current version (`v1.0.0`) is shown as a clickable label next to the "Warden" title; clicking it opens a scrollable Aura-styled changelog window showing release notes for all shipped versions, latest first, in card surfaces with hairline dividers

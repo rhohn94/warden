@@ -63,8 +63,8 @@ mod tests {
     #[test]
     fn parse_produces_entries_for_all_versions() {
         let entries = parse_changelog(CHANGELOG_MD);
-        assert!(entries.len() >= 9, "expected at least 9 versions");
-        assert!(entries[0].version.starts_with("v0.9"), "first entry should be v0.9.x");
+        assert!(entries.len() >= 10, "expected at least 10 versions");
+        assert!(entries[0].version.starts_with("v1.0"), "first entry should be v1.0.x");
         assert!(!entries[0].bullets.is_empty(), "first entry should have bullets");
     }
 }
