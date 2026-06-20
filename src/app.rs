@@ -133,6 +133,13 @@ pub struct App {
     changelog_entries: Vec<crate::changelog::ChangelogEntry>,
     /// Whether the changelog modal/panel is currently open.
     changelog_open: bool,
+
+    // ── Fleet Control (#42–#45) ───────────────────────────────────────────────
+    /// Names of apps already auto-started this session — each flagged app is
+    /// auto-started at most once, the first time it is seen definitively
+    /// Stopped/Crashed (so a slow first scan that reports Unknown does not skip
+    /// it permanently, and an already-Running app is never double-started).
+    autostarted: HashSet<String>,
 }
 
 impl App {
@@ -169,6 +176,7 @@ impl App {
             search_query: String::new(),
             changelog_entries: crate::changelog::changelog_entries(),
             changelog_open: false,
+            autostarted: HashSet::new(),
         }
     }
 
@@ -329,6 +337,13 @@ impl App {
         let mut pending_stop: Option<(AppEntry, Option<u32>)> = None;
         let mut pending_restart: Option<(AppEntry, Option<u32>)> = None;
         let mut pending_open: Option<u16> = None;
+        // Pending bulk action — (action, target entries) collected inside the panel, applied after.
+        let mut pending_bulk: Option<(BulkAction, Vec<AppEntry>)> = None;
+        // Pending auto-start dispatches — kept separate from pending_bulk so a user's
+        // bulk-button click on the same frame is never clobbered by auto-start.
+        let mut pending_autostart: Vec<AppEntry> = Vec::new();
+        // Pending auto-start toggle from the details panel — (entry_name, new_enabled).
+        let mut pending_autostart_toggle: Option<(String, bool)> = None;
 
         // Paint Aura wallpaper behind all panel content.
         let screen_rect = ctx.screen_rect();
@@ -351,6 +366,7 @@ impl App {
                         &mut pending_stop,
                         &mut pending_restart,
                         &mut pending_open,
+                        &mut pending_autostart_toggle,
                     );
                 });
         }
@@ -384,10 +400,38 @@ impl App {
                         self.show_log_viewer = new_idx == 1;
                     }
                     ui.add_space(golden::SPACE[2]);
-                    if !self.show_log_viewer
-                        && TactileButton::new("Scan now").secondary().ui(ui).clicked()
-                    {
-                        let _ = self.force_scan_tx.send(());
+                    if !self.show_log_viewer {
+                        if TactileButton::new("Scan now").secondary().ui(ui).clicked() {
+                            let _ = self.force_scan_tx.send(());
+                        }
+                        ui.add_space(golden::SPACE[2]);
+
+                        // ── Bulk action buttons (#42) ─────────────────────────
+                        // Collect visible entries snapshot for bulk target computation.
+                        let active_query_for_bulk = self.search_query.trim().to_lowercase();
+                        let visible_entries: Vec<AppEntry> =
+                            filter_entries(&entries, &active_query_for_bulk)
+                                .into_iter()
+                                .cloned()
+                                .collect();
+                        if TactileButton::new("Restart all").ghost().ui(ui).clicked() {
+                            let targets = bulk_targets(&visible_entries, &statuses, &in_flight, BulkAction::Restart);
+                            if !targets.is_empty() {
+                                pending_bulk = Some((BulkAction::Restart, targets));
+                            }
+                        }
+                        if TactileButton::new("Stop all").ghost().ui(ui).clicked() {
+                            let targets = bulk_targets(&visible_entries, &statuses, &in_flight, BulkAction::Stop);
+                            if !targets.is_empty() {
+                                pending_bulk = Some((BulkAction::Stop, targets));
+                            }
+                        }
+                        if TactileButton::new("Start all").ghost().ui(ui).clicked() {
+                            let targets = bulk_targets(&visible_entries, &statuses, &in_flight, BulkAction::Start);
+                            if !targets.is_empty() {
+                                pending_bulk = Some((BulkAction::Start, targets));
+                            }
+                        }
                     }
                 });
             });
@@ -397,11 +441,41 @@ impl App {
             if self.show_log_viewer {
                 self.draw_log_viewer(ui, &entries, &statuses);
             } else {
-                // ── Search / live filter ──────────────────────────────────────
-                ui.add(
-                    egui::TextEdit::singleline(&mut self.search_query)
-                        .hint_text("Filter apps…"),
-                );
+                // ── Fleet health summary bar (#43) ────────────────────────────
+                let counts = count_statuses(&statuses);
+                let summary = counts.summary_text();
+                if !summary.is_empty() {
+                    ui.label(
+                        egui::RichText::new(summary)
+                            .color(golden::TEXT_MUTED)
+                            .size(golden::TEXT_SM),
+                    );
+                }
+
+                // ── Search / live filter + sort controls (#44) ────────────────
+                ui.horizontal(|ui| {
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.search_query)
+                            .hint_text("Filter apps…"),
+                    );
+                    ui.add_space(golden::SPACE[2]);
+                    // Sort key selector — Default (scanner order) / Name / Status / Port.
+                    let sort_items = vec![
+                        ButtonGroupItem::label("Default"),
+                        ButtonGroupItem::label("Name"),
+                        ButtonGroupItem::label("Status"),
+                        ButtonGroupItem::label("Port"),
+                    ];
+                    let current_sort = SortKey::from_config(self.config.sort_order.as_deref());
+                    let sort_selected = current_sort.to_button_index();
+                    if let Some(clicked) = ButtonGroup::selection(sort_items).show(ui, Some(sort_selected)) {
+                        let new_key = SortKey::from_button_index(clicked);
+                        self.config.sort_order = new_key.to_config_str().map(str::to_string);
+                        if let Err(e) = self.config.save() {
+                            tracing::warn!("failed to save config after sort change: {}", e);
+                        }
+                    }
+                });
 
                 // Escape clears the search query when it is non-empty.
                 if !self.search_query.is_empty()
@@ -411,20 +485,43 @@ impl App {
                     ctx.memory_mut(|m| m.surrender_focus(egui::Id::NULL));
                 }
 
-                // Build filtered entry list (clone matching entries).
+                // Build filtered + sorted entry list.
                 let total_count = entries.len();
                 let active_query = self.search_query.trim().to_lowercase();
-                let filtered: Vec<AppEntry> =
+                let filtered_unsorted: Vec<AppEntry> =
                     filter_entries(&entries, &active_query)
                         .into_iter()
                         .cloned()
                         .collect();
+                let sort_key = SortKey::from_config(self.config.sort_order.as_deref());
+                let filtered = sort_entries(&filtered_unsorted, sort_key, &statuses);
 
                 // Clear selection when the selected app is filtered out.
                 if let Some(ref sel_path) = current_selected {
                     if !filtered.iter().any(|e| &e.dir == sel_path) {
                         pending_select = Some(None);
                     }
+                }
+
+                // ── Auto-start flagged apps (#45) ─────────────────────────────
+                // Start each flagged app the first time it is seen definitively
+                // Stopped/Crashed. `autostart_targets` excludes Running/Unknown so a
+                // still-running app whose detector hasn't resolved is never double-
+                // started; the per-app `autostarted` set makes each fire exactly once
+                // while surviving a slow first scan. Dispatch happens after the panel.
+                {
+                    let auto_names = self.config.auto_start.clone().unwrap_or_default();
+                    let targets = autostart_targets(
+                        &entries,
+                        &statuses,
+                        &in_flight,
+                        &auto_names,
+                        &self.autostarted,
+                    );
+                    for e in &targets {
+                        self.autostarted.insert(e.name.clone());
+                    }
+                    pending_autostart.extend(targets);
                 }
 
                 // ── App rows ─────────────────────────────────────────────────
@@ -464,6 +561,61 @@ impl App {
         if let Some(port) = pending_open {
             if let Err(e) = open::that(format!("http://localhost:{}", port)) {
                 error!("open browser failed: {}", e);
+            }
+        }
+
+        // Apply bulk action (#42) — loop over targets and call single-app dispatch.
+        // State lock is NOT held here; dispatch_* acquire it internally as needed.
+        if let Some((action, targets)) = pending_bulk {
+            // Re-snapshot statuses and in_flight for pid extraction; lock briefly.
+            let (cur_statuses, cur_in_flight) = {
+                let s = self.state.lock().unwrap();
+                (s.statuses.clone(), s.in_flight.clone())
+            };
+            for entry in targets {
+                // Re-check in-flight (another bulk iteration may have changed state).
+                if cur_in_flight.contains(&entry.dir) {
+                    continue;
+                }
+                let status = cur_statuses.get(&entry.dir).map(|(s, _)| s.clone());
+                match action {
+                    BulkAction::Start => {
+                        if !matches!(status, Some(AppStatus::Running { .. })) {
+                            self.dispatch_start(entry);
+                        }
+                    }
+                    BulkAction::Stop => {
+                        if let Some(AppStatus::Running { pid }) = status {
+                            self.dispatch_stop(entry, Some(pid));
+                        }
+                    }
+                    BulkAction::Restart => {
+                        if let Some(AppStatus::Running { pid }) = status {
+                            self.dispatch_restart(entry, Some(pid));
+                        }
+                    }
+                }
+            }
+        }
+
+        // Apply auto-start dispatches (#45) — independent of pending_bulk so a
+        // user's bulk-button press on the same frame is preserved.
+        for entry in pending_autostart {
+            self.dispatch_start(entry);
+        }
+
+        // Apply auto-start toggle from details panel (#45).
+        if let Some((name, enabled)) = pending_autostart_toggle {
+            let list = self.config.auto_start.get_or_insert_with(Vec::new);
+            if enabled {
+                if !list.contains(&name) {
+                    list.push(name);
+                }
+            } else {
+                list.retain(|n| n != &name);
+            }
+            if let Err(e) = self.config.save() {
+                tracing::warn!("failed to save config after auto-start toggle: {}", e);
             }
         }
     }
@@ -797,8 +949,8 @@ impl App {
 
     /// Render the details side panel for the selected app.
     ///
-    /// Actions (start/stop/open) are communicated back via the `pending_*` out-params
-    /// so that dispatch calls happen after the panel borrow is released.
+    /// Actions (start/stop/open/auto-start toggle) are communicated back via the
+    /// `pending_*` out-params so that dispatch calls happen after the panel borrow is released.
     #[allow(clippy::too_many_arguments)]
     fn draw_details(
         &self,
@@ -813,6 +965,7 @@ impl App {
         pending_stop: &mut Option<(AppEntry, Option<u32>)>,
         pending_restart: &mut Option<(AppEntry, Option<u32>)>,
         pending_open: &mut Option<u16>,
+        pending_autostart_toggle: &mut Option<(String, bool)>,
     ) {
         let Some(ref dir) = selected else { return };
         let Some(entry) = entries.iter().find(|e| &e.dir == dir) else { return };
@@ -951,6 +1104,26 @@ impl App {
         } else if TactileButton::new("Start").primary().ui(ui).clicked() {
             *pending_start = Some(entry.clone());
         }
+
+        // ── Auto-start on launch toggle (#45) ────────────────────────────
+        theme::hairline(ui);
+        let auto_start_list = self.config.auto_start.as_deref().unwrap_or(&[]);
+        let is_auto_start = auto_start_list.contains(&entry.name);
+        ui.horizontal(|ui| {
+            ui.label(
+                egui::RichText::new("Auto-start on launch")
+                    .color(golden::TEXT_MUTED)
+                    .size(golden::TEXT_SM),
+            );
+            let toggle_label = if is_auto_start { "On" } else { "Off" };
+            if TactileButton::new(toggle_label)
+                .ghost()
+                .ui(ui)
+                .clicked()
+            {
+                *pending_autostart_toggle = Some((entry.name.clone(), !is_auto_start));
+            }
+        });
 
         // ── Log pane ─────────────────────────────────────────────────────
         let has_log_receiver = self.log_receivers.contains_key(dir);
@@ -1216,6 +1389,226 @@ pub fn filter_entries<'a>(entries: &'a [AppEntry], query: &str) -> Vec<&'a AppEn
         .iter()
         .filter(|e| e.name.to_lowercase().contains(&q))
         .collect()
+}
+
+// ── Fleet Control helpers (#42–#45) ─────────────────────────────────────────
+
+/// Bulk action variants for `bulk_targets` and the pending-bulk dispatch loop.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BulkAction {
+    Start,
+    Stop,
+    Restart,
+}
+
+/// Return the subset of `entries` that the given `BulkAction` should target.
+///
+/// Skips apps already in the desired state and apps that are in-flight.
+/// - `Start`: skips Running apps.
+/// - `Stop`: skips Stopped, Crashed, and Unknown apps (only Running can be stopped).
+/// - `Restart`: skips non-Running apps (only Running apps can be restarted).
+pub fn bulk_targets(
+    entries: &[AppEntry],
+    statuses: &HashMap<PathBuf, (AppStatus, PortInfo)>,
+    in_flight: &HashSet<PathBuf>,
+    action: BulkAction,
+) -> Vec<AppEntry> {
+    entries
+        .iter()
+        .filter(|e| {
+            if in_flight.contains(&e.dir) {
+                return false;
+            }
+            let status = statuses.get(&e.dir).map(|(s, _)| s);
+            match action {
+                BulkAction::Start => !matches!(status, Some(AppStatus::Running { .. })),
+                BulkAction::Stop => matches!(status, Some(AppStatus::Running { .. })),
+                BulkAction::Restart => matches!(status, Some(AppStatus::Running { .. })),
+            }
+        })
+        .cloned()
+        .collect()
+}
+
+/// Select flagged apps eligible for auto-start.
+///
+/// An app is eligible only when it is flagged in `auto_names`, has not already
+/// been auto-started this session (`already_started`), is not in-flight, and is
+/// seen *definitively* `Stopped` or `Crashed`. An `Unknown` or absent status is
+/// treated as ineligible so an already-running app whose detector has not yet
+/// resolved is never double-started.
+pub fn autostart_targets(
+    entries: &[AppEntry],
+    statuses: &HashMap<PathBuf, (AppStatus, PortInfo)>,
+    in_flight: &HashSet<PathBuf>,
+    auto_names: &[String],
+    already_started: &HashSet<String>,
+) -> Vec<AppEntry> {
+    entries
+        .iter()
+        .filter(|e| {
+            if !auto_names.contains(&e.name) || already_started.contains(&e.name) {
+                return false;
+            }
+            if in_flight.contains(&e.dir) {
+                return false;
+            }
+            let status = statuses.get(&e.dir).map(|(s, _)| s);
+            matches!(status, Some(AppStatus::Stopped) | Some(AppStatus::Crashed))
+        })
+        .cloned()
+        .collect()
+}
+
+/// Aggregated status counts across the fleet, used for the health summary bar.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct StatusCounts {
+    pub running: usize,
+    pub stopped: usize,
+    pub crashed: usize,
+    pub unknown: usize,
+}
+
+impl StatusCounts {
+    /// Build a compact summary string, e.g. `"6 running · 2 stopped · 1 crashed"`.
+    /// Categories with zero count are omitted; returns empty string when all zero.
+    pub fn summary_text(&self) -> String {
+        let mut parts: Vec<String> = Vec::new();
+        if self.running > 0 {
+            parts.push(format!("{} running", self.running));
+        }
+        if self.stopped > 0 {
+            parts.push(format!("{} stopped", self.stopped));
+        }
+        if self.crashed > 0 {
+            parts.push(format!("{} crashed", self.crashed));
+        }
+        if self.unknown > 0 {
+            parts.push(format!("{} unknown", self.unknown));
+        }
+        parts.join(" · ")
+    }
+}
+
+/// Fold the `statuses` map into a `StatusCounts` for the fleet health summary bar.
+pub fn count_statuses(statuses: &HashMap<PathBuf, (AppStatus, PortInfo)>) -> StatusCounts {
+    let mut counts = StatusCounts::default();
+    for (status, _) in statuses.values() {
+        match status {
+            AppStatus::Running { .. } => counts.running += 1,
+            AppStatus::Stopped => counts.stopped += 1,
+            AppStatus::Crashed => counts.crashed += 1,
+            AppStatus::Unknown => counts.unknown += 1,
+        }
+    }
+    counts
+}
+
+/// Sort key for the app-list ordering.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SortKey {
+    /// Scanner order (default — no sort applied).
+    ScannerOrder,
+    /// Alphabetical by app name, ascending.
+    Name,
+    /// Group by status (Running → Stopped → Crashed → Unknown), tie-break by name.
+    Status,
+    /// Ascending by detected port number, with None-port apps last, tie-break by name.
+    Port,
+}
+
+impl SortKey {
+    /// Parse from the config string.  Unknown values map to `ScannerOrder`.
+    pub fn from_config(s: Option<&str>) -> Self {
+        match s {
+            Some("name") => SortKey::Name,
+            Some("status") => SortKey::Status,
+            Some("port") => SortKey::Port,
+            _ => SortKey::ScannerOrder,
+        }
+    }
+
+    /// Serialise back to the config string (None = ScannerOrder → store nothing).
+    pub fn to_config_str(self) -> Option<&'static str> {
+        match self {
+            SortKey::ScannerOrder => None,
+            SortKey::Name => Some("name"),
+            SortKey::Status => Some("status"),
+            SortKey::Port => Some("port"),
+        }
+    }
+
+    /// Map from the ButtonGroup index (0 = Default/scanner, 1 = Name, 2 = Status, 3 = Port).
+    /// Bijective with `to_button_index` so the highlighted button always matches state
+    /// and every key — including ScannerOrder — is reachable from a button.
+    pub fn from_button_index(idx: usize) -> Self {
+        match idx {
+            1 => SortKey::Name,
+            2 => SortKey::Status,
+            3 => SortKey::Port,
+            _ => SortKey::ScannerOrder,
+        }
+    }
+
+    /// Map to the ButtonGroup selection index (inverse of `from_button_index`).
+    pub fn to_button_index(self) -> usize {
+        match self {
+            SortKey::ScannerOrder => 0,
+            SortKey::Name => 1,
+            SortKey::Status => 2,
+            SortKey::Port => 3,
+        }
+    }
+
+    /// Ordinal for status-based grouping: Running=0, Stopped=1, Crashed=2, Unknown=3.
+    fn status_ordinal(status: Option<&AppStatus>) -> u8 {
+        match status {
+            Some(AppStatus::Running { .. }) => 0,
+            Some(AppStatus::Stopped) => 1,
+            Some(AppStatus::Crashed) => 2,
+            Some(AppStatus::Unknown) | None => 3,
+        }
+    }
+}
+
+/// Return a stable-sorted copy of `entries` ordered by `key`.
+///
+/// Tie-breaking is always name-then-dir for a total, deterministic order so the
+/// list never reshuffles unexpectedly when key values are equal.
+pub fn sort_entries(
+    entries: &[AppEntry],
+    key: SortKey,
+    statuses: &HashMap<PathBuf, (AppStatus, PortInfo)>,
+) -> Vec<AppEntry> {
+    if matches!(key, SortKey::ScannerOrder) {
+        return entries.to_vec();
+    }
+    let mut sorted = entries.to_vec();
+    sorted.sort_by(|a, b| {
+        let cmp = match key {
+            SortKey::ScannerOrder => std::cmp::Ordering::Equal, // handled above
+            SortKey::Name => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
+            SortKey::Status => {
+                let sa = statuses.get(&a.dir).map(|(s, _)| s);
+                let sb = statuses.get(&b.dir).map(|(s, _)| s);
+                SortKey::status_ordinal(sa).cmp(&SortKey::status_ordinal(sb))
+            }
+            SortKey::Port => {
+                let pa = statuses.get(&a.dir).and_then(|(_, pi)| pi.port);
+                let pb = statuses.get(&b.dir).and_then(|(_, pi)| pi.port);
+                match (pa, pb) {
+                    (Some(x), Some(y)) => x.cmp(&y),
+                    (Some(_), None) => std::cmp::Ordering::Less,
+                    (None, Some(_)) => std::cmp::Ordering::Greater,
+                    (None, None) => std::cmp::Ordering::Equal,
+                }
+            }
+        };
+        // Tie-break: name asc, then dir asc for complete determinism.
+        cmp.then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+           .then_with(|| a.dir.cmp(&b.dir))
+    });
+    sorted
 }
 
 /// Aggregate log lines from multiple apps, apply a per-app filter map, and
@@ -1708,5 +2101,307 @@ mod tests {
             &dir,
         );
         assert_eq!(result, AppStatus::Running { pid: 99 });
+    }
+
+    // ── Fleet Control helpers ────────────────────────────────────────────────
+
+    fn make_entry_with_port(name: &str, port: Option<u16>) -> AppEntry {
+        AppEntry {
+            name: name.to_string(),
+            dir: PathBuf::from(format!("/tmp/apps/{}", name)),
+            root: PathBuf::from("/tmp/apps"),
+            framework_version: None,
+            server_command: None,
+            known_port: port,
+        }
+    }
+
+    // ── bulk_targets (#42) ───────────────────────────────────────────────────
+
+    #[test]
+    fn bulk_start_skips_running_and_in_flight() {
+        let fe = make_entry("frontend");
+        let be = make_entry("backend");
+        let db = make_entry("database");
+        let entries = vec![fe.clone(), be.clone(), db.clone()];
+        let mut statuses = HashMap::new();
+        statuses.insert(fe.dir.clone(), (AppStatus::Running { pid: 1 }, PortInfo::default()));
+        statuses.insert(be.dir.clone(), (AppStatus::Stopped, PortInfo::default()));
+        statuses.insert(db.dir.clone(), (AppStatus::Stopped, PortInfo::default()));
+        let mut in_flight = HashSet::new();
+        in_flight.insert(db.dir.clone()); // db is in-flight, also skipped
+        let targets = bulk_targets(&entries, &statuses, &in_flight, BulkAction::Start);
+        assert_eq!(targets.len(), 1);
+        assert_eq!(targets[0].name, "backend");
+    }
+
+    #[test]
+    fn bulk_stop_targets_only_running() {
+        let fe = make_entry("frontend");
+        let be = make_entry("backend");
+        let entries = vec![fe.clone(), be.clone()];
+        let mut statuses = HashMap::new();
+        statuses.insert(fe.dir.clone(), (AppStatus::Running { pid: 10 }, PortInfo::default()));
+        statuses.insert(be.dir.clone(), (AppStatus::Stopped, PortInfo::default()));
+        let targets = bulk_targets(&entries, &statuses, &HashSet::new(), BulkAction::Stop);
+        assert_eq!(targets.len(), 1);
+        assert_eq!(targets[0].name, "frontend");
+    }
+
+    #[test]
+    fn bulk_restart_targets_only_running() {
+        let fe = make_entry("frontend");
+        let be = make_entry("backend");
+        let entries = vec![fe.clone(), be.clone()];
+        let mut statuses = HashMap::new();
+        statuses.insert(fe.dir.clone(), (AppStatus::Running { pid: 10 }, PortInfo::default()));
+        statuses.insert(be.dir.clone(), (AppStatus::Crashed, PortInfo::default()));
+        let targets = bulk_targets(&entries, &statuses, &HashSet::new(), BulkAction::Restart);
+        assert_eq!(targets.len(), 1);
+        assert_eq!(targets[0].name, "frontend");
+    }
+
+    #[test]
+    fn bulk_skips_in_flight_for_all_actions() {
+        let fe = make_entry("frontend");
+        let entries = vec![fe.clone()];
+        let mut statuses = HashMap::new();
+        statuses.insert(fe.dir.clone(), (AppStatus::Stopped, PortInfo::default()));
+        let mut in_flight = HashSet::new();
+        in_flight.insert(fe.dir.clone());
+        assert!(bulk_targets(&entries, &statuses, &in_flight, BulkAction::Start).is_empty());
+        assert!(bulk_targets(&entries, &statuses, &in_flight, BulkAction::Stop).is_empty());
+        assert!(bulk_targets(&entries, &statuses, &in_flight, BulkAction::Restart).is_empty());
+    }
+
+    #[test]
+    fn bulk_start_includes_crashed() {
+        // A Crashed app must be a Start target so the operator can recover it.
+        let cr = make_entry("crashed-app");
+        let entries = vec![cr.clone()];
+        let mut statuses = HashMap::new();
+        statuses.insert(cr.dir.clone(), (AppStatus::Crashed, PortInfo::default()));
+        let targets = bulk_targets(&entries, &statuses, &HashSet::new(), BulkAction::Start);
+        assert_eq!(targets.len(), 1);
+        assert_eq!(targets[0].name, "crashed-app");
+    }
+
+    // ── autostart_targets (#45) ──────────────────────────────────────────────
+
+    #[test]
+    fn autostart_includes_stopped_and_crashed_only() {
+        let stopped = make_entry("stopped");
+        let crashed = make_entry("crashed");
+        let running = make_entry("running");
+        let unknown = make_entry("unknown");
+        let entries = vec![stopped.clone(), crashed.clone(), running.clone(), unknown.clone()];
+        let mut statuses = HashMap::new();
+        statuses.insert(stopped.dir.clone(), (AppStatus::Stopped, PortInfo::default()));
+        statuses.insert(crashed.dir.clone(), (AppStatus::Crashed, PortInfo::default()));
+        statuses.insert(running.dir.clone(), (AppStatus::Running { pid: 1 }, PortInfo::default()));
+        statuses.insert(unknown.dir.clone(), (AppStatus::Unknown, PortInfo::default()));
+        // All four are flagged for auto-start.
+        let flagged: Vec<String> = vec!["stopped", "crashed", "running", "unknown"]
+            .into_iter().map(String::from).collect();
+        let targets = autostart_targets(&entries, &statuses, &HashSet::new(), &flagged, &HashSet::new());
+        let names: Vec<&str> = targets.iter().map(|e| e.name.as_str()).collect();
+        assert!(names.contains(&"stopped"));
+        assert!(names.contains(&"crashed"));
+        // Running must NEVER be auto-started; Unknown is ineligible (detector may be unresolved).
+        assert!(!names.contains(&"running"), "must not double-start a running app");
+        assert!(!names.contains(&"unknown"), "Unknown status must be ineligible");
+        assert_eq!(targets.len(), 2);
+    }
+
+    #[test]
+    fn autostart_excludes_unflagged_in_flight_and_already_started() {
+        let a = make_entry("flagged-stopped");
+        let b = make_entry("unflagged-stopped");
+        let c = make_entry("flagged-inflight");
+        let d = make_entry("flagged-already");
+        let entries = vec![a.clone(), b.clone(), c.clone(), d.clone()];
+        let mut statuses = HashMap::new();
+        for e in [&a, &b, &c, &d] {
+            statuses.insert(e.dir.clone(), (AppStatus::Stopped, PortInfo::default()));
+        }
+        let flagged: Vec<String> = vec!["flagged-stopped", "flagged-inflight", "flagged-already"]
+            .into_iter().map(String::from).collect();
+        let mut in_flight = HashSet::new();
+        in_flight.insert(c.dir.clone());
+        let mut already = HashSet::new();
+        already.insert("flagged-already".to_string());
+        let targets = autostart_targets(&entries, &statuses, &in_flight, &flagged, &already);
+        assert_eq!(targets.len(), 1);
+        assert_eq!(targets[0].name, "flagged-stopped");
+    }
+
+    #[test]
+    fn autostart_absent_status_is_ineligible() {
+        // No status entry at all (e.g. brand-new scan) must not auto-start.
+        let e = make_entry("no-status");
+        let entries = vec![e.clone()];
+        let flagged = vec!["no-status".to_string()];
+        let targets = autostart_targets(&entries, &HashMap::new(), &HashSet::new(), &flagged, &HashSet::new());
+        assert!(targets.is_empty());
+    }
+
+    // ── SortKey button-index mapping (#44) ───────────────────────────────────
+
+    #[test]
+    fn sort_key_button_index_is_bijective() {
+        for key in [SortKey::ScannerOrder, SortKey::Name, SortKey::Status, SortKey::Port] {
+            assert_eq!(SortKey::from_button_index(key.to_button_index()), key);
+        }
+        for idx in 0..4usize {
+            assert_eq!(SortKey::from_button_index(idx).to_button_index(), idx);
+        }
+        // Default/scanner order is index 0 and reachable from a button.
+        assert_eq!(SortKey::ScannerOrder.to_button_index(), 0);
+        assert_eq!(SortKey::from_button_index(0), SortKey::ScannerOrder);
+    }
+
+    // ── count_statuses (#43) ─────────────────────────────────────────────────
+
+    #[test]
+    fn count_statuses_all_categories() {
+        let fe = make_entry("frontend");
+        let be = make_entry("backend");
+        let db = make_entry("database");
+        let ca = make_entry("cache");
+        let mut statuses = HashMap::new();
+        statuses.insert(fe.dir.clone(), (AppStatus::Running { pid: 1 }, PortInfo::default()));
+        statuses.insert(be.dir.clone(), (AppStatus::Stopped, PortInfo::default()));
+        statuses.insert(db.dir.clone(), (AppStatus::Crashed, PortInfo::default()));
+        statuses.insert(ca.dir.clone(), (AppStatus::Unknown, PortInfo::default()));
+        let counts = count_statuses(&statuses);
+        assert_eq!(counts.running, 1);
+        assert_eq!(counts.stopped, 1);
+        assert_eq!(counts.crashed, 1);
+        assert_eq!(counts.unknown, 1);
+    }
+
+    #[test]
+    fn count_statuses_empty_map() {
+        let counts = count_statuses(&HashMap::new());
+        assert_eq!(counts, StatusCounts::default());
+    }
+
+    #[test]
+    fn count_statuses_summary_omits_zero_categories() {
+        let counts = StatusCounts { running: 3, stopped: 0, crashed: 1, unknown: 0 };
+        let text = counts.summary_text();
+        assert!(text.contains("3 running"), "summary: {}", text);
+        assert!(text.contains("1 crashed"), "summary: {}", text);
+        assert!(!text.contains("stopped"), "should omit zero stopped: {}", text);
+        assert!(!text.contains("unknown"), "should omit zero unknown: {}", text);
+    }
+
+    #[test]
+    fn count_statuses_summary_all_zero_returns_empty() {
+        let counts = StatusCounts::default();
+        assert_eq!(counts.summary_text(), "");
+    }
+
+    // ── sort_entries (#44) ───────────────────────────────────────────────────
+
+    #[test]
+    fn sort_entries_name_asc() {
+        let entries = vec![make_entry("zebra"), make_entry("alpha"), make_entry("mango")];
+        let sorted = sort_entries(&entries, SortKey::Name, &HashMap::new());
+        assert_eq!(sorted[0].name, "alpha");
+        assert_eq!(sorted[1].name, "mango");
+        assert_eq!(sorted[2].name, "zebra");
+    }
+
+    #[test]
+    fn sort_entries_status_grouping() {
+        let fe = make_entry("frontend");
+        let be = make_entry("backend");
+        let db = make_entry("database");
+        let ca = make_entry("cache");
+        let entries = vec![fe.clone(), be.clone(), db.clone(), ca.clone()];
+        let mut statuses = HashMap::new();
+        statuses.insert(fe.dir.clone(), (AppStatus::Crashed, PortInfo::default()));
+        statuses.insert(be.dir.clone(), (AppStatus::Running { pid: 1 }, PortInfo::default()));
+        statuses.insert(db.dir.clone(), (AppStatus::Stopped, PortInfo::default()));
+        statuses.insert(ca.dir.clone(), (AppStatus::Unknown, PortInfo::default()));
+        let sorted = sort_entries(&entries, SortKey::Status, &statuses);
+        // Running first, then Stopped, then Crashed, then Unknown
+        assert_eq!(sorted[0].name, "backend");   // Running
+        assert_eq!(sorted[1].name, "database");  // Stopped
+        assert_eq!(sorted[2].name, "frontend");  // Crashed
+        assert_eq!(sorted[3].name, "cache");     // Unknown
+    }
+
+    #[test]
+    fn sort_entries_port_asc_none_last() {
+        let a = make_entry_with_port("alpha", Some(3000));
+        let b = make_entry_with_port("beta", None);
+        let c = make_entry_with_port("gamma", Some(8080));
+        let entries = vec![c.clone(), b.clone(), a.clone()];
+        let mut statuses: HashMap<PathBuf, (AppStatus, PortInfo)> = HashMap::new();
+        statuses.insert(a.dir.clone(), (AppStatus::Running { pid: 1 }, PortInfo { port: Some(3000), ..Default::default() }));
+        statuses.insert(b.dir.clone(), (AppStatus::Stopped, PortInfo { port: None, ..Default::default() }));
+        statuses.insert(c.dir.clone(), (AppStatus::Running { pid: 2 }, PortInfo { port: Some(8080), ..Default::default() }));
+        let sorted = sort_entries(&entries, SortKey::Port, &statuses);
+        assert_eq!(sorted[0].name, "alpha");  // port 3000
+        assert_eq!(sorted[1].name, "gamma");  // port 8080
+        assert_eq!(sorted[2].name, "beta");   // no port (last)
+    }
+
+    #[test]
+    fn sort_entries_scanner_order_is_identity() {
+        let entries = vec![make_entry("zebra"), make_entry("alpha"), make_entry("mango")];
+        let sorted = sort_entries(&entries, SortKey::ScannerOrder, &HashMap::new());
+        assert_eq!(sorted[0].name, "zebra");
+        assert_eq!(sorted[1].name, "alpha");
+        assert_eq!(sorted[2].name, "mango");
+    }
+
+    #[test]
+    fn sort_entries_name_stable_tiebreak_by_dir() {
+        // Two entries with same name (impossible in practice, but tests tiebreak).
+        let mut a = make_entry("app");
+        a.dir = PathBuf::from("/tmp/apps/a/app");
+        let mut b = make_entry("app");
+        b.dir = PathBuf::from("/tmp/apps/b/app");
+        let entries = vec![b.clone(), a.clone()];
+        let sorted = sort_entries(&entries, SortKey::Name, &HashMap::new());
+        // dir "/tmp/apps/a/app" < "/tmp/apps/b/app" lexicographically
+        assert_eq!(sorted[0].dir, PathBuf::from("/tmp/apps/a/app"));
+        assert_eq!(sorted[1].dir, PathBuf::from("/tmp/apps/b/app"));
+    }
+
+    // ── SortKey parse/serialise round-trip ───────────────────────────────────
+
+    #[test]
+    fn sort_key_round_trips_name() {
+        let k = SortKey::from_config(Some("name"));
+        assert_eq!(k.to_config_str(), Some("name"));
+    }
+
+    #[test]
+    fn sort_key_round_trips_status() {
+        let k = SortKey::from_config(Some("status"));
+        assert_eq!(k.to_config_str(), Some("status"));
+    }
+
+    #[test]
+    fn sort_key_round_trips_port() {
+        let k = SortKey::from_config(Some("port"));
+        assert_eq!(k.to_config_str(), Some("port"));
+    }
+
+    #[test]
+    fn sort_key_unknown_string_maps_to_scanner_order() {
+        let k = SortKey::from_config(Some("foobar"));
+        assert_eq!(k, SortKey::ScannerOrder);
+        assert_eq!(k.to_config_str(), None);
+    }
+
+    #[test]
+    fn sort_key_none_maps_to_scanner_order() {
+        let k = SortKey::from_config(None);
+        assert_eq!(k, SortKey::ScannerOrder);
     }
 }

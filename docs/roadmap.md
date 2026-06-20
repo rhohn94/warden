@@ -100,6 +100,17 @@ exits are immediately visible.
 - App list search: live text-filter field above the app list; Escape clears (Issue #26)
 - Crash detection: `AppStatus::Crashed` variant; scanner distinguishes user-stop from unexpected exit; red badge + notification + history entry (Issue #27)
 
+## v1.2 — Fleet Control
+
+One-click fleet-wide control and at-a-glance status for operators running many
+apps, built on the hardened v1.1 foundation. No new dependencies.
+
+**Scope:**
+- Bulk Start / Stop / Restart over the visible app list, skipping already-correct/in-flight apps (Issue #42)
+- Fleet health summary bar with live Running/Stopped/Crashed/Unknown counts (Issue #43)
+- Sort & group controls (Default / Name / Status / Port), persisted to config (Issue #44)
+- Auto-start-on-launch: per-app flag, starts once when first seen Stopped/Crashed (Issue #45)
+
 ## v1.1 — Hardened Foundation
 
 Reliability release closing four confirmed correctness gaps so Warden is a
