@@ -100,6 +100,16 @@ exits are immediately visible.
 - App list search: live text-filter field above the app list; Escape clears (Issue #26)
 - Crash detection: `AppStatus::Crashed` variant; scanner distinguishes user-stop from unexpected exit; red badge + notification + history entry (Issue #27)
 
+## v1.0.1 — Stability fixes
+
+Patch release resolving three operator-facing defects in process control,
+list ordering, and version display.
+
+**Scope:**
+- Stop-hang fix: dispatch tasks release the `AppState` lock before the blocking `history.save()` disk write so the render thread is never starved (Issue #35)
+- Stable list order: concurrent detector results are sorted by app name so the running-apps list no longer reshuffles each scan cycle (Issue #36)
+- Version display for `current/` layouts: read `grimoire-build-info.json` from the versioned `current/` symlink dir when absent at the app root (Issue #37)
+
 ## v1.0 — Changelog Visibility
 
 Shows Warden's own release history inside the app: a clickable version label in the header opens a scrollable changelog window with Aura card surfaces for each release.
