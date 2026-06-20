@@ -135,8 +135,11 @@ pub struct App {
     changelog_open: bool,
 
     // ── Fleet Control (#42–#45) ───────────────────────────────────────────────
-    /// Guard that ensures auto-start dispatch fires exactly once per session.
-    did_autostart: bool,
+    /// Names of apps already auto-started this session — each flagged app is
+    /// auto-started at most once, the first time it is seen definitively
+    /// Stopped/Crashed (so a slow first scan that reports Unknown does not skip
+    /// it permanently, and an already-Running app is never double-started).
+    autostarted: HashSet<String>,
 }
 
 impl App {
@@ -173,7 +176,7 @@ impl App {
             search_query: String::new(),
             changelog_entries: crate::changelog::changelog_entries(),
             changelog_open: false,
-            did_autostart: false,
+            autostarted: HashSet::new(),
         }
     }
 
@@ -336,6 +339,9 @@ impl App {
         let mut pending_open: Option<u16> = None;
         // Pending bulk action — (action, target entries) collected inside the panel, applied after.
         let mut pending_bulk: Option<(BulkAction, Vec<AppEntry>)> = None;
+        // Pending auto-start dispatches — kept separate from pending_bulk so a user's
+        // bulk-button click on the same frame is never clobbered by auto-start.
+        let mut pending_autostart: Vec<AppEntry> = Vec::new();
         // Pending auto-start toggle from the details panel — (entry_name, new_enabled).
         let mut pending_autostart_toggle: Option<(String, bool)> = None;
 
@@ -453,8 +459,9 @@ impl App {
                             .hint_text("Filter apps…"),
                     );
                     ui.add_space(golden::SPACE[2]);
-                    // Sort key selector — Name / Status / Port.
+                    // Sort key selector — Default (scanner order) / Name / Status / Port.
                     let sort_items = vec![
+                        ButtonGroupItem::label("Default"),
                         ButtonGroupItem::label("Name"),
                         ButtonGroupItem::label("Status"),
                         ButtonGroupItem::label("Port"),
@@ -496,34 +503,25 @@ impl App {
                     }
                 }
 
-                // ── Auto-start on first populated scan (#45) ──────────────────
-                // Fire exactly once per session, after entries are non-empty.
-                if !self.did_autostart && !entries.is_empty() {
-                    let auto_names: Vec<String> = self.config.auto_start
-                        .as_ref()
-                        .cloned()
-                        .unwrap_or_default();
-                    // Collect entries that need auto-start (not already running, not in-flight).
-                    let autostart_entries: Vec<AppEntry> = entries.iter()
-                        .filter(|e| {
-                            if !auto_names.contains(&e.name) { return false; }
-                            let status = statuses.get(&e.dir).map(|(s, _)| s);
-                            let already_running = matches!(status, Some(AppStatus::Running { .. }));
-                            let is_in_flight = in_flight.contains(&e.dir);
-                            !already_running && !is_in_flight
-                        })
-                        .cloned()
-                        .collect();
-                    // Collect into pending_bulk so dispatch happens after the panel (borrow rules).
-                    if !autostart_entries.is_empty() {
-                        // Use a special bulk Start action for auto-starts.
-                        pending_bulk = Some((BulkAction::Start, autostart_entries));
+                // ── Auto-start flagged apps (#45) ─────────────────────────────
+                // Start each flagged app the first time it is seen definitively
+                // Stopped/Crashed. `autostart_targets` excludes Running/Unknown so a
+                // still-running app whose detector hasn't resolved is never double-
+                // started; the per-app `autostarted` set makes each fire exactly once
+                // while surviving a slow first scan. Dispatch happens after the panel.
+                {
+                    let auto_names = self.config.auto_start.clone().unwrap_or_default();
+                    let targets = autostart_targets(
+                        &entries,
+                        &statuses,
+                        &in_flight,
+                        &auto_names,
+                        &self.autostarted,
+                    );
+                    for e in &targets {
+                        self.autostarted.insert(e.name.clone());
                     }
-                    // Mark done whether or not there was anything to start.
-                    // We set the flag after the panel so we can still use pending_bulk above;
-                    // store the intent here and flip the flag after the panel.
-                    // Actually, flip it in a local and apply after; for simplicity set directly:
-                    self.did_autostart = true;
+                    pending_autostart.extend(targets);
                 }
 
                 // ── App rows ─────────────────────────────────────────────────
@@ -598,6 +596,12 @@ impl App {
                     }
                 }
             }
+        }
+
+        // Apply auto-start dispatches (#45) — independent of pending_bulk so a
+        // user's bulk-button press on the same frame is preserved.
+        for entry in pending_autostart {
+            self.dispatch_start(entry);
         }
 
         // Apply auto-start toggle from details panel (#45).
@@ -1426,6 +1430,36 @@ pub fn bulk_targets(
         .collect()
 }
 
+/// Select flagged apps eligible for auto-start.
+///
+/// An app is eligible only when it is flagged in `auto_names`, has not already
+/// been auto-started this session (`already_started`), is not in-flight, and is
+/// seen *definitively* `Stopped` or `Crashed`. An `Unknown` or absent status is
+/// treated as ineligible so an already-running app whose detector has not yet
+/// resolved is never double-started.
+pub fn autostart_targets(
+    entries: &[AppEntry],
+    statuses: &HashMap<PathBuf, (AppStatus, PortInfo)>,
+    in_flight: &HashSet<PathBuf>,
+    auto_names: &[String],
+    already_started: &HashSet<String>,
+) -> Vec<AppEntry> {
+    entries
+        .iter()
+        .filter(|e| {
+            if !auto_names.contains(&e.name) || already_started.contains(&e.name) {
+                return false;
+            }
+            if in_flight.contains(&e.dir) {
+                return false;
+            }
+            let status = statuses.get(&e.dir).map(|(s, _)| s);
+            matches!(status, Some(AppStatus::Stopped) | Some(AppStatus::Crashed))
+        })
+        .cloned()
+        .collect()
+}
+
 /// Aggregated status counts across the fleet, used for the health summary bar.
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct StatusCounts {
@@ -1504,22 +1538,25 @@ impl SortKey {
         }
     }
 
-    /// Map from the ButtonGroup index (0 = Name, 1 = Status, 2 = Port).
+    /// Map from the ButtonGroup index (0 = Default/scanner, 1 = Name, 2 = Status, 3 = Port).
+    /// Bijective with `to_button_index` so the highlighted button always matches state
+    /// and every key — including ScannerOrder — is reachable from a button.
     pub fn from_button_index(idx: usize) -> Self {
         match idx {
-            0 => SortKey::Name,
-            1 => SortKey::Status,
-            2 => SortKey::Port,
+            1 => SortKey::Name,
+            2 => SortKey::Status,
+            3 => SortKey::Port,
             _ => SortKey::ScannerOrder,
         }
     }
 
-    /// Map to the ButtonGroup selection index. ScannerOrder highlights Name (index 0).
+    /// Map to the ButtonGroup selection index (inverse of `from_button_index`).
     pub fn to_button_index(self) -> usize {
         match self {
-            SortKey::ScannerOrder | SortKey::Name => 0,
-            SortKey::Status => 1,
-            SortKey::Port => 2,
+            SortKey::ScannerOrder => 0,
+            SortKey::Name => 1,
+            SortKey::Status => 2,
+            SortKey::Port => 3,
         }
     }
 
@@ -2079,13 +2116,6 @@ mod tests {
         }
     }
 
-    #[allow(dead_code)]
-    fn status_map(entries: &[(AppEntry, AppStatus, Option<u16>)]) -> HashMap<PathBuf, (AppStatus, PortInfo)> {
-        entries.iter().map(|(e, s, p)| {
-            (e.dir.clone(), (s.clone(), PortInfo { port: *p, ..Default::default() }))
-        }).collect()
-    }
-
     // ── bulk_targets (#42) ───────────────────────────────────────────────────
 
     #[test]
@@ -2142,6 +2172,92 @@ mod tests {
         assert!(bulk_targets(&entries, &statuses, &in_flight, BulkAction::Start).is_empty());
         assert!(bulk_targets(&entries, &statuses, &in_flight, BulkAction::Stop).is_empty());
         assert!(bulk_targets(&entries, &statuses, &in_flight, BulkAction::Restart).is_empty());
+    }
+
+    #[test]
+    fn bulk_start_includes_crashed() {
+        // A Crashed app must be a Start target so the operator can recover it.
+        let cr = make_entry("crashed-app");
+        let entries = vec![cr.clone()];
+        let mut statuses = HashMap::new();
+        statuses.insert(cr.dir.clone(), (AppStatus::Crashed, PortInfo::default()));
+        let targets = bulk_targets(&entries, &statuses, &HashSet::new(), BulkAction::Start);
+        assert_eq!(targets.len(), 1);
+        assert_eq!(targets[0].name, "crashed-app");
+    }
+
+    // ── autostart_targets (#45) ──────────────────────────────────────────────
+
+    #[test]
+    fn autostart_includes_stopped_and_crashed_only() {
+        let stopped = make_entry("stopped");
+        let crashed = make_entry("crashed");
+        let running = make_entry("running");
+        let unknown = make_entry("unknown");
+        let entries = vec![stopped.clone(), crashed.clone(), running.clone(), unknown.clone()];
+        let mut statuses = HashMap::new();
+        statuses.insert(stopped.dir.clone(), (AppStatus::Stopped, PortInfo::default()));
+        statuses.insert(crashed.dir.clone(), (AppStatus::Crashed, PortInfo::default()));
+        statuses.insert(running.dir.clone(), (AppStatus::Running { pid: 1 }, PortInfo::default()));
+        statuses.insert(unknown.dir.clone(), (AppStatus::Unknown, PortInfo::default()));
+        // All four are flagged for auto-start.
+        let flagged: Vec<String> = vec!["stopped", "crashed", "running", "unknown"]
+            .into_iter().map(String::from).collect();
+        let targets = autostart_targets(&entries, &statuses, &HashSet::new(), &flagged, &HashSet::new());
+        let names: Vec<&str> = targets.iter().map(|e| e.name.as_str()).collect();
+        assert!(names.contains(&"stopped"));
+        assert!(names.contains(&"crashed"));
+        // Running must NEVER be auto-started; Unknown is ineligible (detector may be unresolved).
+        assert!(!names.contains(&"running"), "must not double-start a running app");
+        assert!(!names.contains(&"unknown"), "Unknown status must be ineligible");
+        assert_eq!(targets.len(), 2);
+    }
+
+    #[test]
+    fn autostart_excludes_unflagged_in_flight_and_already_started() {
+        let a = make_entry("flagged-stopped");
+        let b = make_entry("unflagged-stopped");
+        let c = make_entry("flagged-inflight");
+        let d = make_entry("flagged-already");
+        let entries = vec![a.clone(), b.clone(), c.clone(), d.clone()];
+        let mut statuses = HashMap::new();
+        for e in [&a, &b, &c, &d] {
+            statuses.insert(e.dir.clone(), (AppStatus::Stopped, PortInfo::default()));
+        }
+        let flagged: Vec<String> = vec!["flagged-stopped", "flagged-inflight", "flagged-already"]
+            .into_iter().map(String::from).collect();
+        let mut in_flight = HashSet::new();
+        in_flight.insert(c.dir.clone());
+        let mut already = HashSet::new();
+        already.insert("flagged-already".to_string());
+        let targets = autostart_targets(&entries, &statuses, &in_flight, &flagged, &already);
+        assert_eq!(targets.len(), 1);
+        assert_eq!(targets[0].name, "flagged-stopped");
+    }
+
+    #[test]
+    fn autostart_absent_status_is_ineligible() {
+        // No status entry at all (e.g. brand-new scan) must not auto-start.
+        let e = make_entry("no-status");
+        let entries = vec![e.clone()];
+        let flagged = vec!["no-status".to_string()];
+        let targets = autostart_targets(&entries, &HashMap::new(), &HashSet::new(), &flagged, &HashSet::new());
+        assert!(targets.is_empty());
+    }
+
+    // ── SortKey button-index mapping (#44) ───────────────────────────────────
+
+    #[test]
+    fn sort_key_button_index_is_bijective() {
+        for key in [SortKey::ScannerOrder, SortKey::Name, SortKey::Status, SortKey::Port] {
+            assert_eq!(SortKey::from_button_index(key.to_button_index()), key);
+        }
+        for idx in 0..4usize {
+            assert_eq!(SortKey::from_button_index(idx).to_button_index(), idx);
+        }
+        // Default/scanner order is index 0 and reachable from a button.
+        assert_eq!(SortKey::ScannerOrder.to_button_index(), 0);
+        assert_eq!(SortKey::from_button_index(0), SortKey::ScannerOrder);
     }
 
     // ── count_statuses (#43) ─────────────────────────────────────────────────
