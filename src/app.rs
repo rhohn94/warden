@@ -140,17 +140,41 @@ pub struct App {
     /// Stopped/Crashed (so a slow first scan that reports Unknown does not skip
     /// it permanently, and an already-Running app is never double-started).
     autostarted: HashSet<String>,
+
+    // ── What's new badge (#47) ────────────────────────────────────────────────
+    /// True when the app has been upgraded since the last run and the user
+    /// has not yet dismissed the badge or opened the changelog.
+    show_whats_new: bool,
 }
 
 impl App {
     pub fn new(
         state: Arc<Mutex<AppState>>,
-        config: Config,
+        mut config: Config,
         scanner_rx: watch::Receiver<crate::scanner::ScanResult>,
         force_scan_tx: watch::Sender<()>,
         launcher: Arc<tokio::sync::Mutex<Launcher>>,
         runtime_handle: tokio::runtime::Handle,
     ) -> Self {
+        // ── What's new badge logic (#47) ─────────────────────────────────────
+        // Compare the stored last_seen_version to the current binary version.
+        // - None (first run): record the current version silently, no badge.
+        // - Some(old) and old != VERSION: show the badge.
+        // - Some(old) and old == VERSION: no badge (already seen this version).
+        let current_version = crate::changelog::VERSION;
+        let show_whats_new = match &config.last_seen_version {
+            None => {
+                // First run: record silently, no badge.
+                config.last_seen_version = Some(current_version.to_string());
+                if let Err(e) = config.save() {
+                    tracing::warn!("failed to save config on first run version record: {}", e);
+                }
+                false
+            }
+            Some(last) if last != current_version => true,
+            _ => false,
+        };
+
         App {
             wgpu_instance: wgpu::Instance::new(&wgpu::InstanceDescriptor {
                 backends: wgpu::Backends::all(),
@@ -177,6 +201,7 @@ impl App {
             changelog_entries: crate::changelog::changelog_entries(),
             changelog_open: false,
             autostarted: HashSet::new(),
+            show_whats_new,
         }
     }
 
@@ -386,6 +411,23 @@ impl App {
                 ).sense(egui::Sense::click())).clicked() {
                     self.changelog_open = true;
                 }
+                // ── What's new badge (#47) ────────────────────────────────────
+                if self.show_whats_new {
+                    let badge_text = format!("Updated to v{} — what's new?", crate::changelog::VERSION);
+                    if ui.add(egui::Label::new(
+                        egui::RichText::new(&badge_text)
+                            .color(golden::TEXT)
+                            .size(golden::TEXT_SM)
+                            .strong()
+                    ).sense(egui::Sense::click())).clicked() {
+                        self.changelog_open = true;
+                        self.show_whats_new = false;
+                        self.config.last_seen_version = Some(crate::changelog::VERSION.to_string());
+                        if let Err(e) = self.config.save() {
+                            tracing::warn!("failed to save config after what's-new dismiss: {}", e);
+                        }
+                    }
+                }
                 ui.add_space(golden::SPACE[2]); // SPACE_2 = 8px
                 let dirs_label = if apps_dirs.len() == 1 {
                     apps_dirs[0].to_string_lossy().into_owned()
@@ -453,9 +495,11 @@ impl App {
                 }
 
                 // ── Search / live filter + sort controls (#44) ────────────────
+                let filter_id = egui::Id::new("app_list_filter");
                 ui.horizontal(|ui| {
                     ui.add(
                         egui::TextEdit::singleline(&mut self.search_query)
+                            .id(filter_id)
                             .hint_text("Filter apps…"),
                     );
                     ui.add_space(golden::SPACE[2]);
@@ -485,6 +529,32 @@ impl App {
                     ctx.memory_mut(|m| m.surrender_focus(egui::Id::NULL));
                 }
 
+                // ── Keyboard shortcuts (#50) ─────────────────────────────────
+                // Detect whether the filter TextEdit currently has keyboard focus.
+                let filter_focused = ctx.memory(|m| m.has_focus(filter_id));
+                // Collect all actions triggered this frame.
+                let shortcut_actions: Vec<ShortcutAction> = ctx.input(|i| {
+                    i.events.iter().filter_map(|e| {
+                        if let egui::Event::Key { key, pressed: true, .. } = e {
+                            key_to_action(*key, filter_focused)
+                        } else {
+                            None
+                        }
+                    }).collect()
+                });
+                for action in &shortcut_actions {
+                    match action {
+                        ShortcutAction::FocusFilter => {
+                            ctx.memory_mut(|m| m.request_focus(filter_id));
+                        }
+                        ShortcutAction::ScanNow => {
+                            let _ = self.force_scan_tx.send(());
+                        }
+                        // SelectNext/SelectPrev are applied after `filtered` is built below.
+                        ShortcutAction::SelectNext | ShortcutAction::SelectPrev => {}
+                    }
+                }
+
                 // Build filtered + sorted entry list.
                 let total_count = entries.len();
                 let active_query = self.search_query.trim().to_lowercase();
@@ -500,6 +570,33 @@ impl App {
                 if let Some(ref sel_path) = current_selected {
                     if !filtered.iter().any(|e| &e.dir == sel_path) {
                         pending_select = Some(None);
+                    }
+                }
+
+                // Apply SelectNext/SelectPrev shortcuts now that `filtered` is available.
+                for action in &shortcut_actions {
+                    match action {
+                        ShortcutAction::SelectNext | ShortcutAction::SelectPrev => {
+                            if !filtered.is_empty() {
+                                let current_idx = current_selected.as_ref().and_then(|sel| {
+                                    filtered.iter().position(|e| &e.dir == sel)
+                                });
+                                let next_idx = match action {
+                                    ShortcutAction::SelectNext => match current_idx {
+                                        None => 0,
+                                        Some(i) => (i + 1) % filtered.len(),
+                                    },
+                                    ShortcutAction::SelectPrev => match current_idx {
+                                        None => filtered.len().saturating_sub(1),
+                                        Some(0) => filtered.len() - 1,
+                                        Some(i) => i - 1,
+                                    },
+                                    _ => unreachable!(),
+                                };
+                                pending_select = Some(Some(filtered[next_idx].dir.clone()));
+                            }
+                        }
+                        _ => {}
                     }
                 }
 
@@ -658,11 +755,38 @@ impl App {
                             ));
                             ui.add_space(golden::SPACE[2]);
                             for bullet in &entry.bullets {
-                                ui.label(
-                                    egui::RichText::new(format!("• {}", bullet))
-                                        .color(golden::TEXT_MUTED)
-                                        .size(golden::TEXT_SM),
-                                );
+                                // Render the bullet prefix then inline spans for **bold** and `code` (#48).
+                                ui.horizontal_wrapped(|ui| {
+                                    ui.label(
+                                        egui::RichText::new("• ")
+                                            .color(golden::TEXT_MUTED)
+                                            .size(golden::TEXT_SM),
+                                    );
+                                    let spans = crate::changelog::parse_inline(bullet);
+                                    for span in spans {
+                                        if span.bold {
+                                            ui.label(
+                                                egui::RichText::new(&span.text)
+                                                    .color(golden::TEXT_MUTED)
+                                                    .size(golden::TEXT_SM)
+                                                    .strong(),
+                                            );
+                                        } else if span.code {
+                                            ui.label(
+                                                egui::RichText::new(&span.text)
+                                                    .color(golden::TEXT_MUTED)
+                                                    .size(golden::TEXT_SM)
+                                                    .monospace(),
+                                            );
+                                        } else {
+                                            ui.label(
+                                                egui::RichText::new(&span.text)
+                                                    .color(golden::TEXT_MUTED)
+                                                    .size(golden::TEXT_SM),
+                                            );
+                                        }
+                                    }
+                                });
                             }
                         });
                         if i + 1 < count {
@@ -695,6 +819,35 @@ impl App {
         total_count: usize,
         active_query: &str,
     ) {
+        // ── Empty & error states (#49) ────────────────────────────────────────
+        // Missing watched directory notice.
+        for dir in apps_dirs {
+            if !dir.exists() {
+                ui.label(
+                    egui::RichText::new(format!("Watched directory not found: {}", dir.display()))
+                        .color(golden::TEXT_MUTED)
+                        .size(golden::TEXT_SM),
+                );
+            }
+        }
+        // Empty list: distinguish no-apps vs no-match.
+        if entries.is_empty() {
+            ui.add_space(golden::SPACE[3]);
+            if active_query.is_empty() {
+                ui.label(
+                    egui::RichText::new("No apps discovered yet.")
+                        .color(golden::TEXT_MUTED)
+                        .size(golden::TEXT_SM),
+                );
+            } else {
+                ui.label(
+                    egui::RichText::new(format!("No apps match \"{}\".", active_query))
+                        .color(golden::TEXT_MUTED)
+                        .size(golden::TEXT_SM),
+                );
+            }
+        }
+
         for entry in entries {
             let (ref status, ref port_info) = statuses
                 .get(&entry.dir)
@@ -1633,6 +1786,40 @@ pub fn aggregate_log_lines(
     out
 }
 
+// ── Keyboard shortcuts (#50) ─────────────────────────────────────────────────
+
+/// Actions that can be triggered by a keyboard shortcut in the app list view.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ShortcutAction {
+    /// Focus the filter TextEdit (`/`).
+    FocusFilter,
+    /// Trigger an immediate scan (`r`).
+    ScanNow,
+    /// Move selection to the next app in the visible list (`j`).
+    SelectNext,
+    /// Move selection to the previous app in the visible list (`k`).
+    SelectPrev,
+}
+
+/// Map a raw key press to a `ShortcutAction`.
+///
+/// Returns `None` when `filter_focused` is true (so typing in the filter field
+/// is never intercepted) or when the key has no binding.
+///
+/// Bindings: `/` → FocusFilter; `r` → ScanNow; `j` → SelectNext; `k` → SelectPrev.
+pub fn key_to_action(key: egui::Key, filter_focused: bool) -> Option<ShortcutAction> {
+    if filter_focused {
+        return None;
+    }
+    match key {
+        egui::Key::Slash => Some(ShortcutAction::FocusFilter),
+        egui::Key::R => Some(ShortcutAction::ScanNow),
+        egui::Key::J => Some(ShortcutAction::SelectNext),
+        egui::Key::K => Some(ShortcutAction::SelectPrev),
+        _ => None,
+    }
+}
+
 /// Format a duration in seconds as a human-readable uptime string.
 /// Examples: "5s", "3m", "1h 5m".
 fn format_uptime(secs: u64) -> String {
@@ -2370,6 +2557,47 @@ mod tests {
         // dir "/tmp/apps/a/app" < "/tmp/apps/b/app" lexicographically
         assert_eq!(sorted[0].dir, PathBuf::from("/tmp/apps/a/app"));
         assert_eq!(sorted[1].dir, PathBuf::from("/tmp/apps/b/app"));
+    }
+
+    // ── key_to_action (#50) ──────────────────────────────────────────────────
+
+    #[test]
+    fn key_to_action_slash_focuses_filter() {
+        assert_eq!(key_to_action(egui::Key::Slash, false), Some(ShortcutAction::FocusFilter));
+    }
+
+    #[test]
+    fn key_to_action_r_scans() {
+        assert_eq!(key_to_action(egui::Key::R, false), Some(ShortcutAction::ScanNow));
+    }
+
+    #[test]
+    fn key_to_action_j_selects_next() {
+        assert_eq!(key_to_action(egui::Key::J, false), Some(ShortcutAction::SelectNext));
+    }
+
+    #[test]
+    fn key_to_action_k_selects_prev() {
+        assert_eq!(key_to_action(egui::Key::K, false), Some(ShortcutAction::SelectPrev));
+    }
+
+    #[test]
+    fn key_to_action_suppressed_when_filter_focused() {
+        // All keys return None when the filter has focus.
+        for key in [egui::Key::Slash, egui::Key::R, egui::Key::J, egui::Key::K] {
+            assert_eq!(
+                key_to_action(key, true),
+                None,
+                "key {:?} must be suppressed when filter is focused",
+                key
+            );
+        }
+    }
+
+    #[test]
+    fn key_to_action_unbound_key_returns_none() {
+        assert_eq!(key_to_action(egui::Key::A, false), None);
+        assert_eq!(key_to_action(egui::Key::Escape, false), None);
     }
 
     // ── SortKey parse/serialise round-trip ───────────────────────────────────
