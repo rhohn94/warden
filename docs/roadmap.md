@@ -100,6 +100,18 @@ exits are immediately visible.
 - App list search: live text-filter field above the app list; Escape clears (Issue #26)
 - Crash detection: `AppStatus::Crashed` variant; scanner distinguishes user-stop from unexpected exit; red badge + notification + history entry (Issue #27)
 
+## v1.3 — Polish & Carryovers
+
+Clears deferred v1.0/v1.1 debt and rounds off the operator UX: one latent-OOM
+fix plus four quality-of-life items. No new dependencies.
+
+**Scope:**
+- Bounded log channels — fixed-capacity channel, drop-on-overflow, removing the unbounded-growth OOM (Issue #46)
+- "What's new" badge after a version bump, opening the changelog (Issue #47)
+- Markdown (`**bold**` / `` `code` ``) rendering in the changelog viewer (Issue #48)
+- Empty & error states for the app list (no apps / no match / missing dir) (Issue #49)
+- Keyboard shortcuts: `/` filter, `r` scan, `j`/`k` selection (Issue #50)
+
 ## v1.2 — Fleet Control
 
 One-click fleet-wide control and at-a-glance status for operators running many
