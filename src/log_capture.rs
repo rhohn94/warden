@@ -2,6 +2,11 @@
 use std::collections::VecDeque;
 use tokio::sync::mpsc;
 
+/// Bounded channel capacity for the log streaming channel.
+/// Lines are dropped (not buffered without bound) when the render thread
+/// falls behind. The ring buffer downstream is separately bounded.
+pub const LOG_CHANNEL_CAPACITY: usize = 1024;
+
 /// Receives log lines from a child process stdout/stderr pipe.
 /// Capacity-bounded: oldest lines are dropped when the buffer is full.
 pub struct LogCapture {
@@ -43,16 +48,17 @@ impl LogCapture {
 }
 
 /// Sender half for streaming log lines from a child-process reader task.
-pub type LogSender = mpsc::UnboundedSender<String>;
+pub type LogSender = mpsc::Sender<String>;
 
 /// Receiver half polled in the egui frame loop.
-pub type LogReceiver = mpsc::UnboundedReceiver<String>;
+pub type LogReceiver = mpsc::Receiver<String>;
 
-/// Creates a channel pair for streaming log lines.
+/// Creates a bounded channel pair for streaming log lines.
 /// The sender goes to the child-process reader task; the receiver is polled
-/// in the egui frame loop via `try_recv()`.
+/// in the egui frame loop via `try_recv()`. When the channel is full, lines
+/// are dropped at the sender rather than growing without bound.
 pub fn log_channel() -> (LogSender, LogReceiver) {
-    mpsc::unbounded_channel()
+    mpsc::channel(LOG_CHANNEL_CAPACITY)
 }
 
 #[cfg(test)]
@@ -89,6 +95,24 @@ mod tests {
         cap.push("z".to_string());
         assert_eq!(cap.len(), 3);
         assert_eq!(cap.lines(), vec!["x", "y", "z"]);
+    }
+
+    #[test]
+    fn test_log_channel_is_bounded() {
+        // Fill the channel to capacity via try_send, then verify the next send
+        // returns Full rather than growing the channel without bound.
+        let (tx, _rx) = log_channel();
+        for i in 0..LOG_CHANNEL_CAPACITY {
+            tx.try_send(format!("line {}", i))
+                .expect("send within capacity must succeed");
+        }
+        // Channel is now at capacity; the next try_send must return Full.
+        let result = tx.try_send("overflow".to_string());
+        assert!(
+            matches!(result, Err(tokio::sync::mpsc::error::TrySendError::Full(_))),
+            "expected Full error when channel is at capacity, got {:?}",
+            result
+        );
     }
 
     #[test]

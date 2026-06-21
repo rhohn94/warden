@@ -1,5 +1,13 @@
 # Version history
 
+## v1.3.0 (2026-06-21)
+
+- Bounded log channels: the per-app log stream now uses a fixed-capacity channel that drops the oldest lines under a burst instead of growing memory without limit — a chatty child process can no longer balloon Warden's memory (the on-screen log tail was already bounded; the channel feeding it now is too)
+- "What's new" badge: after an upgrade, the header shows an "Updated to v{X.Y} — what's new?" affordance that opens the changelog; it persists the seen version so it appears once per upgrade and never on a fresh install
+- Markdown in the changelog: changelog bullets now render `**bold**` and `` `code` `` inline styling in the viewer window
+- Empty & error states: the app list shows a friendly message when no apps are discovered, when a filter matches nothing, or when a watched directory is missing — no more blank panel
+- Keyboard shortcuts: `/` focuses the filter, `r` triggers a scan, and `j`/`k` move the row selection; shortcuts are suppressed while you are typing in the filter
+
 ## v1.2.0 (2026-06-20)
 
 - Bulk fleet actions: `Start all` / `Stop all` / `Restart all` buttons in the Apps-view toolbar act on the currently visible (filtered) apps at once, skipping any already in the target state or mid-operation — bringing a whole environment up or down is now one click instead of one-per-app
