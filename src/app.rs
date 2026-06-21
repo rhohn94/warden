@@ -1229,11 +1229,15 @@ impl App {
                 l.start(&entry).await
             };
             // Bridge lines from the child process's reader to the render-thread receiver.
+            // On a full channel the line is dropped; on a closed receiver the task exits.
             if let Some(mut lrx) = process_log_rx {
                 tokio::spawn(async move {
+                    use tokio::sync::mpsc::error::TrySendError;
                     while let Some(line) = lrx.recv().await {
-                        if log_tx.send(line).is_err() {
-                            break; // Receiver dropped (e.g. app entry removed).
+                        match log_tx.try_send(line) {
+                            Ok(()) => {}
+                            Err(TrySendError::Full(_)) => {} // Drop; never block on full buffer.
+                            Err(TrySendError::Closed(_)) => break, // Receiver gone.
                         }
                     }
                 });
@@ -1313,11 +1317,15 @@ impl App {
                 l.restart(&entry, pid).await
             };
             // Bridge lines from the restarted child process to the render thread.
+            // On a full channel the line is dropped; on a closed receiver the task exits.
             if let Some(mut lrx) = process_log_rx {
                 tokio::spawn(async move {
+                    use tokio::sync::mpsc::error::TrySendError;
                     while let Some(line) = lrx.recv().await {
-                        if log_tx.send(line).is_err() {
-                            break;
+                        match log_tx.try_send(line) {
+                            Ok(()) => {}
+                            Err(TrySendError::Full(_)) => {} // Drop; never block on full buffer.
+                            Err(TrySendError::Closed(_)) => break, // Receiver gone.
                         }
                     }
                 });

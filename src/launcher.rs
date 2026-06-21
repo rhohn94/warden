@@ -185,15 +185,20 @@ impl Launcher {
 }
 
 /// Spawns an async task that reads lines from `reader` and forwards them to `tx`.
+/// On a full channel the line is dropped (log tail tolerates loss).
+/// On a closed receiver the task exits cleanly.
 fn spawn_line_reader<R>(reader: BufReader<R>, tx: LogSender)
 where
     R: tokio::io::AsyncRead + Unpin + Send + 'static,
 {
+    use tokio::sync::mpsc::error::TrySendError;
     tokio::spawn(async move {
         let mut lines = reader.lines();
         while let Ok(Some(line)) = lines.next_line().await {
-            if tx.send(line).is_err() {
-                break; // Receiver dropped (app stopped).
+            match tx.try_send(line) {
+                Ok(()) => {}
+                Err(TrySendError::Full(_)) => {} // Drop the line; never block the child reader.
+                Err(TrySendError::Closed(_)) => break, // Receiver gone; exit.
             }
         }
     });
