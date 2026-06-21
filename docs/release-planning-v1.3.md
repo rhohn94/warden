@@ -116,19 +116,27 @@ cohesive bundle touching the `App` struct, `draw_ui`, `draw_changelog`, and
 
 | Branch | Implemented | Reviewed | Merged into version/1.3 |
 |---|---|---|---|
-| `warden/v1.3-bounded-log-channels` (#46) | ☐ | ☐ | ☐ |
-| `warden/v1.3-ui-polish` (#47–#50) | ☐ | ☐ | ☐ |
+| `warden/v1.3-bounded-log-channels` (#46) | ☑ | ☑ | ☑ |
+| `warden/v1.3-ui-polish` (#47–#50) | ☑ | ☑ | ☑ |
 
 ### Release
 
 | Step | Status |
 |---|---|
-| Version bump (`Cargo.toml` 1.2.0 → 1.3.0) | ☐ |
-| `version-history.md` entry | ☐ |
-| `roadmap.md` v1.3 section | ☐ |
+| Version bump (`Cargo.toml` 1.2.0 → 1.3.0) | ☑ |
+| `version-history.md` entry | ☑ |
+| `roadmap.md` v1.3 section | ☑ |
 | project-release (merge + tag + push) | ☐ |
 | Issues #46–#50 closed | ☐ |
 
 ### Follow-ups discovered during implementation
 
-_(empty at start)_
+- Reviewed via two read-only reviewer agents (sonnet), one per lane. #46 clean.
+  One blocking finding on #47 — **folded in before release**: opening the
+  changelog via the header version label did not dismiss/persist the what's-new
+  badge (only the badge itself did), so it would reappear next launch. Fixed by a
+  shared `acknowledge_whats_new` helper called from both paths.
+- Deferred (non-blocking, latent): the keyboard-shortcut suppression checks only
+  the app-list filter's focus; if a future text field is added elsewhere, widen
+  the focus check so `/`/`r` don't fire while typing in it. No other text field
+  exists today.
