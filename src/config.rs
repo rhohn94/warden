@@ -23,6 +23,9 @@ pub struct Config {
     pub sort_order: Option<String>,
     /// App names to start automatically on first populated scan
     pub auto_start: Option<Vec<String>>,
+    /// Last version string seen by the user; used to show "what's new" badge on upgrade.
+    /// None means first run — badge is suppressed and the current version is recorded.
+    pub last_seen_version: Option<String>,
 }
 
 impl Default for Config {
@@ -36,6 +39,7 @@ impl Default for Config {
             perf: Some(PerfConfig::default()),
             sort_order: None,
             auto_start: Some(vec![]),
+            last_seen_version: None,
         }
     }
 }
@@ -183,6 +187,7 @@ mod tests {
             perf: None,
             sort_order: None,
             auto_start: None,
+            last_seen_version: None,
         };
         cfg.save_to(&path).unwrap();
 
@@ -246,6 +251,7 @@ mod tests {
             perf: Some(PerfConfig { frame_warn_ms: Some(100) }),
             sort_order: None,
             auto_start: None,
+            last_seen_version: None,
         };
         assert_eq!(cfg.frame_warn_ms(), 100);
     }
@@ -261,6 +267,7 @@ mod tests {
             perf: None,
             sort_order: None,
             auto_start: None,
+            last_seen_version: None,
         };
         assert_eq!(cfg.frame_warn_ms(), 50);
     }
@@ -321,6 +328,7 @@ mod tests {
             perf: None,
             sort_order: None,
             auto_start: None,
+            last_seen_version: None,
         };
         cfg.sanitize();
         assert_eq!(cfg.refresh_secs, None);
@@ -354,6 +362,7 @@ mod tests {
             perf: None,
             sort_order: Some("status".to_string()),
             auto_start: None,
+            last_seen_version: None,
         };
         cfg.save_to(&path).unwrap();
         let loaded = Config::load_from(&path);
@@ -374,6 +383,7 @@ mod tests {
             perf: None,
             sort_order: None,
             auto_start: Some(vec!["frontend".to_string(), "backend".to_string()]),
+            last_seen_version: None,
         };
         cfg.save_to(&path).unwrap();
         let loaded = Config::load_from(&path);
@@ -402,6 +412,50 @@ mod tests {
             cfg.auto_start.as_deref(),
             Some(["myapp".to_string()].as_slice()),
             "sanitize must not clobber auto_start"
+        );
+    }
+
+    // ── last_seen_version (#47) ──────────────────────────────────────────────
+
+    #[test]
+    fn test_default_last_seen_version_is_none() {
+        let cfg = Config::default();
+        assert!(cfg.last_seen_version.is_none(), "default last_seen_version must be None (first run)");
+    }
+
+    #[test]
+    fn test_last_seen_version_round_trips() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        let cfg = Config {
+            apps_dir: None,
+            refresh_secs: None,
+            notifications_enabled: None,
+            log_tail_lines: None,
+            version_check_interval_secs: None,
+            perf: None,
+            sort_order: None,
+            auto_start: None,
+            last_seen_version: Some("1.2.0".to_string()),
+        };
+        cfg.save_to(&path).unwrap();
+        let loaded = Config::load_from(&path);
+        assert_eq!(
+            loaded.last_seen_version.as_deref(),
+            Some("1.2.0"),
+            "last_seen_version must round-trip through save/load"
+        );
+    }
+
+    #[test]
+    fn test_sanitize_preserves_last_seen_version() {
+        let mut cfg = Config::default();
+        cfg.last_seen_version = Some("1.0.0".to_string());
+        cfg.sanitize();
+        assert_eq!(
+            cfg.last_seen_version.as_deref(),
+            Some("1.0.0"),
+            "sanitize must not clobber last_seen_version"
         );
     }
 }
