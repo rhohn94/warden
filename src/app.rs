@@ -320,6 +320,17 @@ impl App {
         }
     }
 
+    /// Mark the current version as seen: dismiss the "what's new" badge and
+    /// persist `last_seen_version` so it does not reappear next launch.
+    /// Idempotent — safe to call from any acknowledge path.
+    fn acknowledge_whats_new(&mut self) {
+        self.show_whats_new = false;
+        self.config.last_seen_version = Some(crate::changelog::VERSION.to_string());
+        if let Err(e) = self.config.save() {
+            tracing::warn!("failed to save config after what's-new acknowledge: {}", e);
+        }
+    }
+
     fn draw_ui(&mut self, ctx: &egui::Context) {
         // Frame-time telemetry: warn when a frame exceeds the configured threshold.
         let frame_dt_ms = ctx.input(|i| i.stable_dt) * 1000.0;
@@ -410,6 +421,9 @@ impl App {
                         .size(golden::TEXT_SM)
                 ).sense(egui::Sense::click())).clicked() {
                     self.changelog_open = true;
+                    // Opening the changelog from the version label also counts as
+                    // seeing "what's new", so dismiss and persist the badge state.
+                    self.acknowledge_whats_new();
                 }
                 // ── What's new badge (#47) ────────────────────────────────────
                 if self.show_whats_new {
@@ -421,11 +435,7 @@ impl App {
                             .strong()
                     ).sense(egui::Sense::click())).clicked() {
                         self.changelog_open = true;
-                        self.show_whats_new = false;
-                        self.config.last_seen_version = Some(crate::changelog::VERSION.to_string());
-                        if let Err(e) = self.config.save() {
-                            tracing::warn!("failed to save config after what's-new dismiss: {}", e);
-                        }
+                        self.acknowledge_whats_new();
                     }
                 }
                 ui.add_space(golden::SPACE[2]); // SPACE_2 = 8px
