@@ -126,8 +126,8 @@ cohesive bundle touching the `App` struct, `draw_ui`, `draw_changelog`, and
 | Version bump (`Cargo.toml` 1.2.0 → 1.3.0) | ☑ |
 | `version-history.md` entry | ☑ |
 | `roadmap.md` v1.3 section | ☑ |
-| project-release (merge + tag + push) | ☐ |
-| Issues #46–#50 closed | ☐ |
+| project-release (merge + tag + push) | ☑ |
+| Issues #46–#50 closed | ☑ |
 
 ### Follow-ups discovered during implementation
 
