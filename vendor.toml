@@ -11,6 +11,22 @@
 
 schema_version = 1
 
+# Aura design language — tokens-only subset. Warden is an egui app: runtime
+# token *values* are consumed via obsidian's generated Rust bindings
+# (obsidian_api::aura_generated::aura); this vendored subset is warden's own
+# Dependency Channel record of the adopted Aura release (machine-readable
+# token model + CSS custom-property reference), used for token audits and
+# future binding regeneration — the build does not read it.
+[deps.aura]
+repo = "rhohn94/design-language"
+channel = "stable"
+version = "3.541.0"
+artifact = "aura-v3.541.0.tar.gz"
+dest = "vendor/aura"
+kind = "asset-bundle"
+strip_components = 1
+extract = ["css/tokens.css", "dist/aura-tokens-meta.json"]
+
 # Example dependency (commented out — copy, uncomment, and edit per dep):
 #
 # [deps.aura]
