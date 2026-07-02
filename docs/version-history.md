@@ -1,5 +1,10 @@
 # Version history
 
+## v1.3.1 (2026-07-02)
+
+- Aura design language updated to v3.541.0: Warden now records the fleet-standard Aura release via its Dependency Channel pin (`vendor.toml [deps.aura]`), vendoring the tokens-only subset with full checksum verification
+- No visible changes: runtime token values continue to flow through obsidian's generated Rust bindings; this release aligns Warden with the 2026-07-02 fleet-wide Aura adoption wave
+
 ## v1.3.0 (2026-06-21)
 
 - Bounded log channels: the per-app log stream now uses a fixed-capacity channel that drops the oldest lines under a burst instead of growing memory without limit — a chatty child process can no longer balloon Warden's memory (the on-screen log tail was already bounded; the channel feeding it now is too)
