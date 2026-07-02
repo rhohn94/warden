@@ -1,0 +1,568 @@
+/* ==========================================================================
+   Aura — design tokens.   *** GENERATED FILE — DO NOT EDIT BY HAND ***
+
+   Generated from tokens.json by gen_tokens.py (`just tokens`). tokens.json is
+   the single source of truth for token VALUES; this file is a build output.
+   The same values feed native reimplementations (e.g. forge-gui). Edit
+   tokens.json, regenerate, and commit both.
+
+   Dark is the default theme; light overrides live in theme.css.
+   ========================================================================== */
+
+
+:root {
+  color-scheme: dark;
+
+  /* ---- The three author knobs (brand) -------------------------------- */
+  --aura-primary: #7654f5;
+  --aura-secondary: #22d3ee;
+  --aura-on-primary: #ffffff;
+
+  /* ---- Derived primary ramp (generated from tokens.json) ---------- */
+  --aura-primary-50: color-mix(in oklch, var(--aura-primary), white 82%);
+  --aura-primary-100: color-mix(in oklch, var(--aura-primary), white 68%);
+  --aura-primary-200: color-mix(in oklch, var(--aura-primary), white 50%);
+  --aura-primary-300: color-mix(in oklch, var(--aura-primary), white 32%);
+  --aura-primary-400: color-mix(in oklch, var(--aura-primary), white 16%);
+  --aura-primary-500: var(--aura-primary);  /* seed slot — alias of the base brand token (#621) */
+  --aura-primary-600: color-mix(in oklch, var(--aura-primary), black 14%);
+  --aura-primary-700: color-mix(in oklch, var(--aura-primary), black 28%);
+  --aura-primary-800: color-mix(in oklch, var(--aura-primary), black 44%);
+  --aura-primary-900: color-mix(in oklch, var(--aura-primary), black 62%);
+  --aura-primary-a10: color-mix(in srgb, var(--aura-primary) 10%, transparent);
+  --aura-primary-a15: color-mix(in srgb, var(--aura-primary) 15%, transparent);
+  --aura-primary-a25: color-mix(in srgb, var(--aura-primary) 25%, transparent);
+  --aura-primary-a40: color-mix(in srgb, var(--aura-primary) 40%, transparent);
+  --aura-primary-a60: color-mix(in srgb, var(--aura-primary) 60%, transparent);
+
+  /* ---- Derived secondary ramp (generated from tokens.json) ---------- */
+  --aura-secondary-50: color-mix(in oklch, var(--aura-secondary), white 82%);
+  --aura-secondary-100: color-mix(in oklch, var(--aura-secondary), white 68%);
+  --aura-secondary-200: color-mix(in oklch, var(--aura-secondary), white 50%);
+  --aura-secondary-300: color-mix(in oklch, var(--aura-secondary), white 32%);
+  --aura-secondary-400: color-mix(in oklch, var(--aura-secondary), white 16%);
+  --aura-secondary-500: var(--aura-secondary);  /* seed slot — alias of the base brand token (#621) */
+  --aura-secondary-600: color-mix(in oklch, var(--aura-secondary), black 14%);
+  --aura-secondary-700: color-mix(in oklch, var(--aura-secondary), black 28%);
+  --aura-secondary-800: color-mix(in oklch, var(--aura-secondary), black 44%);
+  --aura-secondary-900: color-mix(in oklch, var(--aura-secondary), black 62%);
+  --aura-secondary-a10: color-mix(in srgb, var(--aura-secondary) 10%, transparent);
+  --aura-secondary-a15: color-mix(in srgb, var(--aura-secondary) 15%, transparent);
+  --aura-secondary-a25: color-mix(in srgb, var(--aura-secondary) 25%, transparent);
+  --aura-secondary-a40: color-mix(in srgb, var(--aura-secondary) 40%, transparent);
+  --aura-secondary-a60: color-mix(in srgb, var(--aura-secondary) 60%, transparent);
+
+  /* ---- Neutrals & surfaces (DARK defaults) [semantic] */
+  /* Surfaces are translucent so the wallpaper shows through and backdrop-filter can blur it. Higher tiers = brighter glass. Light-mode overrides live in theme.css. */
+  --aura-bg: #0a0b12;
+  --aura-bg-2: #0e1019;
+  --aura-surface-1: color-mix(in srgb, white 4%, transparent);
+  --aura-surface-2: color-mix(in srgb, white 6%, transparent);
+  --aura-surface-3: color-mix(in srgb, white 9%, transparent);
+  --aura-surface-4: color-mix(in srgb, white 11%, transparent);
+  --aura-surface-5: color-mix(in srgb, white 13%, transparent);
+  --aura-surface-solid: #14161f;
+  --aura-surface-stroke: color-mix(in srgb, white 12%, transparent);
+  --aura-surface-stroke-strong: color-mix(in srgb, white 22%, transparent);
+
+  /* ---- Text colours [semantic] */
+  --aura-text: oklch(0.97 0.01 270);
+  --aura-text-muted: oklch(0.78 0.02 270);
+  --aura-text-subtle: oklch(0.62 0.02 270);
+  --aura-text-on-glass: var(--aura-text);
+
+  /* ---- Semantic colours [semantic] */
+  /* accent is the interaction-emphasis colour (active-nav indicators, focus outlines, unread dots); it defaults to the primary brand seed — same forwarding pattern as glow-color — so it re-skins with setPrimary() while remaining a named seam the nav-header accent picker (or a theme) can override at runtime. */
+  --aura-accent: var(--aura-primary);
+  --aura-success: #34d399;
+  --aura-warning: #fbbf24;
+  --aura-danger: #fb7185;
+  --aura-info: var(--aura-secondary);
+  --aura-success-a15: color-mix(in srgb, var(--aura-success) 15%, transparent);
+  --aura-warning-a15: color-mix(in srgb, var(--aura-warning) 15%, transparent);
+  --aura-danger-a15: color-mix(in srgb, var(--aura-danger) 15%, transparent);
+  --aura-danger-a25: color-mix(in srgb, var(--aura-danger) 25%, transparent);
+  --aura-info-a15: color-mix(in srgb, var(--aura-info) 15%, transparent);
+
+  /* ---- Space scale (4px base) [primitive] */
+  --aura-space-0: 0;
+  --aura-space-1: 0.25rem;
+  --aura-space-2: 0.5rem;
+  --aura-space-3: 0.75rem;
+  --aura-space-4: 1rem;
+  --aura-space-5: 1.5rem;
+  --aura-space-6: 2rem;
+  --aura-space-7: 3rem;
+  --aura-space-8: 4rem;
+  --aura-space-9: 6rem;
+
+  /* ---- Radii [primitive] */
+  --aura-radius-xs: 0.25rem;
+  --aura-radius-sm: 0.5rem;
+  --aura-radius-md: 0.75rem;
+  --aura-radius-lg: 1rem;
+  --aura-radius-xl: 1.5rem;
+  --aura-radius-2xl: 2rem;
+  --aura-radius-full: 999px;
+
+  /* ---- Box model (semantic layer) [semantic] */
+  /* A thin semantic layer on top of the raw space/radius scales; components reference these (and per-component override keys) instead of raw steps. */
+  --aura-border-width: 1px;
+  --aura-border-style: solid;
+  --aura-frame-border-width: var(--aura-border-width);
+  --aura-divider: var(--aura-border-width) var(--aura-border-style) var(--aura-surface-stroke);
+
+  /* ---- Control sizing & shared states [semantic] */
+  /* Single source of truth for control heights, the one disabled-opacity dial every component routes through (#49), and shared interaction-affordance literals promoted out of component CSS (#50): overlay/dialog enter scale and the menu icon column width. */
+  --aura-control-height-sm: 2rem;
+  --aura-control-height-md: 2.5rem;
+  --aura-control-height-lg: 3rem;
+  --aura-input-height: 2.75rem;
+  --aura-disabled-opacity: 0.5;
+  --aura-overlay-enter-scale: 0.96;
+  --aura-menu-icon-col: 1.25rem;
+
+  /* ---- Form-flow component (v3.534) [semantic] */
+  /* v3.534 (animation-design.md, #841-class): form-pending-dur is the form-flow pending-state shimmer's (css/form.css aura-form-shimmer) sweep duration — the last remaining instance named by the v3.533 Follow-up. Mirrors the --aura-btn-spinner-dur / --aura-progress-slide-dur pattern (a plain custom property forwarding to a registered base token, not itself @property-registered): derives from --aura-dur-ambient (the shared looping/infinite-animation base, see the Motion group) via calc(... * 0.5625), which lands at exactly the prior hard-coded 900ms (1.6s * 0.5625 = 0.9s) — an exact, not approximate, multiplier, so the fix is a pure refactor with zero visual change. */
+  --aura-form-pending-dur: calc(var(--aura-dur-ambient) * 0.5625);
+
+  /* ---- Navigation & status components (v2.22) [semantic] */
+  /* Single source of truth for the v2.22 nav/status recipes (#88 avatar, #109 progress/meter): avatar diameters drive both the box and — via em — the initials and presence ring; the progress track height feeds both the linear bar and its fill. v3.533 (animation-design.md, #841-class): progress-slide-dur is the indeterminate fill's sweep duration — derives from --aura-dur-ambient (the shared looping/infinite-animation base token) via calc(... * 0.6875), which lands at exactly the prior hard-coded 1.1s (1.6s * 0.6875 = 1.1s), so the fix is a pure refactor with zero visual change. */
+  --aura-avatar-sm: 1.75rem;
+  --aura-avatar-md: 2.5rem;
+  --aura-avatar-lg: 4rem;
+  --aura-progress-track-height: 0.5rem;
+  --aura-progress-slide-dur: calc(var(--aura-dur-ambient) * 0.6875);
+
+  /* ---- Media + colour-picker theming dials (v3.6) [semantic] */
+  /* Close the last hardcoded #000/#fff colour leaks (#2 token-discipline). video-letterbox is the backdrop painted behind a cover/contain media frame (was a raw #000) — it resolves to the page background so a re-skin moves it by token swap alone. lightbox-scrim is the fullscreen lightbox modal backdrop (#446 follow-up): unlike the letterbox it is a dimming scrim, so it stays a fixed dark mix in BOTH themes rather than following --aura-bg (which left it a near-white veil that did not dim in light mode). lightbox-scrim-solid is its opaque fallback used where backdrop-filter is unsupported / under lite-mode / under prefers-contrast:more (#491): it must STAY a dark dimmer in light mode too — falling back to --aura-surface-solid (the page colour) turned the scrim white and stopped dimming, so it mixes the same fixed dark over the solid surface. video-caption-text + video-caption-scrim are the native ::cue colours (were #fff and a #000 mix). cp-thumb-ring + cp-thumb-ring-width replace the color-picker thumb's `2px solid var(--aura-on-primary,#fff)`: a contrast-aware ring (a light stroke that survives a pale swatch) and a tokenized width (every other picker border is 1px). All carried verbatim as CSS expressions. */
+  --aura-video-letterbox: var(--aura-bg);
+  --aura-lightbox-scrim: color-mix(in srgb, #000 78%, transparent);
+  --aura-lightbox-scrim-solid: color-mix(in srgb, #000 78%, var(--aura-surface-solid));
+  --aura-video-caption-text: var(--aura-text-on-glass);
+  --aura-video-caption-scrim: color-mix(in srgb, #000 60%, transparent);
+  --aura-cp-thumb-ring: color-mix(in srgb, #fff 90%, var(--aura-text) 10%);
+  --aura-cp-thumb-ring-width: var(--aura-border-width, 1px);
+
+  /* ---- Navigation header (v2.34, stash/hot-zone/glow v2.36) [semantic] */
+  /* Single source of truth for the <aura-nav-header> application bar (#168). Geometry is two heights the CSS transitions between on scroll-shrink; shadow/duration/easing reference the existing depth + motion primitives so a theme re-tunes them globally (no new colour or web-font tokens). shrink-threshold is a length so a JS scroll handler can read it via getComputedStyle. v2.36 adds the direction-aware auto-stash (translate off the top edge), the anti-flicker scroll-direction dead-zone, the top-edge pointer reveal hot-zone, and the signature .aura-sheen rim-glow strength dial (#174 #175 #176) — all lengths/scalars so JS reads them via getComputedStyle and writes no layout. v2.36 iter 3 adds the aesthetic reveal flourish — a refined entrance easing/duration distinct from the stash-out and a rim-glow bloom that ramps the .aura-sheen edge to a tokenized peak then settles when a stashed bar re-reveals (#182) — plus an opt-in peek sliver so a stashed bar can leave a discoverability cue (#183). v3.0 adds the deeper stash-threshold so the scroll progression is staged — full header → (past shrink-threshold) floating pill → (past stash-threshold) stashed pill — and the stash is LATCHED: scrolling back up never re-reveals (only the top-edge hot-zone brings the pill back), and the full header returns only on reaching the top. v3.0 also adds nav-header-control-height — the compact control size the pill applies to its inner selects/buttons by overriding the shared --aura-select-height / --aura-control-height-md dials, so the controls shrink with the bar. All scalars/lengths/easings; JS only flips data-stashed / data-revealing, still no layout writes. See docs/design/nav-header-design.md. */
+  --aura-nav-header-height: 4rem;
+  --aura-nav-header-height-shrunk: 3rem;
+  --aura-nav-header-pad-inline: var(--aura-space-4);
+  --aura-nav-header-gap: var(--aura-space-4);
+  --aura-nav-header-shadow: var(--aura-shadow-2);
+  --aura-nav-header-shadow-shrunk: var(--aura-shadow-4);
+  --aura-nav-header-shrink-threshold: 4rem;
+  --aura-nav-header-stash-threshold: 16rem;
+  --aura-nav-header-duration: var(--aura-dur-base);
+  --aura-nav-header-menu-duration: var(--aura-dur-fast);
+  --aura-nav-header-menu-duration-fast: 80ms;
+  --aura-nav-header-stagger-step: 30ms;
+  --aura-nav-header-stagger-step-fine: 20ms;
+  --aura-nav-header-rail-hue-2: hsl(200deg 70% 60%);
+  --aura-nav-header-rail-hue-3: hsl(160deg 60% 55%);
+  --aura-nav-header-rail-hue-4: hsl(280deg 60% 65%);
+  --aura-nav-header-rail-hue-5: hsl(40deg 80% 55%);
+  --aura-nav-panel-surface: var(--aura-surface-4);
+  --aura-nav-panel-blur: var(--aura-blur-4);
+  --aura-nav-panel-saturate: var(--aura-glass-saturate);
+  --aura-nav-panel-shadow: var(--aura-shadow-4);
+  --aura-nav-panel-surface-solid: var(--aura-surface-solid);
+  --aura-nav-shrunk-blur: var(--aura-blur-6);
+  --aura-nav-shrunk-saturate: calc(var(--aura-glass-saturate) * 1.15);
+  --aura-nav-search-blur: var(--aura-blur-6);
+  --aura-nav-search-saturate: var(--aura-glass-saturate);
+  --aura-nav-header-easing: var(--aura-ease-out);
+  --aura-nav-header-stash-translate: -100%;
+  --aura-nav-header-direction-threshold: 6px;
+  --aura-nav-header-hotzone: var(--aura-space-6);
+  --aura-nav-header-hover-retain-offset: var(--aura-space-5);
+  --aura-nav-header-glow-strength: 0.85;
+  --aura-nav-header-reveal-easing: var(--aura-ease-spring);
+  --aura-nav-header-reveal-duration: var(--aura-dur-slow);
+  --aura-nav-header-bloom-strength: 0.9;
+  --aura-nav-header-bloom-duration: var(--aura-dur-slow);
+  --aura-nav-header-peek: var(--aura-space-2);
+  --aura-nav-header-control-height: var(--aura-control-height-sm);
+  --aura-nav-header-tint-intensity: 1;
+  --aura-nav-header-height-current: var(--aura-nav-header-height);
+  --aura-scroll-progress: 0;
+
+  /* ---- Site footer (reveal-on-scroll-end, v3.4) [semantic] */
+  /* Single source of truth for the <aura-footer> reveal footer (v3.4, space-economy). The footer is summoned chrome: it stays translated off the bottom edge while the user reads, and reveals when an end-of-content sentinel comes within reveal-offset of the viewport bottom (js/footer.js sets data-aura-revealed; CSS owns the translate). Sized to its content — pad-block is a single minimal band, NOT the old decorative --aura-space-5 ring. translate is the resting off-screen distance (100% = fully below its own box); duration/easing reference the shared motion primitives so a theme re-tunes globally and reduced-motion can null the transition. reveal-offset is the IntersectionObserver rootMargin slack (negative, shrinks the detection zone upward) so the footer eases in just before the true bottom. footer-z-index is one tier below --aura-z-sticky so the nav-header always wins (#817). All lengths/scalars; JS reads reveal-offset via a probe element (resolves var() chains, #744) and otherwise only flips data-aura-revealed, so no layout writes. See docs/design/space-economy-design.md. v3.23 glass dials (#400): the reveal footer overlays scrolling content, so like the other chrome-over-content surfaces it carries -blur / -saturate / -shadow / -surface-solid seams (the menu/tooltip/toast pattern) — override one to re-skin the footer alone. footer-shadow is the tier-2 shadow recipe cast UPWARD (negative y) because the footer's content neighbour is above it; -surface-solid is the opaque fallback where backdrop-filter is unsupported and under [data-aura-effects="lite"]. */
+  --aura-footer-pad-block: var(--aura-space-3);
+  --aura-footer-pad-inline: var(--aura-space-5);
+  --aura-footer-bg: var(--aura-surface-4);
+  --aura-footer-blur: var(--aura-blur-4);
+  --aura-footer-saturate: var(--aura-glass-saturate);
+  --aura-footer-shadow: 0 -4px 10px hsl(var(--aura-shadow-color) / calc(0.34 * var(--aura-shadow-strength))), 0 -2px 4px hsl(var(--aura-shadow-color) / calc(0.28 * var(--aura-shadow-strength)));
+  --aura-footer-surface-solid: var(--aura-surface-solid);
+  --aura-footer-translate: 100%;
+  --aura-footer-reveal-easing: var(--aura-ease-decelerate, cubic-bezier(0,0,0.2,1));
+  --aura-footer-reveal-duration: var(--aura-dur-base);
+  --aura-footer-easing: var(--aura-footer-reveal-easing);
+  --aura-footer-duration: var(--aura-footer-reveal-duration);
+  --aura-footer-reveal-offset: var(--aura-space-5);
+  --aura-footer-z-index: calc(var(--aura-z-sticky) - 1);
+  --aura-footer-pad-inline-narrow: var(--aura-space-3);
+  --aura-footer-text-color: var(--aura-text-subtle);
+  --aura-footer-color: var(--aura-footer-text-color);
+  --aura-footer-link-color: var(--aura-primary-a60);
+  --aura-footer-border-color: var(--aura-surface-stroke);
+  --aura-footer-tint-intensity: var(--aura-glass-tint-strength, 0);
+  --aura-footer-max-width: 80rem;
+  --aura-footer-layout-gap: var(--aura-space-4);
+  --aura-footer-fmb-size: var(--aura-control-height-lg);
+  --aura-footer-fmb-expand-px: 14;
+
+  /* ---- Sidebar FMB (v3.88) [semantic] */
+  /* Single source of truth for the sidebar FMB (v3.88) — a compact left-side Floating Menu Button anchored just below the nav-header FMB. Collapses to a 3rem circle; expands on hover, focus, JS proximity, or click-pin (js/sidebar.js, css/sidebar.css). Geometry forwards to nav-header tokens where possible. */
+  --aura-sidebar-fmb-size: var(--aura-nav-header-height-shrunk);
+  --aura-sidebar-fmb-expand-px: 14;
+  /* FMB column: legacy alias for --aura-fmb-column-size (kept supported —
+     overrides flow through the -size definition below). */
+  --aura-fmb-column-width: 96px;
+  /* FMB column: canonical bar height / slot size token (#1019). Legacy
+     --aura-fmb-column-width overrides flow through via the var() fallback
+     chain. */
+  --aura-fmb-column-size: var(--aura-fmb-column-width, 96px);
+  --aura-fmb-column-duration: var(--aura-nav-header-duration);
+  --aura-fmb-column-easing: var(--aura-nav-header-easing);
+  --aura-fmb-column-breakpoint: 640px;
+  --aura-sidebar-width: 16rem;
+  --aura-sidebar-pad-inline: var(--aura-space-4);
+  --aura-sidebar-pad-block: var(--aura-space-3);
+  --aura-sidebar-duration: var(--aura-dur-base);
+  --aura-sidebar-easing: var(--aura-ease-out);
+  --aura-sidebar-surface: var(--aura-surface-4);
+  --aura-sidebar-blur: var(--aura-blur-4);
+  --aura-sidebar-saturate: var(--aura-glass-saturate);
+  --aura-sidebar-surface-solid: var(--aura-surface-solid);
+
+  /* ---- Image catalog (v2.35) [semantic] */
+  /* Single source of truth for the <aura-catalog> image thumbnail grid (#172). A responsive auto-fill grid: min tile width drives the column count, ratio fixes each thumb's aspect box, and surface/radius/elevation reference existing primitives so a theme re-skins it globally (no new colour tokens). See docs/design/image-catalog-design.md. */
+  --aura-catalog-min: 11rem;
+  --aura-catalog-gap: var(--aura-space-4);
+  --aura-catalog-ratio: var(--aura-ratio-square);
+  --aura-catalog-radius: var(--aura-radius-lg);
+  --aura-catalog-thumb-bg: var(--aura-surface-2);
+  --aura-catalog-duration: var(--aura-dur-fast);
+  --aura-catalog-easing: var(--aura-ease-out);
+
+  /* ---- Touch & input modality [semantic] */
+  /* safe-* use env(); focus-ring/sheet-max-block use functions — carried verbatim. */
+  --aura-tap-min: 44px;
+  --aura-bp-narrow: 22.5rem;
+  --aura-bp-mobile: 40rem;
+  --aura-bp-medium: 48rem;
+  --aura-bp-wide: 52.5rem;
+  --aura-focus-ring: 2px solid var(--aura-primary-300);
+  --aura-focus-ring-offset: 2px;
+  --aura-sheet-max-block: min(85dvh, 32rem);
+  --aura-safe-top: env(safe-area-inset-top, 0px);
+  --aura-safe-right: env(safe-area-inset-right, 0px);
+  --aura-safe-bottom: env(safe-area-inset-bottom, 0px);
+  --aura-safe-left: env(safe-area-inset-left, 0px);
+
+  /* ---- Tooltips & overflow menus [semantic] */
+  /* Menu / tooltip frosted-glass dials (--aura-{menu,tooltip}-surface / -blur / -saturate / -surface-solid) are the single named place to retune each popup's glass without touching the global surface scale: each defaults to the matching global glass token, so overriding one re-skins that popup alone. -surface-solid is the opaque fallback used both where backdrop-filter is unsupported and under [data-aura-effects="lite"] — opaque is the SCOPED exception, not the default. The frosted look depends on content/wallpaper painted BEHIND the popup — see docs/design/context-menu-design.md §Frosted glass and docs/design/elevation-design.md. */
+  --aura-menu-max-block: min(70vh, 28rem);
+  --aura-menu-surface: var(--aura-surface-4);
+  --aura-menu-blur: var(--aura-blur-4);
+  --aura-menu-saturate: var(--aura-glass-saturate);
+  --aura-menu-surface-solid: var(--aura-surface-solid);
+  --aura-tooltip-delay: 400ms;
+  --aura-tooltip-delay-out: 80ms;
+  --aura-tooltip-surface: var(--aura-surface-4);
+  --aura-tooltip-blur: var(--aura-blur-3);
+  --aura-tooltip-saturate: var(--aura-glass-saturate);
+  --aura-tooltip-surface-solid: var(--aura-surface-solid);
+  --aura-tooltip-fg: var(--aura-text);
+  --aura-tooltip-offset: var(--aura-space-1);
+  --aura-tooltip-max-inline: 18rem;
+  --aura-toast-surface: var(--aura-surface-4);
+  --aura-toast-blur: var(--aura-blur-3);
+  --aura-toast-saturate: var(--aura-glass-saturate);
+  --aura-toast-surface-solid: var(--aura-surface-solid);
+
+  /* ---- Typography [primitive] */
+  --aura-font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --aura-font-mono: ui-monospace, "SF Mono", "JetBrains Mono", "Fira Code", Menlo, Consolas, monospace;
+  --aura-text-xs: 0.75rem;
+  --aura-text-sm: 0.875rem;
+  --aura-text-md: 1rem;
+  --aura-text-lg: 1.125rem;
+  --aura-text-xl: 1.375rem;
+  --aura-text-2xl: 1.75rem;
+  --aura-text-3xl: 2.5rem;
+  --aura-weight-regular: 400;
+  --aura-weight-medium: 500;
+  --aura-weight-semibold: 600;
+  --aura-weight-bold: 700;
+  --aura-leading-tight: 1.2;
+  --aura-leading-normal: 1.5;
+  --aura-leading-relaxed: 1.7;
+  --aura-tracking-tight: -0.01em;
+  --aura-tracking-normal: 0;
+  --aura-tracking-wide: 0.04em;
+
+  /* ---- Depth primitives [semantic] */
+  /* Shadow tiers compose an ambient + directional drop, with alpha scaled by the --aura-depth master dial AND the --aura-shadow-boost multiplier via --aura-shadow-strength. shadow-color is H S L parts used via hsl(). shadow-6 is a heavier tier a depth-rich theme can opt into; shadow-boost defaults to 1 (no-op). */
+  --aura-shadow-color: 230 40% 3%;
+  --aura-depth: 1;
+  --aura-shadow-boost: 1;
+  --aura-shadow-strength: calc(var(--aura-depth) * var(--aura-shadow-boost));
+  --aura-shadow-1: 0 1px 2px hsl(var(--aura-shadow-color) / calc(0.30 * var(--aura-shadow-strength))), 0 1px 1px hsl(var(--aura-shadow-color) / calc(0.24 * var(--aura-shadow-strength)));
+  --aura-shadow-2: 0 4px 10px hsl(var(--aura-shadow-color) / calc(0.34 * var(--aura-shadow-strength))), 0 2px 4px hsl(var(--aura-shadow-color) / calc(0.28 * var(--aura-shadow-strength)));
+  --aura-shadow-3: 0 12px 28px hsl(var(--aura-shadow-color) / calc(0.40 * var(--aura-shadow-strength))), 0 6px 12px hsl(var(--aura-shadow-color) / calc(0.30 * var(--aura-shadow-strength)));
+  --aura-shadow-4: 0 20px 48px hsl(var(--aura-shadow-color) / calc(0.46 * var(--aura-shadow-strength))), 0 10px 20px hsl(var(--aura-shadow-color) / calc(0.32 * var(--aura-shadow-strength)));
+  --aura-shadow-5: 0 32px 80px hsl(var(--aura-shadow-color) / calc(0.55 * var(--aura-shadow-strength))), 0 16px 32px hsl(var(--aura-shadow-color) / calc(0.38 * var(--aura-shadow-strength)));
+  --aura-shadow-6: 0 48px 112px hsl(var(--aura-shadow-color) / calc(0.62 * var(--aura-shadow-strength))), 0 24px 48px hsl(var(--aura-shadow-color) / calc(0.44 * var(--aura-shadow-strength)));
+  --aura-dir-shadow-offset-step: 3px;
+  --aura-dir-shadow-blur-step: 7px;
+  --aura-dir-shadow-alpha: 0.12;
+  --aura-blur-1: 0px;
+  --aura-blur-2: 4px;
+  --aura-blur-3: 8px;
+  --aura-blur-4: 12px;
+  --aura-blur-5: 16px;
+  --aura-blur-6: 20px;
+
+  /* ---- Blur-behind: desaturation & tint [semantic] */
+  /* #594: glass-tint-layer is the single reusable background STOP that washes the theme tint behind a frosted surface — every glass family member (.aura-surface, menu, dialog, toast, tooltip, footer, nav, datepicker/timepicker/color-picker panels) layers it over its --aura-*-surface fill so a theme tint (warm-dusk) reaches ALL the glass, not just .aura-surface. It is inert at strength 0 (resolves to transparent), so the default rendering is unchanged. Mirrors elevation.css:79 — defining it once removes the duplicated literal gradient across the glass files. */
+  --aura-glass-saturate: 1.5;
+  --aura-glass-tint: transparent;
+  --aura-glass-tint-strength: 0;
+  --aura-glass-tint-wash: color-mix(in srgb, var(--aura-glass-tint) calc(var(--aura-glass-tint-strength) * 100%), transparent);
+  --aura-glass-tint-layer: linear-gradient(0deg, var(--aura-glass-tint-wash), var(--aura-glass-tint-wash));
+
+  /* ---- Top-edge light catch [semantic] */
+  --aura-edge-light: color-mix(in srgb, white 22%, transparent);
+
+  /* ---- Z-index scale (aligned with elevation tiers) [primitive] */
+  --aura-z-base: 0;
+  --aura-z-raised: 10;
+  --aura-z-sticky: 100;
+  --aura-z-overlay: 1000;
+  --aura-z-menu: 1100;
+  --aura-z-modal: 1200;
+  --aura-z-toast: 1300;
+  --aura-z-tooltip: 1400;
+
+  /* ---- Motion [primitive] */
+  /* dur-* are also @property-registered <time> (see typed[]) so JS reads a resolved value. */
+  --aura-dur-fast: 120ms;
+  --aura-dur-base: 200ms;
+  --aura-dur-slow: 360ms;
+  --aura-dur-ambient: 1.6s;
+  --aura-ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  --aura-ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --aura-ease-accelerate: cubic-bezier(0.4, 0, 1, 1);
+  --aura-ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+
+  /* ---- Proximity glow [semantic] */
+  /* glow-intensity/x/y and magnet-dx/dy are LIVE values js/glow.js writes; the defaults here keep CSS valid with no JS. #653: glow-radius-comfortable MIRRORS the glow-radius default (130px) because the comfortable density tier is the faithful reset that restores tokens.css defaults — it must not be a second source of truth that reaches FARTHER than the page default. compact (80px) and cozy (110px) are the intentional tighter re-tunes. */
+  --aura-glow-color: var(--aura-primary);
+  --aura-glow-radius: 130px;
+  --aura-glow-radius-compact: 80px;
+  --aura-glow-radius-cozy: 110px;
+  --aura-glow-radius-comfortable: 130px;
+  --aura-glow-intensity: 0;
+  --aura-glow-x: 50%;
+  --aura-glow-y: 50%;
+  --aura-magnet-dx: 0px;
+  --aura-magnet-dy: 0px;
+
+  /* ---- Edge glow (cursor-reactive rim lighting) [semantic] */
+  --aura-edge-color: var(--aura-glow-color);
+  --aura-edge-shine-width: 1px;
+  --aura-edge-shine-width-compact: 1.5px;
+  --aura-edge-shine-spot: 150px;
+  --aura-edge-shine-flood: 200vmax;
+  --aura-edge-shine-strength: 1;
+  --aura-edge-shine-max: 0.95;
+  --aura-edge-rim-color: color-mix(in srgb, var(--aura-edge-color) 60%, white);
+  --aura-edge-rim-width: 1px;
+  --aura-edge-rim-spot: 340px;
+  --aura-edge-rim-max: 0.5;
+  --aura-magnet-shift: 1px;
+  --aura-magnet-shift-strong: 5px;
+
+  /* ---- Directional light [semantic] */
+  --aura-light-x: 0;
+  --aura-light-y: 1;
+
+  /* ---- Choreographed entrance [semantic] */
+  --aura-entrance-dur: 420ms;
+  --aura-entrance-step: 90ms;
+  --aura-entrance-rise: 16px;
+  --aura-entrance-scale-from: 0.985;
+
+  /* ---- Hover raise [semantic] */
+  /* #578: there is intentionally NO --aura-hover-shadow token. Declaring it at :root froze its var(--aura-e-shadow-raise, …) substitution at the empty root value, pinning every hover shadow to the fallback tier regardless of the element's elevation. Every consumer (glow.css, range.css, components.css button, select/datepicker/timepicker/color-picker triggers, resizable.css handle) now inlines var(--aura-e-shadow-raise, var(--aura-shadow-3)) directly — the css/elevation.css:131 pattern — so the inner var() resolves at the element, tracking its actual elevation level. */
+  --aura-hover-lift: 1px;
+
+  /* ---- Bevelled glass edge [semantic] */
+  /* bevel-strength scales BOTH halves of the chamfer uniformly (#693) without re-authoring the colour-mix (#63); default 1 keeps the historical white 26% highlight and 0.45 shadow alpha. */
+  --aura-bevel-strength: 1;
+  --aura-bevel-light: color-mix(in srgb, white calc(26% * var(--aura-bevel-strength)), transparent);
+  --aura-bevel-shadow: hsl(var(--aura-shadow-color) / calc(0.45 * var(--aura-bevel-strength)));
+  --aura-bevel-base: 1px;
+  --aura-bevel-size: calc(var(--aura-bevel-base) * var(--aura-depth));
+
+  /* ---- 3-D frame / classic bevel (token-only, inert by default) [semantic] */
+  /* A theme produces classic 3-D chrome (outset/inset/ridge buttons, Win95-style faces) purely by re-skinning these dials — no component CSS. Every default is a VISUAL NO-OP: frame-face is transparent so the component's own surface shows through, the highlight/shadow edge colours are transparent, and frame-inset is a zero-spread transparent inset shadow that renders nothing. A theme sets --aura-border-style: outset, --aura-frame-highlight/-shadow to light/dark edge colours, and --aura-frame-inset to a real inset box-shadow to bevel the control. surface-pattern is a background-image (e.g. a repeating gradient texture); none keeps the flat fill. */
+  --aura-frame-face: transparent;
+  --aura-frame-highlight: transparent;
+  --aura-frame-shadow: transparent;
+  --aura-frame-inset: inset 0 0 0 0 transparent;
+  --aura-surface-pattern: none;
+
+  /* ---- Button glass-depth (convex lit glass, depth via --aura-depth) [semantic] */
+  /* v3.91 (button-glass-depth-design.md): the glass-depth recipe authored ONCE here and consumed ONCE by the base .aura-btn rule; variants swap --aura-btn-tint (+ optional rim/glow/face-amount) only, never the geometry, never transform. FLATTEN-SAFETY is the whole point: every magnitude routes through --aura-depth (master) or the --aura-shadow-* tiers (whose alpha already scales by --aura-depth via --aura-shadow-strength), so modern-flat (0.7) softens, flat-primary flattens to a flat fill, and extra-depth (1.4) deepens — with NO theme edits and NO raw px in the depth stack. btn-face-amount is the depth-scaled lighten % for the convex top stop: at depth 0 the gradient collapses to a flat tint, at higher depth it domes harder; the min() cap means a deep theme can deepen the dome WITHOUT lightening the top stop past its contrast ceiling. The NEUTRAL default cap is 8% (--aura-text on a translucent surface has ample headroom). The PRIMARY variant OVERRIDES --aura-btn-face-amount to a 3% cap because white-on-primary is the gated path: white on color-mix(in oklch, #7654f5, white 3%) ~= 4.56:1, clearing WCAG AA for normal text at every depth (4% ~= 4.45 = fail; the old shipped 8% ~= 4.11 = fail). btn-glass-face is the convex vertical fill (lighter top to tint bottom). btn-rim is the specular top-edge highlight (strengthens --aura-edge-light, alpha scaled by depth so it mutes on flat themes). btn-inner-shade is the inset bottom inner shadow = apparent glass thickness (offset, blur AND alpha all depth-scaled). btn-glow is the per-variant coloured ambient halo seam (transparent by default; primary/secondary/danger set it) folded into the SINGLE shared drop recipe so there is one drop for all variants. btn-glow-blur is depth-scaled so the halo collapses on flat themes too. btn-depth-shadow / -raise are the resting / hover ambient+contact drops built from the --aura-shadow-* tiers plus the coloured btn-glow ring; NOTE the hover RAISE tier (var(--aura-e-shadow-raise,...)) is inlined at the element in the hover RULE, NOT baked here, to avoid the #578 :root-freeze. btn-tint defaults to the neutral surface so an un-tinted/default button still domes. The frosted seams (btn-glass-blur/-saturate/-surface-solid) are consumed ONLY by the opt-in .aura-btn--glass modifier and mirror the menu/footer glass dials. v3.533 (animation-design.md, #841-class): btn-spinner-dur is the [loading]::after spinner's rotation duration — the per-component motion dial for that infinite loop, mirroring the --aura-nav-header-duration-style pattern of a plain custom property that forwards to a registered base token rather than being @property-registered itself. It derives from --aura-dur-ambient (the shared looping/infinite-animation base, see the Motion group) via calc(... * 0.4375), which lands at exactly the spinner's prior hard-coded 0.7s (1.6s * 0.4375 = 0.7s) — an exact, not approximate, multiplier, so the fix is a pure refactor with zero visual change. */
+  --aura-btn-tint: var(--aura-surface-2);
+  --aura-btn-face-amount: min(8%, calc(8% * var(--aura-depth)));
+  --aura-btn-glass-face: linear-gradient(180deg, color-mix(in oklch, var(--aura-btn-tint), white var(--aura-btn-face-amount)), var(--aura-btn-tint));
+  --aura-btn-rim: inset 0 1px 0 color-mix(in srgb, var(--aura-edge-light) calc(100% * var(--aura-depth)), transparent);
+  --aura-btn-inner-shade: inset 0 calc(-1px * var(--aura-depth)) calc(2px * var(--aura-depth)) hsl(var(--aura-shadow-color) / calc(0.22 * var(--aura-shadow-strength)));
+  --aura-btn-glow: transparent;
+  --aura-btn-glow-blur: calc(10px * var(--aura-depth));
+  --aura-btn-depth-shadow: var(--aura-shadow-2), 0 0 var(--aura-btn-glow-blur) var(--aura-btn-glow);
+  --aura-btn-depth-shadow-raise: 0 0 calc(var(--aura-btn-glow-blur) * 1.8) var(--aura-btn-glow);
+  --aura-btn-glass-blur: var(--aura-blur-4);
+  --aura-btn-glass-saturate: var(--aura-glass-saturate);
+  --aura-btn-glass-surface-solid: var(--aura-surface-solid);
+  --aura-btn-spinner-dur: calc(var(--aura-dur-ambient) * 0.4375);
+
+  /* ---- Icon sizing [semantic] */
+  --aura-icon-size: 1.15em;
+  --aura-icon-stroke-width: 1.8;
+
+  /* ---- Focus ring [semantic] */
+  --aura-ring: 0 0 0 3px var(--aura-primary-a40);
+  --aura-ring-offset: 0 0 0 2px var(--aura-bg);
+
+  /* ---- Layout: fluid size scale (28rem base, ~×1.4 progression) [primitive] */
+  --aura-size-2xs: 10rem;
+  --aura-size-xs: 14rem;
+  --aura-size-sm: 20rem;
+  --aura-size-md: 28rem;
+  --aura-size-lg: 40rem;
+  --aura-size-xl: 56rem;
+  --aura-size-2xl: 80rem;
+
+  /* ---- Layout: region dials [semantic] */
+  --aura-region-min: var(--aura-size-xs);
+  --aura-region-pref: 100cqi;
+  --aura-region-max: var(--aura-size-xl);
+
+  /* ---- Layout: readable-text measure [semantic] */
+  /* measure caps the body reading column at ~66ch on wide screens; measure-lead is the slightly wider cap for lead/intro paragraphs (consumed by .aura-page-head__lead in templates/content-page.css), set in ch so it tracks the same construction, not a magic rem. #572: corrected from 54ch (which was NARROWER than measure, contradicting the 'wider' intent) to 72ch. */
+  --aura-measure: 66ch;
+  --aura-measure-lead: 72ch;
+
+  /* ---- Layout: portable aspect-ratio tokens [primitive] */
+  --aura-ratio-square: 1 / 1;
+  --aura-ratio-photo: 3 / 2;
+  --aura-ratio-classic: 4 / 3;
+  --aura-ratio-video: 16 / 9;
+  --aura-ratio-ultrawide: 21 / 9;
+  --aura-ratio-portrait: 3 / 4;
+  --aura-ratio-golden: 1.618 / 1;
+
+  /* ---- Resizable split [semantic] */
+  /* min/max/step/step-page are a percentage of the split's total extent (same space as aria-valuenow). */
+  --aura-split-min: 10%;
+  --aura-split-max: 90%;
+  --aura-split-step: 2%;
+  --aura-split-step-page: 10%;
+  --aura-split-handle-size: var(--aura-space-2);
+
+  /* ---- Size reservation (pre-size-to-contents) [semantic] */
+  --aura-intrinsic-size: 400px;
+
+  /* ---- Print ink [semantic] */
+  /* v3.23 (#398): the shared ink-friendly print greys — body ink and hairline rules — so css/print.css and component @media print blocks (nav print breadcrumb) draw from one set of constants. v3.29 (#500): print-paper (page/card fill) and print-body-ink (page/card foreground) complete the group so the documented single-retune-point claim holds — overriding them moves the printed canvas and body ink, which were formerly hard-coded #fff/#000 literals. print-ink stays the softer breadcrumb grey, distinct from the maximum-legibility body ink. */
+  --aura-print-ink: #444;
+  --aura-print-body-ink: #000;
+  --aura-print-paper: #fff;
+  --aura-print-hairline: #bbb;
+}
+
+/* ==========================================================================
+   Typed FMB column offset tokens (@property registration) — enables typed
+   CSS interpolation for consumers using these tokens in animated contexts
+   beyond the built-in aura-region/aura-split padding (e.g. top/inset-block-start).
+   inherits:true — set on :root by js/fmb-column.js, consumed by descendants.
+   initial-value:0px — default when the column is inactive/unset.
+   ========================================================================== */
+/* Typed FMB column width token — enables typed CSS interpolation when
+   consumers override the column width (also used as bar height in v3.503).
+   initial-value matches the :root declaration.
+   v3.541 (#1019): kept as the supported LEGACY alias of --aura-fmb-column-size. */
+@property --aura-fmb-column-width {
+  syntax: '<length>';
+  inherits: true;
+  initial-value: 96px;
+}
+
+/* ==========================================================================
+   Typed motion tokens (@property registration) — so getComputedStyle
+   resolves the duration tokens to a concrete <time> for JS readers.
+   ========================================================================== */
+/* Canonical FMB column size token (v3.541, #1019) — the bar height / slot
+   cell dimension css/fmb-column.css and js/fmb-column.js consume. Its :root
+   value is var(--aura-fmb-column-width, 96px) so legacy -width overrides
+   flow through unchanged. See docs/design/fmb-column-design.md
+   §Unified FMB contract. */
+@property --aura-fmb-column-size {
+  syntax: '<length>';
+  inherits: true;
+  initial-value: 96px;
+}
+
+/* ==========================================================================
+   Typed FMB column offset tokens (@property registration) — enables typed
+   CSS interpolation for consumers using these tokens in animated contexts
+   beyond the built-in aura-region/aura-split padding (e.g. top/inset-block-start).
+   inherits:true — set on :root by js/fmb-column.js, consumed by descendants.
+   initial-value:0px — default when the column is inactive/unset.
+   ========================================================================== */
+/* Block-start offset — set on :root when the horizontal bar is active (#949).
+   Content shifts DOWN (padding-block-start) by this amount. Replaces the former
+   directional start/end pair used by the vertical left-rail layout. */
+@property --aura-fmb-column-active-offset-block-start {
+  syntax: "<length>";
+  inherits: true;
+  initial-value: 0px;
+}
+@property --aura-fmb-column-active-width {
+  syntax: "<length>";
+  inherits: true;
+  initial-value: 0px;
+}
+
+/* ==========================================================================
+   Typed motion tokens (@property registration) — so getComputedStyle
+   resolves the duration tokens to a concrete <time> for JS readers.
+   ========================================================================== */
+@property --aura-dur-fast {
+  syntax: "<time>";
+  inherits: true;
+  initial-value: 120ms;
+}
+@property --aura-dur-base {
+  syntax: "<time>";
+  inherits: true;
+  initial-value: 200ms;
+}
+@property --aura-dur-slow {
+  syntax: "<time>";
+  inherits: true;
+  initial-value: 360ms;
+}
+@property --aura-dur-ambient {
+  syntax: "<time>";
+  inherits: true;
+  initial-value: 1.6s;
+}

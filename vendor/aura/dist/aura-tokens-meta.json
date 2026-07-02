@@ -1,0 +1,2174 @@
+{
+  "accent": {
+    "value": "rgb(118, 84, 245)",
+    "kind": "color",
+    "category": "Brand palette",
+    "cssVar": "--aura-accent"
+  },
+  "on-primary": {
+    "value": "rgb(255, 255, 255)",
+    "kind": "color",
+    "category": "Brand palette",
+    "cssVar": "--aura-on-primary"
+  },
+  "primary": {
+    "value": "rgb(118, 84, 245)",
+    "kind": "color",
+    "category": "Brand palette",
+    "cssVar": "--aura-primary"
+  },
+  "primary-100": {
+    "value": "oklch(0.86385 0.072967 286.532)",
+    "kind": "color",
+    "category": "Brand palette",
+    "cssVar": "--aura-primary-100"
+  },
+  "primary-200": {
+    "value": "oklch(0.787268 0.113983 286.532)",
+    "kind": "color",
+    "category": "Brand palette",
+    "cssVar": "--aura-primary-200"
+  },
+  "primary-300": {
+    "value": "oklch(0.710687 0.154999 286.532)",
+    "kind": "color",
+    "category": "Brand palette",
+    "cssVar": "--aura-primary-300"
+  },
+  "primary-400": {
+    "value": "oklch(0.642615 0.191457 286.532)",
+    "kind": "color",
+    "category": "Brand palette",
+    "cssVar": "--aura-primary-400"
+  },
+  "primary-50": {
+    "value": "oklch(0.923413 0.0410657 286.532)",
+    "kind": "color",
+    "category": "Brand palette",
+    "cssVar": "--aura-primary-50"
+  },
+  "primary-500": {
+    "value": "rgb(118, 84, 245)",
+    "kind": "color",
+    "category": "Brand palette",
+    "cssVar": "--aura-primary-500"
+  },
+  "primary-600": {
+    "value": "oklch(0.494107 0.196008 286.532)",
+    "kind": "color",
+    "category": "Brand palette",
+    "cssVar": "--aura-primary-600"
+  },
+  "primary-700": {
+    "value": "oklch(0.413671 0.1641 286.532)",
+    "kind": "color",
+    "category": "Brand palette",
+    "cssVar": "--aura-primary-700"
+  },
+  "primary-800": {
+    "value": "oklch(0.321744 0.127633 286.532)",
+    "kind": "color",
+    "category": "Brand palette",
+    "cssVar": "--aura-primary-800"
+  },
+  "primary-900": {
+    "value": "oklch(0.218326 0.0866081 286.532)",
+    "kind": "color",
+    "category": "Brand palette",
+    "cssVar": "--aura-primary-900"
+  },
+  "primary-a10": {
+    "value": "color(srgb 0.462745 0.329412 0.960784 / 0.1)",
+    "kind": "color",
+    "category": "Brand palette",
+    "cssVar": "--aura-primary-a10"
+  },
+  "primary-a15": {
+    "value": "color(srgb 0.462745 0.329412 0.960784 / 0.15)",
+    "kind": "color",
+    "category": "Brand palette",
+    "cssVar": "--aura-primary-a15"
+  },
+  "primary-a25": {
+    "value": "color(srgb 0.462745 0.329412 0.960784 / 0.25)",
+    "kind": "color",
+    "category": "Brand palette",
+    "cssVar": "--aura-primary-a25"
+  },
+  "primary-a40": {
+    "value": "color(srgb 0.462745 0.329412 0.960784 / 0.4)",
+    "kind": "color",
+    "category": "Brand palette",
+    "cssVar": "--aura-primary-a40"
+  },
+  "primary-a60": {
+    "value": "color(srgb 0.462745 0.329412 0.960784 / 0.6)",
+    "kind": "color",
+    "category": "Brand palette",
+    "cssVar": "--aura-primary-a60"
+  },
+  "secondary": {
+    "value": "rgb(34, 211, 238)",
+    "kind": "color",
+    "category": "Brand palette",
+    "cssVar": "--aura-secondary"
+  },
+  "secondary-100": {
+    "value": "oklch(0.935069 0.0428659 211.532)",
+    "kind": "color",
+    "category": "Brand palette",
+    "cssVar": "--aura-secondary-100"
+  },
+  "secondary-200": {
+    "value": "oklch(0.898549 0.0669499 211.532)",
+    "kind": "color",
+    "category": "Brand palette",
+    "cssVar": "--aura-secondary-200"
+  },
+  "secondary-300": {
+    "value": "oklch(0.862028 0.091034 211.532)",
+    "kind": "color",
+    "category": "Brand palette",
+    "cssVar": "--aura-secondary-300"
+  },
+  "secondary-400": {
+    "value": "oklch(0.829566 0.112442 211.532)",
+    "kind": "color",
+    "category": "Brand palette",
+    "cssVar": "--aura-secondary-400"
+  },
+  "secondary-50": {
+    "value": "oklch(0.963474 0.0241338 211.532)",
+    "kind": "color",
+    "category": "Brand palette",
+    "cssVar": "--aura-secondary-50"
+  },
+  "secondary-500": {
+    "value": "rgb(34, 211, 238)",
+    "kind": "color",
+    "category": "Brand palette",
+    "cssVar": "--aura-secondary-500"
+  },
+  "secondary-600": {
+    "value": "oklch(0.685509 0.115111 211.532)",
+    "kind": "color",
+    "category": "Brand palette",
+    "cssVar": "--aura-secondary-600"
+  },
+  "secondary-700": {
+    "value": "oklch(0.573914 0.096372 211.532)",
+    "kind": "color",
+    "category": "Brand palette",
+    "cssVar": "--aura-secondary-700"
+  },
+  "secondary-800": {
+    "value": "oklch(0.446378 0.074956 211.532)",
+    "kind": "color",
+    "category": "Brand palette",
+    "cssVar": "--aura-secondary-800"
+  },
+  "secondary-900": {
+    "value": "oklch(0.302899 0.050863 211.532)",
+    "kind": "color",
+    "category": "Brand palette",
+    "cssVar": "--aura-secondary-900"
+  },
+  "secondary-a10": {
+    "value": "color(srgb 0.133333 0.827451 0.933333 / 0.1)",
+    "kind": "color",
+    "category": "Brand palette",
+    "cssVar": "--aura-secondary-a10"
+  },
+  "secondary-a15": {
+    "value": "color(srgb 0.133333 0.827451 0.933333 / 0.15)",
+    "kind": "color",
+    "category": "Brand palette",
+    "cssVar": "--aura-secondary-a15"
+  },
+  "secondary-a25": {
+    "value": "color(srgb 0.133333 0.827451 0.933333 / 0.25)",
+    "kind": "color",
+    "category": "Brand palette",
+    "cssVar": "--aura-secondary-a25"
+  },
+  "secondary-a40": {
+    "value": "color(srgb 0.133333 0.827451 0.933333 / 0.4)",
+    "kind": "color",
+    "category": "Brand palette",
+    "cssVar": "--aura-secondary-a40"
+  },
+  "secondary-a60": {
+    "value": "color(srgb 0.133333 0.827451 0.933333 / 0.6)",
+    "kind": "color",
+    "category": "Brand palette",
+    "cssVar": "--aura-secondary-a60"
+  },
+  "danger": {
+    "value": "rgb(251, 113, 133)",
+    "kind": "color",
+    "category": "Status colors",
+    "cssVar": "--aura-danger"
+  },
+  "danger-a15": {
+    "value": "color(srgb 0.984314 0.443137 0.521569 / 0.15)",
+    "kind": "color",
+    "category": "Status colors",
+    "cssVar": "--aura-danger-a15"
+  },
+  "danger-a25": {
+    "value": "color(srgb 0.984314 0.443137 0.521569 / 0.25)",
+    "kind": "color",
+    "category": "Status colors",
+    "cssVar": "--aura-danger-a25"
+  },
+  "info": {
+    "value": "rgb(34, 211, 238)",
+    "kind": "color",
+    "category": "Status colors",
+    "cssVar": "--aura-info"
+  },
+  "info-a15": {
+    "value": "color(srgb 0.133333 0.827451 0.933333 / 0.15)",
+    "kind": "color",
+    "category": "Status colors",
+    "cssVar": "--aura-info-a15"
+  },
+  "success": {
+    "value": "rgb(52, 211, 153)",
+    "kind": "color",
+    "category": "Status colors",
+    "cssVar": "--aura-success"
+  },
+  "success-a15": {
+    "value": "color(srgb 0.203922 0.827451 0.6 / 0.15)",
+    "kind": "color",
+    "category": "Status colors",
+    "cssVar": "--aura-success-a15"
+  },
+  "warning": {
+    "value": "rgb(251, 191, 36)",
+    "kind": "color",
+    "category": "Status colors",
+    "cssVar": "--aura-warning"
+  },
+  "warning-a15": {
+    "value": "color(srgb 0.984314 0.74902 0.141176 / 0.15)",
+    "kind": "color",
+    "category": "Status colors",
+    "cssVar": "--aura-warning-a15"
+  },
+  "bg": {
+    "value": "rgb(10, 11, 18)",
+    "kind": "color",
+    "category": "Background & surface",
+    "cssVar": "--aura-bg"
+  },
+  "bg-2": {
+    "value": "rgb(14, 16, 25)",
+    "kind": "color",
+    "category": "Background & surface",
+    "cssVar": "--aura-bg-2"
+  },
+  "surface-1": {
+    "value": "color(srgb 1 1 1 / 0.04)",
+    "kind": "color",
+    "category": "Background & surface",
+    "cssVar": "--aura-surface-1"
+  },
+  "surface-2": {
+    "value": "color(srgb 1 1 1 / 0.06)",
+    "kind": "color",
+    "category": "Background & surface",
+    "cssVar": "--aura-surface-2"
+  },
+  "surface-3": {
+    "value": "color(srgb 1 1 1 / 0.09)",
+    "kind": "color",
+    "category": "Background & surface",
+    "cssVar": "--aura-surface-3"
+  },
+  "surface-4": {
+    "value": "color(srgb 1 1 1 / 0.11)",
+    "kind": "color",
+    "category": "Background & surface",
+    "cssVar": "--aura-surface-4"
+  },
+  "surface-5": {
+    "value": "color(srgb 1 1 1 / 0.13)",
+    "kind": "color",
+    "category": "Background & surface",
+    "cssVar": "--aura-surface-5"
+  },
+  "surface-pattern": {
+    "value": "none",
+    "kind": "value",
+    "category": "Background & surface",
+    "cssVar": "--aura-surface-pattern"
+  },
+  "surface-solid": {
+    "value": "rgb(20, 22, 31)",
+    "kind": "color",
+    "category": "Background & surface",
+    "cssVar": "--aura-surface-solid"
+  },
+  "surface-stroke": {
+    "value": "color(srgb 1 1 1 / 0.12)",
+    "kind": "color",
+    "category": "Background & surface",
+    "cssVar": "--aura-surface-stroke"
+  },
+  "surface-stroke-strong": {
+    "value": "color(srgb 1 1 1 / 0.22)",
+    "kind": "color",
+    "category": "Background & surface",
+    "cssVar": "--aura-surface-stroke-strong"
+  },
+  "text": {
+    "value": "oklch(0.97 0.01 270)",
+    "kind": "color",
+    "category": "Text colors",
+    "cssVar": "--aura-text"
+  },
+  "text-muted": {
+    "value": "oklch(0.78 0.02 270)",
+    "kind": "color",
+    "category": "Text colors",
+    "cssVar": "--aura-text-muted"
+  },
+  "text-on-glass": {
+    "value": "oklch(0.97 0.01 270)",
+    "kind": "color",
+    "category": "Text colors",
+    "cssVar": "--aura-text-on-glass"
+  },
+  "text-subtle": {
+    "value": "oklch(0.62 0.02 270)",
+    "kind": "color",
+    "category": "Text colors",
+    "cssVar": "--aura-text-subtle"
+  },
+  "font-mono": {
+    "value": "ui-monospace, \"SF Mono\", \"JetBrains Mono\", \"Fira Code\", Menlo, Consolas, monospace",
+    "kind": "value",
+    "category": "Typography",
+    "cssVar": "--aura-font-mono"
+  },
+  "font-sans": {
+    "value": "ui-sans-serif, system-ui, -apple-system, \"Segoe UI\", Roboto, \"Helvetica Neue\", Arial, sans-serif",
+    "kind": "value",
+    "category": "Typography",
+    "cssVar": "--aura-font-sans"
+  },
+  "leading-normal": {
+    "value": "1.5",
+    "kind": "value",
+    "category": "Typography",
+    "cssVar": "--aura-leading-normal"
+  },
+  "leading-relaxed": {
+    "value": "1.7",
+    "kind": "value",
+    "category": "Typography",
+    "cssVar": "--aura-leading-relaxed"
+  },
+  "leading-tight": {
+    "value": "1.2",
+    "kind": "value",
+    "category": "Typography",
+    "cssVar": "--aura-leading-tight"
+  },
+  "text-2xl": {
+    "value": "1.75rem",
+    "kind": "value",
+    "category": "Typography",
+    "cssVar": "--aura-text-2xl"
+  },
+  "text-3xl": {
+    "value": "2.5rem",
+    "kind": "value",
+    "category": "Typography",
+    "cssVar": "--aura-text-3xl"
+  },
+  "text-lg": {
+    "value": "1.125rem",
+    "kind": "value",
+    "category": "Typography",
+    "cssVar": "--aura-text-lg"
+  },
+  "text-md": {
+    "value": "1rem",
+    "kind": "value",
+    "category": "Typography",
+    "cssVar": "--aura-text-md"
+  },
+  "text-sm": {
+    "value": "0.875rem",
+    "kind": "value",
+    "category": "Typography",
+    "cssVar": "--aura-text-sm"
+  },
+  "text-xl": {
+    "value": "1.375rem",
+    "kind": "value",
+    "category": "Typography",
+    "cssVar": "--aura-text-xl"
+  },
+  "text-xs": {
+    "value": "0.75rem",
+    "kind": "value",
+    "category": "Typography",
+    "cssVar": "--aura-text-xs"
+  },
+  "tracking-normal": {
+    "value": "0",
+    "kind": "value",
+    "category": "Typography",
+    "cssVar": "--aura-tracking-normal"
+  },
+  "tracking-tight": {
+    "value": "-0.01em",
+    "kind": "value",
+    "category": "Typography",
+    "cssVar": "--aura-tracking-tight"
+  },
+  "tracking-wide": {
+    "value": "0.04em",
+    "kind": "value",
+    "category": "Typography",
+    "cssVar": "--aura-tracking-wide"
+  },
+  "weight-bold": {
+    "value": "700",
+    "kind": "value",
+    "category": "Typography",
+    "cssVar": "--aura-weight-bold"
+  },
+  "weight-medium": {
+    "value": "500",
+    "kind": "value",
+    "category": "Typography",
+    "cssVar": "--aura-weight-medium"
+  },
+  "weight-regular": {
+    "value": "400",
+    "kind": "value",
+    "category": "Typography",
+    "cssVar": "--aura-weight-regular"
+  },
+  "weight-semibold": {
+    "value": "600",
+    "kind": "value",
+    "category": "Typography",
+    "cssVar": "--aura-weight-semibold"
+  },
+  "space-0": {
+    "value": "0",
+    "kind": "value",
+    "category": "Spacing",
+    "cssVar": "--aura-space-0"
+  },
+  "space-1": {
+    "value": "0.25rem",
+    "kind": "value",
+    "category": "Spacing",
+    "cssVar": "--aura-space-1"
+  },
+  "space-2": {
+    "value": "0.5rem",
+    "kind": "value",
+    "category": "Spacing",
+    "cssVar": "--aura-space-2"
+  },
+  "space-3": {
+    "value": "0.75rem",
+    "kind": "value",
+    "category": "Spacing",
+    "cssVar": "--aura-space-3"
+  },
+  "space-4": {
+    "value": "1rem",
+    "kind": "value",
+    "category": "Spacing",
+    "cssVar": "--aura-space-4"
+  },
+  "space-5": {
+    "value": "1.5rem",
+    "kind": "value",
+    "category": "Spacing",
+    "cssVar": "--aura-space-5"
+  },
+  "space-6": {
+    "value": "2rem",
+    "kind": "value",
+    "category": "Spacing",
+    "cssVar": "--aura-space-6"
+  },
+  "space-7": {
+    "value": "3rem",
+    "kind": "value",
+    "category": "Spacing",
+    "cssVar": "--aura-space-7"
+  },
+  "space-8": {
+    "value": "4rem",
+    "kind": "value",
+    "category": "Spacing",
+    "cssVar": "--aura-space-8"
+  },
+  "space-9": {
+    "value": "6rem",
+    "kind": "value",
+    "category": "Spacing",
+    "cssVar": "--aura-space-9"
+  },
+  "bp-medium": {
+    "value": "48rem",
+    "kind": "value",
+    "category": "Layout & sizing",
+    "cssVar": "--aura-bp-medium"
+  },
+  "bp-mobile": {
+    "value": "40rem",
+    "kind": "value",
+    "category": "Layout & sizing",
+    "cssVar": "--aura-bp-mobile"
+  },
+  "bp-narrow": {
+    "value": "22.5rem",
+    "kind": "value",
+    "category": "Layout & sizing",
+    "cssVar": "--aura-bp-narrow"
+  },
+  "bp-wide": {
+    "value": "52.5rem",
+    "kind": "value",
+    "category": "Layout & sizing",
+    "cssVar": "--aura-bp-wide"
+  },
+  "control-height-lg": {
+    "value": "3rem",
+    "kind": "value",
+    "category": "Layout & sizing",
+    "cssVar": "--aura-control-height-lg"
+  },
+  "control-height-md": {
+    "value": "2.5rem",
+    "kind": "value",
+    "category": "Layout & sizing",
+    "cssVar": "--aura-control-height-md"
+  },
+  "control-height-sm": {
+    "value": "2rem",
+    "kind": "value",
+    "category": "Layout & sizing",
+    "cssVar": "--aura-control-height-sm"
+  },
+  "input-height": {
+    "value": "2.75rem",
+    "kind": "value",
+    "category": "Layout & sizing",
+    "cssVar": "--aura-input-height"
+  },
+  "intrinsic-size": {
+    "value": "400px",
+    "kind": "value",
+    "category": "Layout & sizing",
+    "cssVar": "--aura-intrinsic-size"
+  },
+  "measure": {
+    "value": "66ch",
+    "kind": "value",
+    "category": "Layout & sizing",
+    "cssVar": "--aura-measure"
+  },
+  "measure-lead": {
+    "value": "72ch",
+    "kind": "value",
+    "category": "Layout & sizing",
+    "cssVar": "--aura-measure-lead"
+  },
+  "region-max": {
+    "value": "56rem",
+    "kind": "value",
+    "category": "Layout & sizing",
+    "cssVar": "--aura-region-max"
+  },
+  "region-min": {
+    "value": "14rem",
+    "kind": "value",
+    "category": "Layout & sizing",
+    "cssVar": "--aura-region-min"
+  },
+  "region-pref": {
+    "value": "100cqi",
+    "kind": "value",
+    "category": "Layout & sizing",
+    "cssVar": "--aura-region-pref"
+  },
+  "size-2xl": {
+    "value": "80rem",
+    "kind": "value",
+    "category": "Layout & sizing",
+    "cssVar": "--aura-size-2xl"
+  },
+  "size-2xs": {
+    "value": "10rem",
+    "kind": "value",
+    "category": "Layout & sizing",
+    "cssVar": "--aura-size-2xs"
+  },
+  "size-lg": {
+    "value": "40rem",
+    "kind": "value",
+    "category": "Layout & sizing",
+    "cssVar": "--aura-size-lg"
+  },
+  "size-md": {
+    "value": "28rem",
+    "kind": "value",
+    "category": "Layout & sizing",
+    "cssVar": "--aura-size-md"
+  },
+  "size-sm": {
+    "value": "20rem",
+    "kind": "value",
+    "category": "Layout & sizing",
+    "cssVar": "--aura-size-sm"
+  },
+  "size-xl": {
+    "value": "56rem",
+    "kind": "value",
+    "category": "Layout & sizing",
+    "cssVar": "--aura-size-xl"
+  },
+  "size-xs": {
+    "value": "14rem",
+    "kind": "value",
+    "category": "Layout & sizing",
+    "cssVar": "--aura-size-xs"
+  },
+  "tap-min": {
+    "value": "44px",
+    "kind": "value",
+    "category": "Layout & sizing",
+    "cssVar": "--aura-tap-min"
+  },
+  "radius-2xl": {
+    "value": "2rem",
+    "kind": "value",
+    "category": "Radius",
+    "cssVar": "--aura-radius-2xl"
+  },
+  "radius-full": {
+    "value": "999px",
+    "kind": "value",
+    "category": "Radius",
+    "cssVar": "--aura-radius-full"
+  },
+  "radius-lg": {
+    "value": "1rem",
+    "kind": "value",
+    "category": "Radius",
+    "cssVar": "--aura-radius-lg"
+  },
+  "radius-md": {
+    "value": "0.75rem",
+    "kind": "value",
+    "category": "Radius",
+    "cssVar": "--aura-radius-md"
+  },
+  "radius-sm": {
+    "value": "0.5rem",
+    "kind": "value",
+    "category": "Radius",
+    "cssVar": "--aura-radius-sm"
+  },
+  "radius-xl": {
+    "value": "1.5rem",
+    "kind": "value",
+    "category": "Radius",
+    "cssVar": "--aura-radius-xl"
+  },
+  "radius-xs": {
+    "value": "0.25rem",
+    "kind": "value",
+    "category": "Radius",
+    "cssVar": "--aura-radius-xs"
+  },
+  "depth": {
+    "value": "1",
+    "kind": "value",
+    "category": "Shadow & elevation",
+    "cssVar": "--aura-depth"
+  },
+  "dir-shadow-alpha": {
+    "value": "0.12",
+    "kind": "value",
+    "category": "Shadow & elevation",
+    "cssVar": "--aura-dir-shadow-alpha"
+  },
+  "dir-shadow-blur-step": {
+    "value": "7px",
+    "kind": "value",
+    "category": "Shadow & elevation",
+    "cssVar": "--aura-dir-shadow-blur-step"
+  },
+  "dir-shadow-offset-step": {
+    "value": "3px",
+    "kind": "value",
+    "category": "Shadow & elevation",
+    "cssVar": "--aura-dir-shadow-offset-step"
+  },
+  "shadow-1": {
+    "value": "0 1px 2px hsl(230 40% 3% / calc(0.30 * calc(1 * 1))), 0 1px 1px hsl(230 40% 3% / calc(0.24 * calc(1 * 1)))",
+    "kind": "value",
+    "category": "Shadow & elevation",
+    "cssVar": "--aura-shadow-1"
+  },
+  "shadow-2": {
+    "value": "0 4px 10px hsl(230 40% 3% / calc(0.34 * calc(1 * 1))), 0 2px 4px hsl(230 40% 3% / calc(0.28 * calc(1 * 1)))",
+    "kind": "value",
+    "category": "Shadow & elevation",
+    "cssVar": "--aura-shadow-2"
+  },
+  "shadow-3": {
+    "value": "0 12px 28px hsl(230 40% 3% / calc(0.40 * calc(1 * 1))), 0 6px 12px hsl(230 40% 3% / calc(0.30 * calc(1 * 1)))",
+    "kind": "value",
+    "category": "Shadow & elevation",
+    "cssVar": "--aura-shadow-3"
+  },
+  "shadow-4": {
+    "value": "0 20px 48px hsl(230 40% 3% / calc(0.46 * calc(1 * 1))), 0 10px 20px hsl(230 40% 3% / calc(0.32 * calc(1 * 1)))",
+    "kind": "value",
+    "category": "Shadow & elevation",
+    "cssVar": "--aura-shadow-4"
+  },
+  "shadow-5": {
+    "value": "0 32px 80px hsl(230 40% 3% / calc(0.55 * calc(1 * 1))), 0 16px 32px hsl(230 40% 3% / calc(0.38 * calc(1 * 1)))",
+    "kind": "value",
+    "category": "Shadow & elevation",
+    "cssVar": "--aura-shadow-5"
+  },
+  "shadow-6": {
+    "value": "0 48px 112px hsl(230 40% 3% / calc(0.62 * calc(1 * 1))), 0 24px 48px hsl(230 40% 3% / calc(0.44 * calc(1 * 1)))",
+    "kind": "value",
+    "category": "Shadow & elevation",
+    "cssVar": "--aura-shadow-6"
+  },
+  "shadow-boost": {
+    "value": "1",
+    "kind": "value",
+    "category": "Shadow & elevation",
+    "cssVar": "--aura-shadow-boost"
+  },
+  "shadow-color": {
+    "value": "230 40% 3%",
+    "kind": "value",
+    "category": "Shadow & elevation",
+    "cssVar": "--aura-shadow-color"
+  },
+  "shadow-strength": {
+    "value": "calc(1 * 1)",
+    "kind": "value",
+    "category": "Shadow & elevation",
+    "cssVar": "--aura-shadow-strength"
+  },
+  "dur-ambient": {
+    "value": "1.6s",
+    "kind": "value",
+    "category": "Motion",
+    "cssVar": "--aura-dur-ambient"
+  },
+  "dur-base": {
+    "value": "200ms",
+    "kind": "value",
+    "category": "Motion",
+    "cssVar": "--aura-dur-base"
+  },
+  "dur-fast": {
+    "value": "120ms",
+    "kind": "value",
+    "category": "Motion",
+    "cssVar": "--aura-dur-fast"
+  },
+  "dur-slow": {
+    "value": "360ms",
+    "kind": "value",
+    "category": "Motion",
+    "cssVar": "--aura-dur-slow"
+  },
+  "ease-accelerate": {
+    "value": "cubic-bezier(0.4, 0, 1, 1)",
+    "kind": "value",
+    "category": "Motion",
+    "cssVar": "--aura-ease-accelerate"
+  },
+  "ease-out": {
+    "value": "cubic-bezier(0.16, 1, 0.3, 1)",
+    "kind": "value",
+    "category": "Motion",
+    "cssVar": "--aura-ease-out"
+  },
+  "ease-spring": {
+    "value": "cubic-bezier(0.34, 1.56, 0.64, 1)",
+    "kind": "value",
+    "category": "Motion",
+    "cssVar": "--aura-ease-spring"
+  },
+  "ease-standard": {
+    "value": "cubic-bezier(0.2, 0, 0, 1)",
+    "kind": "value",
+    "category": "Motion",
+    "cssVar": "--aura-ease-standard"
+  },
+  "entrance-dur": {
+    "value": "420ms",
+    "kind": "value",
+    "category": "Motion",
+    "cssVar": "--aura-entrance-dur"
+  },
+  "entrance-rise": {
+    "value": "16px",
+    "kind": "value",
+    "category": "Motion",
+    "cssVar": "--aura-entrance-rise"
+  },
+  "entrance-scale-from": {
+    "value": "0.985",
+    "kind": "value",
+    "category": "Motion",
+    "cssVar": "--aura-entrance-scale-from"
+  },
+  "entrance-step": {
+    "value": "90ms",
+    "kind": "value",
+    "category": "Motion",
+    "cssVar": "--aura-entrance-step"
+  },
+  "z-base": {
+    "value": "0",
+    "kind": "value",
+    "category": "Z-index",
+    "cssVar": "--aura-z-base"
+  },
+  "z-menu": {
+    "value": "1100",
+    "kind": "value",
+    "category": "Z-index",
+    "cssVar": "--aura-z-menu"
+  },
+  "z-modal": {
+    "value": "1200",
+    "kind": "value",
+    "category": "Z-index",
+    "cssVar": "--aura-z-modal"
+  },
+  "z-overlay": {
+    "value": "1000",
+    "kind": "value",
+    "category": "Z-index",
+    "cssVar": "--aura-z-overlay"
+  },
+  "z-raised": {
+    "value": "10",
+    "kind": "value",
+    "category": "Z-index",
+    "cssVar": "--aura-z-raised"
+  },
+  "z-sticky": {
+    "value": "100",
+    "kind": "value",
+    "category": "Z-index",
+    "cssVar": "--aura-z-sticky"
+  },
+  "z-toast": {
+    "value": "1300",
+    "kind": "value",
+    "category": "Z-index",
+    "cssVar": "--aura-z-toast"
+  },
+  "z-tooltip": {
+    "value": "1400",
+    "kind": "value",
+    "category": "Z-index",
+    "cssVar": "--aura-z-tooltip"
+  },
+  "border-style": {
+    "value": "solid",
+    "kind": "value",
+    "category": "Focus & interaction",
+    "cssVar": "--aura-border-style"
+  },
+  "border-width": {
+    "value": "1px",
+    "kind": "value",
+    "category": "Focus & interaction",
+    "cssVar": "--aura-border-width"
+  },
+  "disabled-opacity": {
+    "value": "0.5",
+    "kind": "value",
+    "category": "Focus & interaction",
+    "cssVar": "--aura-disabled-opacity"
+  },
+  "divider": {
+    "value": "1px solid color-mix(in srgb, white 12%, transparent)",
+    "kind": "value",
+    "category": "Focus & interaction",
+    "cssVar": "--aura-divider"
+  },
+  "focus-ring": {
+    "value": "2px solid color-mix(in oklch, #7654f5, white 32%)",
+    "kind": "value",
+    "category": "Focus & interaction",
+    "cssVar": "--aura-focus-ring"
+  },
+  "focus-ring-offset": {
+    "value": "2px",
+    "kind": "value",
+    "category": "Focus & interaction",
+    "cssVar": "--aura-focus-ring-offset"
+  },
+  "hover-lift": {
+    "value": "1px",
+    "kind": "value",
+    "category": "Focus & interaction",
+    "cssVar": "--aura-hover-lift"
+  },
+  "overlay-enter-scale": {
+    "value": "0.96",
+    "kind": "value",
+    "category": "Focus & interaction",
+    "cssVar": "--aura-overlay-enter-scale"
+  },
+  "ring": {
+    "value": "0 0 0 3px color-mix(in srgb, #7654f5 40%, transparent)",
+    "kind": "value",
+    "category": "Focus & interaction",
+    "cssVar": "--aura-ring"
+  },
+  "ring-offset": {
+    "value": "0 0 0 2px #0a0b12",
+    "kind": "value",
+    "category": "Focus & interaction",
+    "cssVar": "--aura-ring-offset"
+  },
+  "scroll-progress": {
+    "value": "0",
+    "kind": "value",
+    "category": "Focus & interaction",
+    "cssVar": "--aura-scroll-progress"
+  },
+  "ratio-classic": {
+    "value": "4 / 3",
+    "kind": "value",
+    "category": "Aspect ratios",
+    "cssVar": "--aura-ratio-classic"
+  },
+  "ratio-golden": {
+    "value": "1.618 / 1",
+    "kind": "value",
+    "category": "Aspect ratios",
+    "cssVar": "--aura-ratio-golden"
+  },
+  "ratio-photo": {
+    "value": "3 / 2",
+    "kind": "value",
+    "category": "Aspect ratios",
+    "cssVar": "--aura-ratio-photo"
+  },
+  "ratio-portrait": {
+    "value": "3 / 4",
+    "kind": "value",
+    "category": "Aspect ratios",
+    "cssVar": "--aura-ratio-portrait"
+  },
+  "ratio-square": {
+    "value": "1 / 1",
+    "kind": "value",
+    "category": "Aspect ratios",
+    "cssVar": "--aura-ratio-square"
+  },
+  "ratio-ultrawide": {
+    "value": "21 / 9",
+    "kind": "value",
+    "category": "Aspect ratios",
+    "cssVar": "--aura-ratio-ultrawide"
+  },
+  "ratio-video": {
+    "value": "16 / 9",
+    "kind": "value",
+    "category": "Aspect ratios",
+    "cssVar": "--aura-ratio-video"
+  },
+  "blur-1": {
+    "value": "0px",
+    "kind": "value",
+    "category": "Glass & blur",
+    "cssVar": "--aura-blur-1"
+  },
+  "blur-2": {
+    "value": "4px",
+    "kind": "value",
+    "category": "Glass & blur",
+    "cssVar": "--aura-blur-2"
+  },
+  "blur-3": {
+    "value": "8px",
+    "kind": "value",
+    "category": "Glass & blur",
+    "cssVar": "--aura-blur-3"
+  },
+  "blur-4": {
+    "value": "12px",
+    "kind": "value",
+    "category": "Glass & blur",
+    "cssVar": "--aura-blur-4"
+  },
+  "blur-5": {
+    "value": "16px",
+    "kind": "value",
+    "category": "Glass & blur",
+    "cssVar": "--aura-blur-5"
+  },
+  "blur-6": {
+    "value": "20px",
+    "kind": "value",
+    "category": "Glass & blur",
+    "cssVar": "--aura-blur-6"
+  },
+  "glass-saturate": {
+    "value": "1.5",
+    "kind": "value",
+    "category": "Glass & blur",
+    "cssVar": "--aura-glass-saturate"
+  },
+  "glass-tint": {
+    "value": "rgba(0, 0, 0, 0)",
+    "kind": "color",
+    "category": "Glass & blur",
+    "cssVar": "--aura-glass-tint"
+  },
+  "glass-tint-layer": {
+    "value": "linear-gradient(0deg, color-mix(in srgb, transparent calc(0 * 100%), transparent), color-mix(in srgb, transparent calc(0 * 100%), transparent))",
+    "kind": "value",
+    "category": "Glass & blur",
+    "cssVar": "--aura-glass-tint-layer"
+  },
+  "glass-tint-strength": {
+    "value": "0",
+    "kind": "value",
+    "category": "Glass & blur",
+    "cssVar": "--aura-glass-tint-strength"
+  },
+  "glass-tint-wash": {
+    "value": "color(srgb 0 0 0 / 0)",
+    "kind": "color",
+    "category": "Glass & blur",
+    "cssVar": "--aura-glass-tint-wash"
+  },
+  "bevel-base": {
+    "value": "1px",
+    "kind": "value",
+    "category": "Glow & edge effects",
+    "cssVar": "--aura-bevel-base"
+  },
+  "bevel-light": {
+    "value": "color(srgb 1 1 1 / 0.26)",
+    "kind": "color",
+    "category": "Glow & edge effects",
+    "cssVar": "--aura-bevel-light"
+  },
+  "bevel-shadow": {
+    "value": "rgba(5, 6, 11, 0.45)",
+    "kind": "color",
+    "category": "Glow & edge effects",
+    "cssVar": "--aura-bevel-shadow"
+  },
+  "bevel-size": {
+    "value": "calc(1px * 1)",
+    "kind": "value",
+    "category": "Glow & edge effects",
+    "cssVar": "--aura-bevel-size"
+  },
+  "bevel-strength": {
+    "value": "1",
+    "kind": "value",
+    "category": "Glow & edge effects",
+    "cssVar": "--aura-bevel-strength"
+  },
+  "edge-color": {
+    "value": "rgb(118, 84, 245)",
+    "kind": "color",
+    "category": "Glow & edge effects",
+    "cssVar": "--aura-edge-color"
+  },
+  "edge-light": {
+    "value": "color(srgb 1 1 1 / 0.22)",
+    "kind": "color",
+    "category": "Glow & edge effects",
+    "cssVar": "--aura-edge-light"
+  },
+  "edge-rim-color": {
+    "value": "color(srgb 0.677647 0.597647 0.976471)",
+    "kind": "color",
+    "category": "Glow & edge effects",
+    "cssVar": "--aura-edge-rim-color"
+  },
+  "edge-rim-max": {
+    "value": "0.5",
+    "kind": "value",
+    "category": "Glow & edge effects",
+    "cssVar": "--aura-edge-rim-max"
+  },
+  "edge-rim-spot": {
+    "value": "340px",
+    "kind": "value",
+    "category": "Glow & edge effects",
+    "cssVar": "--aura-edge-rim-spot"
+  },
+  "edge-rim-width": {
+    "value": "1px",
+    "kind": "value",
+    "category": "Glow & edge effects",
+    "cssVar": "--aura-edge-rim-width"
+  },
+  "edge-shine-flood": {
+    "value": "200vmax",
+    "kind": "value",
+    "category": "Glow & edge effects",
+    "cssVar": "--aura-edge-shine-flood"
+  },
+  "edge-shine-max": {
+    "value": "0.95",
+    "kind": "value",
+    "category": "Glow & edge effects",
+    "cssVar": "--aura-edge-shine-max"
+  },
+  "edge-shine-spot": {
+    "value": "150px",
+    "kind": "value",
+    "category": "Glow & edge effects",
+    "cssVar": "--aura-edge-shine-spot"
+  },
+  "edge-shine-strength": {
+    "value": "1",
+    "kind": "value",
+    "category": "Glow & edge effects",
+    "cssVar": "--aura-edge-shine-strength"
+  },
+  "edge-shine-width": {
+    "value": "1px",
+    "kind": "value",
+    "category": "Glow & edge effects",
+    "cssVar": "--aura-edge-shine-width"
+  },
+  "edge-shine-width-compact": {
+    "value": "1.5px",
+    "kind": "value",
+    "category": "Glow & edge effects",
+    "cssVar": "--aura-edge-shine-width-compact"
+  },
+  "glow-color": {
+    "value": "rgb(118, 84, 245)",
+    "kind": "color",
+    "category": "Glow & edge effects",
+    "cssVar": "--aura-glow-color"
+  },
+  "glow-intensity": {
+    "value": "0",
+    "kind": "value",
+    "category": "Glow & edge effects",
+    "cssVar": "--aura-glow-intensity"
+  },
+  "glow-radius": {
+    "value": "130px",
+    "kind": "value",
+    "category": "Glow & edge effects",
+    "cssVar": "--aura-glow-radius"
+  },
+  "glow-radius-comfortable": {
+    "value": "130px",
+    "kind": "value",
+    "category": "Glow & edge effects",
+    "cssVar": "--aura-glow-radius-comfortable"
+  },
+  "glow-radius-compact": {
+    "value": "80px",
+    "kind": "value",
+    "category": "Glow & edge effects",
+    "cssVar": "--aura-glow-radius-compact"
+  },
+  "glow-radius-cozy": {
+    "value": "110px",
+    "kind": "value",
+    "category": "Glow & edge effects",
+    "cssVar": "--aura-glow-radius-cozy"
+  },
+  "glow-x": {
+    "value": "50%",
+    "kind": "value",
+    "category": "Glow & edge effects",
+    "cssVar": "--aura-glow-x"
+  },
+  "glow-y": {
+    "value": "50%",
+    "kind": "value",
+    "category": "Glow & edge effects",
+    "cssVar": "--aura-glow-y"
+  },
+  "light-x": {
+    "value": "0",
+    "kind": "value",
+    "category": "Glow & edge effects",
+    "cssVar": "--aura-light-x"
+  },
+  "light-y": {
+    "value": "1",
+    "kind": "value",
+    "category": "Glow & edge effects",
+    "cssVar": "--aura-light-y"
+  },
+  "print-body-ink": {
+    "value": "rgb(0, 0, 0)",
+    "kind": "color",
+    "category": "Print & safe area",
+    "cssVar": "--aura-print-body-ink"
+  },
+  "print-hairline": {
+    "value": "rgb(187, 187, 187)",
+    "kind": "color",
+    "category": "Print & safe area",
+    "cssVar": "--aura-print-hairline"
+  },
+  "print-ink": {
+    "value": "rgb(68, 68, 68)",
+    "kind": "color",
+    "category": "Print & safe area",
+    "cssVar": "--aura-print-ink"
+  },
+  "print-paper": {
+    "value": "rgb(255, 255, 255)",
+    "kind": "color",
+    "category": "Print & safe area",
+    "cssVar": "--aura-print-paper"
+  },
+  "safe-bottom": {
+    "value": "env(safe-area-inset-bottom, 0px)",
+    "kind": "value",
+    "category": "Print & safe area",
+    "cssVar": "--aura-safe-bottom"
+  },
+  "safe-left": {
+    "value": "env(safe-area-inset-left, 0px)",
+    "kind": "value",
+    "category": "Print & safe area",
+    "cssVar": "--aura-safe-left"
+  },
+  "safe-right": {
+    "value": "env(safe-area-inset-right, 0px)",
+    "kind": "value",
+    "category": "Print & safe area",
+    "cssVar": "--aura-safe-right"
+  },
+  "safe-top": {
+    "value": "env(safe-area-inset-top, 0px)",
+    "kind": "value",
+    "category": "Print & safe area",
+    "cssVar": "--aura-safe-top"
+  },
+  "avatar-lg": {
+    "value": "4rem",
+    "kind": "value",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-avatar-lg"
+  },
+  "avatar-md": {
+    "value": "2.5rem",
+    "kind": "value",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-avatar-md"
+  },
+  "avatar-sm": {
+    "value": "1.75rem",
+    "kind": "value",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-avatar-sm"
+  },
+  "btn-depth-shadow": {
+    "value": "0 4px 10px hsl(230 40% 3% / calc(0.34 * calc(1 * 1))), 0 2px 4px hsl(230 40% 3% / calc(0.28 * calc(1 * 1))), 0 0 calc(10px * 1) transparent",
+    "kind": "value",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-btn-depth-shadow"
+  },
+  "btn-depth-shadow-raise": {
+    "value": "0 0 calc(calc(10px * 1) * 1.8) transparent",
+    "kind": "value",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-btn-depth-shadow-raise"
+  },
+  "btn-face-amount": {
+    "value": "min(8%, calc(8% * 1))",
+    "kind": "value",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-btn-face-amount"
+  },
+  "btn-glass-blur": {
+    "value": "12px",
+    "kind": "value",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-btn-glass-blur"
+  },
+  "btn-glass-face": {
+    "value": "linear-gradient(180deg, color-mix(in oklch, color-mix(in srgb, white 6%, transparent), white min(8%, calc(8% * 1))), color-mix(in srgb, white 6%, transparent))",
+    "kind": "value",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-btn-glass-face"
+  },
+  "btn-glass-saturate": {
+    "value": "1.5",
+    "kind": "value",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-btn-glass-saturate"
+  },
+  "btn-glass-surface-solid": {
+    "value": "rgb(20, 22, 31)",
+    "kind": "color",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-btn-glass-surface-solid"
+  },
+  "btn-glow": {
+    "value": "rgba(0, 0, 0, 0)",
+    "kind": "color",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-btn-glow"
+  },
+  "btn-glow-blur": {
+    "value": "calc(10px * 1)",
+    "kind": "value",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-btn-glow-blur"
+  },
+  "btn-inner-shade": {
+    "value": "inset 0 calc(-1px * 1) calc(2px * 1) hsl(230 40% 3% / calc(0.22 * calc(1 * 1)))",
+    "kind": "value",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-btn-inner-shade"
+  },
+  "btn-rim": {
+    "value": "inset 0 1px 0 color-mix(in srgb, color-mix(in srgb, white 22%, transparent) calc(100% * 1), transparent)",
+    "kind": "value",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-btn-rim"
+  },
+  "btn-spinner-dur": {
+    "value": "calc(1.6s * 0.4375)",
+    "kind": "value",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-btn-spinner-dur"
+  },
+  "btn-tint": {
+    "value": "color(srgb 1 1 1 / 0.06)",
+    "kind": "color",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-btn-tint"
+  },
+  "catalog-duration": {
+    "value": "120ms",
+    "kind": "value",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-catalog-duration"
+  },
+  "catalog-easing": {
+    "value": "cubic-bezier(0.16, 1, 0.3, 1)",
+    "kind": "value",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-catalog-easing"
+  },
+  "catalog-gap": {
+    "value": "1rem",
+    "kind": "value",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-catalog-gap"
+  },
+  "catalog-min": {
+    "value": "11rem",
+    "kind": "value",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-catalog-min"
+  },
+  "catalog-radius": {
+    "value": "1rem",
+    "kind": "value",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-catalog-radius"
+  },
+  "catalog-ratio": {
+    "value": "1 / 1",
+    "kind": "value",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-catalog-ratio"
+  },
+  "catalog-thumb-bg": {
+    "value": "color(srgb 1 1 1 / 0.06)",
+    "kind": "color",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-catalog-thumb-bg"
+  },
+  "cp-thumb-ring": {
+    "value": "color(srgb 0.995009 0.996055 0.998878)",
+    "kind": "color",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-cp-thumb-ring"
+  },
+  "cp-thumb-ring-width": {
+    "value": "1px",
+    "kind": "value",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-cp-thumb-ring-width"
+  },
+  "fmb-column-breakpoint": {
+    "value": "640px",
+    "kind": "value",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-fmb-column-breakpoint"
+  },
+  "fmb-column-duration": {
+    "value": "200ms",
+    "kind": "value",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-fmb-column-duration"
+  },
+  "fmb-column-easing": {
+    "value": "cubic-bezier(0.16, 1, 0.3, 1)",
+    "kind": "value",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-fmb-column-easing"
+  },
+  "fmb-column-size": {
+    "value": "96px",
+    "kind": "value",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-fmb-column-size"
+  },
+  "fmb-column-width": {
+    "value": "96px",
+    "kind": "value",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-fmb-column-width"
+  },
+  "footer-bg": {
+    "value": "color(srgb 1 1 1 / 0.11)",
+    "kind": "color",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-footer-bg"
+  },
+  "footer-blur": {
+    "value": "12px",
+    "kind": "value",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-footer-blur"
+  },
+  "footer-border-color": {
+    "value": "color(srgb 1 1 1 / 0.12)",
+    "kind": "color",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-footer-border-color"
+  },
+  "footer-color": {
+    "value": "oklch(0.62 0.02 270)",
+    "kind": "color",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-footer-color"
+  },
+  "footer-duration": {
+    "value": "200ms",
+    "kind": "value",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-footer-duration"
+  },
+  "footer-easing": {
+    "value": "cubic-bezier(0,0,0.2,1)",
+    "kind": "value",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-footer-easing"
+  },
+  "footer-fmb-expand-px": {
+    "value": "14",
+    "kind": "value",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-footer-fmb-expand-px"
+  },
+  "footer-fmb-size": {
+    "value": "3rem",
+    "kind": "value",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-footer-fmb-size"
+  },
+  "footer-layout-gap": {
+    "value": "1rem",
+    "kind": "value",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-footer-layout-gap"
+  },
+  "footer-link-color": {
+    "value": "color(srgb 0.462745 0.329412 0.960784 / 0.6)",
+    "kind": "color",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-footer-link-color"
+  },
+  "footer-max-width": {
+    "value": "80rem",
+    "kind": "value",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-footer-max-width"
+  },
+  "footer-pad-block": {
+    "value": "0.75rem",
+    "kind": "value",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-footer-pad-block"
+  },
+  "footer-pad-inline": {
+    "value": "1.5rem",
+    "kind": "value",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-footer-pad-inline"
+  },
+  "footer-pad-inline-narrow": {
+    "value": "0.75rem",
+    "kind": "value",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-footer-pad-inline-narrow"
+  },
+  "footer-reveal-duration": {
+    "value": "200ms",
+    "kind": "value",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-footer-reveal-duration"
+  },
+  "footer-reveal-easing": {
+    "value": "cubic-bezier(0,0,0.2,1)",
+    "kind": "value",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-footer-reveal-easing"
+  },
+  "footer-reveal-offset": {
+    "value": "1.5rem",
+    "kind": "value",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-footer-reveal-offset"
+  },
+  "footer-saturate": {
+    "value": "1.5",
+    "kind": "value",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-footer-saturate"
+  },
+  "footer-shadow": {
+    "value": "0 -4px 10px hsl(230 40% 3% / calc(0.34 * calc(1 * 1))), 0 -2px 4px hsl(230 40% 3% / calc(0.28 * calc(1 * 1)))",
+    "kind": "value",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-footer-shadow"
+  },
+  "footer-surface-solid": {
+    "value": "rgb(20, 22, 31)",
+    "kind": "color",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-footer-surface-solid"
+  },
+  "footer-text-color": {
+    "value": "oklch(0.62 0.02 270)",
+    "kind": "color",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-footer-text-color"
+  },
+  "footer-tint-intensity": {
+    "value": "0",
+    "kind": "value",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-footer-tint-intensity"
+  },
+  "footer-translate": {
+    "value": "100%",
+    "kind": "value",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-footer-translate"
+  },
+  "footer-z-index": {
+    "value": "calc(100 - 1)",
+    "kind": "value",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-footer-z-index"
+  },
+  "form-pending-dur": {
+    "value": "calc(1.6s * 0.5625)",
+    "kind": "value",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-form-pending-dur"
+  },
+  "frame-border-width": {
+    "value": "1px",
+    "kind": "value",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-frame-border-width"
+  },
+  "frame-face": {
+    "value": "rgba(0, 0, 0, 0)",
+    "kind": "color",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-frame-face"
+  },
+  "frame-highlight": {
+    "value": "rgba(0, 0, 0, 0)",
+    "kind": "color",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-frame-highlight"
+  },
+  "frame-inset": {
+    "value": "inset 0 0 0 0 transparent",
+    "kind": "value",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-frame-inset"
+  },
+  "frame-shadow": {
+    "value": "rgba(0, 0, 0, 0)",
+    "kind": "color",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-frame-shadow"
+  },
+  "icon-size": {
+    "value": "1.15em",
+    "kind": "value",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-icon-size"
+  },
+  "icon-stroke-width": {
+    "value": "1.8",
+    "kind": "value",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-icon-stroke-width"
+  },
+  "lightbox-scrim": {
+    "value": "color(srgb 0 0 0 / 0.78)",
+    "kind": "color",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-lightbox-scrim"
+  },
+  "lightbox-scrim-solid": {
+    "value": "color(srgb 0.0172549 0.0189804 0.0267451)",
+    "kind": "color",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-lightbox-scrim-solid"
+  },
+  "magnet-dx": {
+    "value": "0px",
+    "kind": "value",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-magnet-dx"
+  },
+  "magnet-dy": {
+    "value": "0px",
+    "kind": "value",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-magnet-dy"
+  },
+  "magnet-shift": {
+    "value": "1px",
+    "kind": "value",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-magnet-shift"
+  },
+  "magnet-shift-strong": {
+    "value": "5px",
+    "kind": "value",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-magnet-shift-strong"
+  },
+  "menu-blur": {
+    "value": "12px",
+    "kind": "value",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-menu-blur"
+  },
+  "menu-icon-col": {
+    "value": "1.25rem",
+    "kind": "value",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-menu-icon-col"
+  },
+  "menu-max-block": {
+    "value": "min(70vh, 28rem)",
+    "kind": "value",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-menu-max-block"
+  },
+  "menu-saturate": {
+    "value": "1.5",
+    "kind": "value",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-menu-saturate"
+  },
+  "menu-surface": {
+    "value": "color(srgb 1 1 1 / 0.11)",
+    "kind": "color",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-menu-surface"
+  },
+  "menu-surface-solid": {
+    "value": "rgb(20, 22, 31)",
+    "kind": "color",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-menu-surface-solid"
+  },
+  "nav-header-bloom-duration": {
+    "value": "360ms",
+    "kind": "value",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-nav-header-bloom-duration"
+  },
+  "nav-header-bloom-strength": {
+    "value": "0.9",
+    "kind": "value",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-nav-header-bloom-strength"
+  },
+  "nav-header-control-height": {
+    "value": "2rem",
+    "kind": "value",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-nav-header-control-height"
+  },
+  "nav-header-direction-threshold": {
+    "value": "6px",
+    "kind": "value",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-nav-header-direction-threshold"
+  },
+  "nav-header-duration": {
+    "value": "200ms",
+    "kind": "value",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-nav-header-duration"
+  },
+  "nav-header-easing": {
+    "value": "cubic-bezier(0.16, 1, 0.3, 1)",
+    "kind": "value",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-nav-header-easing"
+  },
+  "nav-header-gap": {
+    "value": "1rem",
+    "kind": "value",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-nav-header-gap"
+  },
+  "nav-header-glow-strength": {
+    "value": "0.85",
+    "kind": "value",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-nav-header-glow-strength"
+  },
+  "nav-header-height": {
+    "value": "4rem",
+    "kind": "value",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-nav-header-height"
+  },
+  "nav-header-height-current": {
+    "value": "4rem",
+    "kind": "value",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-nav-header-height-current"
+  },
+  "nav-header-height-shrunk": {
+    "value": "3rem",
+    "kind": "value",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-nav-header-height-shrunk"
+  },
+  "nav-header-hotzone": {
+    "value": "2rem",
+    "kind": "value",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-nav-header-hotzone"
+  },
+  "nav-header-hover-retain-offset": {
+    "value": "1.5rem",
+    "kind": "value",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-nav-header-hover-retain-offset"
+  },
+  "nav-header-menu-duration": {
+    "value": "120ms",
+    "kind": "value",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-nav-header-menu-duration"
+  },
+  "nav-header-menu-duration-fast": {
+    "value": "80ms",
+    "kind": "value",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-nav-header-menu-duration-fast"
+  },
+  "nav-header-pad-inline": {
+    "value": "1rem",
+    "kind": "value",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-nav-header-pad-inline"
+  },
+  "nav-header-peek": {
+    "value": "0.5rem",
+    "kind": "value",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-nav-header-peek"
+  },
+  "nav-header-rail-hue-2": {
+    "value": "rgb(82, 177, 224)",
+    "kind": "color",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-nav-header-rail-hue-2"
+  },
+  "nav-header-rail-hue-3": {
+    "value": "rgb(71, 209, 163)",
+    "kind": "color",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-nav-header-rail-hue-3"
+  },
+  "nav-header-rail-hue-4": {
+    "value": "rgb(184, 112, 219)",
+    "kind": "color",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-nav-header-rail-hue-4"
+  },
+  "nav-header-rail-hue-5": {
+    "value": "rgb(232, 171, 48)",
+    "kind": "color",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-nav-header-rail-hue-5"
+  },
+  "nav-header-reveal-duration": {
+    "value": "360ms",
+    "kind": "value",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-nav-header-reveal-duration"
+  },
+  "nav-header-reveal-easing": {
+    "value": "cubic-bezier(0.34, 1.56, 0.64, 1)",
+    "kind": "value",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-nav-header-reveal-easing"
+  },
+  "nav-header-shadow": {
+    "value": "0 4px 10px hsl(230 40% 3% / calc(0.34 * calc(1 * 1))), 0 2px 4px hsl(230 40% 3% / calc(0.28 * calc(1 * 1)))",
+    "kind": "value",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-nav-header-shadow"
+  },
+  "nav-header-shadow-shrunk": {
+    "value": "0 20px 48px hsl(230 40% 3% / calc(0.46 * calc(1 * 1))), 0 10px 20px hsl(230 40% 3% / calc(0.32 * calc(1 * 1)))",
+    "kind": "value",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-nav-header-shadow-shrunk"
+  },
+  "nav-header-shrink-threshold": {
+    "value": "4rem",
+    "kind": "value",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-nav-header-shrink-threshold"
+  },
+  "nav-header-stagger-step": {
+    "value": "30ms",
+    "kind": "value",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-nav-header-stagger-step"
+  },
+  "nav-header-stagger-step-fine": {
+    "value": "20ms",
+    "kind": "value",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-nav-header-stagger-step-fine"
+  },
+  "nav-header-stash-threshold": {
+    "value": "16rem",
+    "kind": "value",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-nav-header-stash-threshold"
+  },
+  "nav-header-stash-translate": {
+    "value": "-100%",
+    "kind": "value",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-nav-header-stash-translate"
+  },
+  "nav-header-tint-intensity": {
+    "value": "1",
+    "kind": "value",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-nav-header-tint-intensity"
+  },
+  "nav-panel-blur": {
+    "value": "12px",
+    "kind": "value",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-nav-panel-blur"
+  },
+  "nav-panel-saturate": {
+    "value": "1.5",
+    "kind": "value",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-nav-panel-saturate"
+  },
+  "nav-panel-shadow": {
+    "value": "0 20px 48px hsl(230 40% 3% / calc(0.46 * calc(1 * 1))), 0 10px 20px hsl(230 40% 3% / calc(0.32 * calc(1 * 1)))",
+    "kind": "value",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-nav-panel-shadow"
+  },
+  "nav-panel-surface": {
+    "value": "color(srgb 1 1 1 / 0.11)",
+    "kind": "color",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-nav-panel-surface"
+  },
+  "nav-panel-surface-solid": {
+    "value": "rgb(20, 22, 31)",
+    "kind": "color",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-nav-panel-surface-solid"
+  },
+  "nav-search-blur": {
+    "value": "20px",
+    "kind": "value",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-nav-search-blur"
+  },
+  "nav-search-saturate": {
+    "value": "1.5",
+    "kind": "value",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-nav-search-saturate"
+  },
+  "nav-shrunk-blur": {
+    "value": "20px",
+    "kind": "value",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-nav-shrunk-blur"
+  },
+  "nav-shrunk-saturate": {
+    "value": "calc(1.5 * 1.15)",
+    "kind": "value",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-nav-shrunk-saturate"
+  },
+  "progress-slide-dur": {
+    "value": "calc(1.6s * 0.6875)",
+    "kind": "value",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-progress-slide-dur"
+  },
+  "progress-track-height": {
+    "value": "0.5rem",
+    "kind": "value",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-progress-track-height"
+  },
+  "sheet-max-block": {
+    "value": "min(85dvh, 32rem)",
+    "kind": "value",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-sheet-max-block"
+  },
+  "sidebar-blur": {
+    "value": "12px",
+    "kind": "value",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-sidebar-blur"
+  },
+  "sidebar-duration": {
+    "value": "200ms",
+    "kind": "value",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-sidebar-duration"
+  },
+  "sidebar-easing": {
+    "value": "cubic-bezier(0.16, 1, 0.3, 1)",
+    "kind": "value",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-sidebar-easing"
+  },
+  "sidebar-fmb-expand-px": {
+    "value": "14",
+    "kind": "value",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-sidebar-fmb-expand-px"
+  },
+  "sidebar-fmb-size": {
+    "value": "3rem",
+    "kind": "value",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-sidebar-fmb-size"
+  },
+  "sidebar-pad-block": {
+    "value": "0.75rem",
+    "kind": "value",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-sidebar-pad-block"
+  },
+  "sidebar-pad-inline": {
+    "value": "1rem",
+    "kind": "value",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-sidebar-pad-inline"
+  },
+  "sidebar-saturate": {
+    "value": "1.5",
+    "kind": "value",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-sidebar-saturate"
+  },
+  "sidebar-surface": {
+    "value": "color(srgb 1 1 1 / 0.11)",
+    "kind": "color",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-sidebar-surface"
+  },
+  "sidebar-surface-solid": {
+    "value": "rgb(20, 22, 31)",
+    "kind": "color",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-sidebar-surface-solid"
+  },
+  "sidebar-width": {
+    "value": "16rem",
+    "kind": "value",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-sidebar-width"
+  },
+  "split-handle-size": {
+    "value": "0.5rem",
+    "kind": "value",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-split-handle-size"
+  },
+  "split-max": {
+    "value": "90%",
+    "kind": "value",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-split-max"
+  },
+  "split-min": {
+    "value": "10%",
+    "kind": "value",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-split-min"
+  },
+  "split-step": {
+    "value": "2%",
+    "kind": "value",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-split-step"
+  },
+  "split-step-page": {
+    "value": "10%",
+    "kind": "value",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-split-step-page"
+  },
+  "toast-blur": {
+    "value": "8px",
+    "kind": "value",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-toast-blur"
+  },
+  "toast-saturate": {
+    "value": "1.5",
+    "kind": "value",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-toast-saturate"
+  },
+  "toast-surface": {
+    "value": "color(srgb 1 1 1 / 0.11)",
+    "kind": "color",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-toast-surface"
+  },
+  "toast-surface-solid": {
+    "value": "rgb(20, 22, 31)",
+    "kind": "color",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-toast-surface-solid"
+  },
+  "tooltip-blur": {
+    "value": "8px",
+    "kind": "value",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-tooltip-blur"
+  },
+  "tooltip-delay": {
+    "value": "400ms",
+    "kind": "value",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-tooltip-delay"
+  },
+  "tooltip-delay-out": {
+    "value": "80ms",
+    "kind": "value",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-tooltip-delay-out"
+  },
+  "tooltip-fg": {
+    "value": "oklch(0.97 0.01 270)",
+    "kind": "color",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-tooltip-fg"
+  },
+  "tooltip-max-inline": {
+    "value": "18rem",
+    "kind": "value",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-tooltip-max-inline"
+  },
+  "tooltip-offset": {
+    "value": "0.25rem",
+    "kind": "value",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-tooltip-offset"
+  },
+  "tooltip-saturate": {
+    "value": "1.5",
+    "kind": "value",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-tooltip-saturate"
+  },
+  "tooltip-surface": {
+    "value": "color(srgb 1 1 1 / 0.11)",
+    "kind": "color",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-tooltip-surface"
+  },
+  "tooltip-surface-solid": {
+    "value": "rgb(20, 22, 31)",
+    "kind": "color",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-tooltip-surface-solid"
+  },
+  "video-caption-scrim": {
+    "value": "color(srgb 0 0 0 / 0.6)",
+    "kind": "color",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-video-caption-scrim"
+  },
+  "video-caption-text": {
+    "value": "oklch(0.97 0.01 270)",
+    "kind": "color",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-video-caption-text"
+  },
+  "video-letterbox": {
+    "value": "rgb(10, 11, 18)",
+    "kind": "color",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-video-letterbox"
+  }
+}

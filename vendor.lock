@@ -1,4 +1,18 @@
 {
-  "deps": {},
+  "deps": {
+    "aura": {
+      "artifact": "aura-v3.541.0.tar.gz",
+      "artifact_sha256": "sha256:f22f7c52f36296e85e76783b7367e0438ffad2ebd5e42c8a9d40ad82731cc502",
+      "channel": "stable",
+      "git_sha": "d389da5cbabb1a4ee08834f2066b4631c867663b",
+      "release_json_sha256": "sha256:fd5019956cff6a480622a0c0a06a8ff8d1074605ae3b0ad543fd953dce813086",
+      "release_tag": "v3.541.0",
+      "release_url": "https://github.com/rhohn94/design-language/releases/tag/v3.541.0",
+      "signature_verified": false,
+      "synced_at": "2026-07-02T16:24:35Z",
+      "tree_sha256": "sha256:c9c8757953c3bf0920d415aba604f526333e426abd401406907bb3016651aa84",
+      "version": "3.541.0"
+    }
+  },
   "schema_version": 1
 }
