@@ -1,5 +1,11 @@
 # Version history
 
+## v1.3.2 (2026-07-02)
+
+- obsidian pin bumped v0.45.0 → v0.55.0, picking up the regenerated Aura v3.541.0 token values through obsidian's generated Rust bindings — Warden now renders the fleet-standard Aura v3.541.0 design language on screen (a substantial value-level visual change from the previous v2.34-era values; expected and correct)
+- Mechanical adaptation to obsidian's updated renderer API: `EguiRenderer::render` now takes its paint jobs and textures delta by reference
+- Completes Warden's leg of the 2026-07-02 fleet-wide Aura adoption wave (the Dependency Channel pin half shipped in v1.3.1)
+
 ## v1.3.1 (2026-07-02)
 
 - Aura design language updated to v3.541.0: Warden now records the fleet-standard Aura release via its Dependency Channel pin (`vendor.toml [deps.aura]`), vendoring the tokens-only subset with full checksum verification
