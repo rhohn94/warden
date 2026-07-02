@@ -301,7 +301,7 @@ impl App {
         let paint_jobs = ctx.tessellate(full_output.shapes, ppp);
 
         if let Some(renderer) = self.renderer.as_mut() {
-            let _ = renderer.render(paint_jobs, full_output.textures_delta, ppp);
+            let _ = renderer.render(&paint_jobs, &full_output.textures_delta, ppp);
         }
     }
 
