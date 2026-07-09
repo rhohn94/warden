@@ -1,4 +1,13 @@
 #!/usr/bin/env python3
+""":"
+# Bash polyglot preamble — bash ignores the shebang and lands here.
+# Re-execute with python3, or emit a clear error if unavailable.
+if command -v python3 >/dev/null 2>&1; then
+  exec python3 "$0" "$@"
+fi
+printf 'error: %s requires python3. Re-run as: python3 %s %s\n' "$0" "$0" "$*" >&2
+exit 1
+":"""
 """Protected-branch guard (deny-by-default).
 
 Blocks history-mutating git operations (commit, merge, rebase,
@@ -25,6 +34,26 @@ Operator escape hatch: to legitimately mutate a protected branch in a
 worktree (e.g. the final `version/* → dev` handoff, or the
 `dev → main` promotion), create the marker file in that worktree
 deliberately:  touch .claude/integration-allow.local
+
+Direct-commit-to-`main` is ALREADY covered (BMI-4, v3.38, issue #126)
+====================================================================
+The (actor, branch-class) model below is TOTAL. In particular, an
+UNMARKED actor's `git commit` or `git merge` on `main` is DENIED by the
+deny-by-default path at the bottom of main() — `commit` ∈ MUTATING and
+`main` ∈ PROTECTED_RE, so the hook exits 2. This guards the exact failure
+mode in issue #126 (a manual release and a scaffolding sync committed
+straight to `main` without an integration-master marker). The framing in
+#126 — "the guard handles pushes" — is incomplete: the guard also handles
+COMMITS.
+
+Known residual (documented, deferred — NOT closed in v3.38): a MARKED
+integration master may commit to `main` at any time, including mid-release
+out of a clean boundary. This is by design — the master must promote to
+`main` — so the `marked + protected → allow` cell covers it. Tightening
+this (e.g. asserting a clean release boundary before a marked commit on
+`main`) is a recorded follow-up and is NOT in v3.38 scope. The divergence
+guard (BMI-2, in the release-planning engine's divergence-check) and process
+discipline are the boundary enforcement at that layer.
 
 Write-capable workflow agent safety contract (v1.6+)
 =====================================================
@@ -102,7 +131,7 @@ The two rules together make the (actor, branch-class) model TOTAL:
   - unmarked + unprotected -> allow  (agent's own work branch)
   - marked   + protected   -> allow  (the integration master at work)
   - marked   + unprotected -> deny   (NEW: master HEAD-drift)
-See docs/design/dispatch-hardening-design.md §3.1.
+See docs/grimoire/design/dispatch-hardening-design.md §3.1.
 
 History-rewrite deny rule (v3.15, item #84)
 ===========================================
@@ -127,7 +156,7 @@ history. Force-push and remote-ref deletion are the push-side complement and
 remain owned by `push-guard.sh` (DENIED_FLAGS); the two guards together cover
 the full #84 prohibited set. This rule only ADDS denials on protected branches
 — it never widens what is allowed, so the blast radius is unchanged.
-See docs/design/git-protocol-governance-design.md §3a.
+See docs/grimoire/design/git-protocol-governance-design.md §3a.
 
 Test/check note: to verify the contract holds for concurrent agent
 worktrees, confirm that:
@@ -154,7 +183,7 @@ hijack guard refuses any op a lane master aims at a SIBLING lane's worktree. The
      cross-worktree hijack guard exits 2).
   6. A MARKED lane worktree whose HEAD drifts off its lane branch onto an
      unprotected work-item branch CANNOT mutate history (HEAD-drift guard, #4).
-See docs/design/project-manager-role-design.md §7.
+See docs/grimoire/design/project-manager-role-design.md §7.
 """
 import json
 import os
@@ -434,7 +463,7 @@ def main() -> None:
     # checked-out branch); work-item branches are left alone, per #84. Escape
     # hatches (--abort/--quit/--skip) and soft/mixed resets are exempt inside
     # find_rewrite_op(). Force-push is the push-side complement, owned by
-    # push-guard.sh. See docs/design/git-protocol-governance-design.md §3a.
+    # push-guard.sh. See docs/grimoire/design/git-protocol-governance-design.md §3a.
     rewrite = find_rewrite_op(cmd)
     if rewrite:
         rcur = current_branch(proj)
@@ -487,7 +516,7 @@ def main() -> None:
                 "The marker-blessed master may mutate history ONLY on a "
                 "staging branch.\nHEAD on a work-item branch is the silent "
                 "worktree-isolation failure\n(see "
-                "docs/design/dispatch-hardening-design.md): a dispatched "
+                "docs/grimoire/design/dispatch-hardening-design.md): a dispatched "
                 "Agent likely ran\nin-place instead of in its own worktree. "
                 "DO NOT merge — repair first:\n"
                 "  1. Identify the intended staging branch (version/<X.Y>).\n"

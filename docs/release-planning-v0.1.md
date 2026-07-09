@@ -35,7 +35,7 @@ Define the core data types and pin all Cargo dependencies.
 
 ### §2.2 UX design language adaptation
 
-Run `design-language-adapt` to replace the stub `docs/design/ux/design-language.md` with the full Aura/obsidian adaptation, documenting all token constants agents will use in the GUI.
+Run `grm-design-language-adapt` to replace the stub `docs/design/ux/design-language.md` with the full Aura/obsidian adaptation, documenting all token constants agents will use in the GUI.
 
 **Acceptance criteria:**
 - `docs/design/ux/design-language.md` front-matter has `adaptation-status: complete` and a non-empty `source-sha`
@@ -141,7 +141,7 @@ An ADR capturing the module decomposition, async data-flow, and key dependency d
 **Acceptance criteria:**
 - Written after core modules (§2.3–§2.6) are implemented so it reflects real decisions, not spec
 - Covers: module roles, async data-flow diagram (scanner → watch channel → app.rs), tokio runtime topology, Obsidian widget integration rationale, out-of-scope decisions and why
-- Created via `design-doc-scaffold`; linked from `docs/design/README.md` (create README if absent)
+- Created via `grm-design-doc-scaffold`; linked from `docs/design/README.md` (create README if absent)
 - `cargo test` and `cargo build --release` unaffected (doc-only change)
 
 **Branch:** `warden/v0.1-arch-doc`
@@ -188,7 +188,7 @@ Phase 1 merges first (unblocks all Rust compilation); Phase 2 merges after Phase
 | Ensign HTTP health polling | v0.2+ |
 | Version update checks | v0.2+ |
 | History / uptime tracking | v0.2+ |
-| `ux-demo/` widget gallery (`ux-demo-build`) | v0.2+ (opt-in, after design language is stable) |
+| `ux-demo/` widget gallery (`grm-ux-demo-build`) | v0.2+ (opt-in, after design language is stable) |
 
 ---
 

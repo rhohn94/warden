@@ -20,7 +20,7 @@ Operate by these five rules, in priority order:
    message, or trailer in a committed deliverable file mentions Claude /
    Anthropic / "AI" / "LLM" / an agent, and **never** add a
    `Co-Authored-By: Claude` trailer. Run
-   `python3 .claude/skills/stealth-mode-switch/stealth_scrub.py scan --staged --strict`
+   `python3 .claude/skills/grm-stealth-mode-switch/stealth_scrub.py scan --staged --strict`
    before each commit and fix anything it flags.
 3. **Match the surrounding style over Grimoire's standards.** Mirror the
    existing code's and comments' conventions — naming, formatting, comment

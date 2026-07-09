@@ -1,0 +1,28 @@
+# vendor.toml — Dependency Channel intent (Grimoire seed stub).
+#
+# Declares each first-party dependency this repo vendors from a published
+# GitHub Release. `recipe.py sync-deps` resolves → downloads → verifies sha256
+# → atomic-replaces the dep's `dest` tree → writes vendor.lock. Build & runtime
+# read only the committed vendored bytes; the network is touched at sync time.
+#
+# Standard destination: vendored deps live under `lib/third-party/<dep>/` per
+# docs/project-structure.md (`dest` may be any repo-relative path; a legacy
+# `vendor/<dep>` still works — relocate it with `grm-structure-migrate`).
+#
+# This stub declares NO active deps — add a [deps.<name>] block per dependency.
+# vendor.lock is auto-generated (do not hand-edit); commit both files plus the
+# vendored bytes under `lib/third-party/<dep>/`.
+
+schema_version = 1
+
+# Example dependency (commented out — copy, uncomment, and edit per dep):
+#
+# [deps.aura]
+# repo = "rhohn94/design-language"   # GitHub owner/repo of the producer
+# channel = "stable"                 # stable | beta (the producer's release channel)
+# version = "3.20.0"                 # exact pin; sync fetches this release tag
+# artifact = "aura-v3.20.0.tar.gz"   # primary release asset basename
+# dest = "lib/third-party/aura"      # repo-relative vendored destination (standard home)
+# kind = "asset-bundle"             # asset-bundle | vendored-crate | app-binary
+# strip_components = 1               # optional, default 0 — leading path parts to drop
+# extract = ["css/", "fonts/"]       # optional subset allowlist

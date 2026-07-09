@@ -8,24 +8,24 @@ doc; their guide is `CLAUDE.md`.
 Each step's authoritative procedure lives in the named skill; this doc is the
 map between them.
 
-1. **Plan scope** — `release-planning` skill. Read docs, roadmap, carryovers.
+1. **Plan scope** — `grm-release-planning` skill. Read docs, roadmap, carryovers.
    Present a draft work-items report **with open design questions highlighted**.
    Do not lock anything until the user has resolved each question.
-2. **Lock scope** — `release-agreement` skill. Present the report to the user;
+2. **Lock scope** — `grm-release-agreement` skill. Present the report to the user;
    walk through each open item; wait for the user to say "agree" or "lock" for
    each. Only then freeze into `docs/release-planning-v{X.Y}.md` and create
    the `version/{X.Y}` integration branch.
-3. **Distribute work** — `release-phase` skill. Present the dependency graph
+3. **Distribute work** — `grm-release-phase` skill. Present the dependency graph
    and model assignments. **Spawn one item at a time** — each with an explicit
    "Spawn `{ITEM-ID}`?" confirmation before calling `spawn_task`. Let the user
    pace the spawning.
-4. **Track** — `release-agent-tracker` skill. Reconcile §5 ledger with live
+4. **Track** — `grm-release-agent-tracker` skill. Reconcile §5 ledger with live
    branches. Present the ready-to-merge list to the user; ask which to merge
    first.
-5. **Integrate** — `release-phase-merge` skill. For each branch: show the diff
+5. **Integrate** — `grm-release-phase-merge` skill. For each branch: show the diff
    summary, ask "Merge `{branch}`?", wait for confirmation, merge, report test
    result. Repeat per branch.
-6. **Release** — `project-release` skill. Present the pre-release checklist;
+6. **Release** — `grm-project-release` skill. Present the pre-release checklist;
    wait for the user to say "release." Promotes `dev` → `main` and tags.
 
 The integration master is the **only** role that merges into
@@ -79,8 +79,8 @@ cleanup for the full procedure). Always report what you find and ask before
 removing any worktree, even a clean one.
 
 **Post-release cleanup step.** Cleanup is also a named, ordered release step,
-run once after `project-release` tags the version and the push completes
-(`project-release` §Post-release cleanup drives it; `release-phase-merge`
+run once after `grm-project-release` tags the version and the push completes
+(`grm-project-release` §Post-release cleanup drives it; `grm-release-phase-merge`
 cross-references it). Only the **marker-blessed master** may run it. For each
 work-item branch/worktree: verify merged + clean, **preserve or report** any
 uncommitted work (never silent `--force`), `unlock` then `git worktree remove`,
@@ -101,23 +101,23 @@ under a PM, also lane `version/{X.Y}/<lane>` -> `version/{X.Y}`):
 1. **Push the head branch** — a push-class action: propose-and-wait (human-gated)
    unless `autonomous-push.enabled`. `push-guard.sh` permits the `version/*` head
    **only because** `github-pr.enabled`; marker + destructive-flag rules unchanged.
-2. **Open the PR** (idempotent): `github-pr` skill /
-   `python3 .claude/skills/github-pr/github_pr.py open --base <B> --head <H> --plan <plan>`.
+2. **Open the PR** (idempotent): `grm-github-pr` skill /
+   `python3 .claude/skills/grm-github-pr/github_pr.py open --base <B> --head <H> --plan <plan>`.
    On `degraded` (no `gh` / remote), fall back to the local merge and log it.
 3. **Dispatch a Reviewer in PR mode** (if `review.auto-dispatch`): it reads the
    PR diff, runs `code-review`, and posts findings per `review.post-comments`
-   (`off` / `comment` / `request-changes`). See the `reviewer` skill §2.5.
+   (`off` / `comment` / `request-changes`). See the `grm-reviewer` skill §2.5.
 4. **Merge via the PR**: `github_pr.py merge --pr N --method <merge-method>` —
    **skip the local `--no-ff` merge at this boundary**. Do not merge while
    `reviewDecision == CHANGES_REQUESTED`. Boundaries not in `boundary` merge
    locally as today.
 
-`github-pr` does **not** imply autonomous push — open/merge stay governed by the
+`grm-github-pr` does **not** imply autonomous push — open/merge stay governed by the
 existing push gate. Full design: `docs/design/github-pr-integration-design.md`.
 
 ## Pushing to origin
 
-A single trigger moment, once per release: after `project-release` promotes
+A single trigger moment, once per release: after `grm-project-release` promotes
 `dev` → `main` and tags, propose pushing `dev`, `main`, and the version tag
 **together** and wait for explicit user instruction — never push automatically.
 The earlier `version/{X.Y}` → `dev` integration no longer prompts a push (`dev`
@@ -131,7 +131,7 @@ human run them if genuinely needed.
 
 When a **Project Manager** owns a multi-feature release (see
 `docs/design/project-manager-role-design.md` and
-`.claude/skills/project-manager/SKILL.md`), the single `version/{X.Y}` staging
+`.claude/skills/grm-project-manager/SKILL.md`), the single `version/{X.Y}` staging
 line is split into **parallel lanes**, each implemented by its own integration
 master:
 
@@ -140,7 +140,7 @@ master:
   overlap analysis — `pm_overlap.py`). The `version/.*` shape keeps lane branches
   inside the protected set, so the existing guards cover them unchanged.
 - **One integration master per lane**, each in its own marker-blessed worktree,
-  merging its task agents' branches into its lane branch via `release-phase-merge`
+  merging its task agents' branches into its lane branch via `grm-release-phase-merge`
   — exactly the single-master flow, scoped to the lane.
 - **Lane integration.** As lanes complete, the PM merges each lane branch into
   `version/{X.Y}`, then promotes `version/{X.Y}` -> `dev` -> `main`. Lanes are

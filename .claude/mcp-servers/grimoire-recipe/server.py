@@ -2,7 +2,7 @@
 """server.py — Grimoire grimoire-recipe MCP server.
 
 A thin McpServer subclass over the build-recipe dispatcher
-(.claude/skills/build-recipe/recipe.py). Exposes three tools:
+(.claude/skills/grm-build-recipe/recipe.py). Exposes three tools:
   - list_targets   — enumerate the interface vocabulary + per-project status
   - dry_run        — resolve a target's command without executing (structured result)
   - run_recipe     — execute a recipe target; returns structured exit/output result

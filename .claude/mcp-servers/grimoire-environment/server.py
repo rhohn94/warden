@@ -2,12 +2,12 @@
 """server.py — Grimoire grimoire-environment MCP server (read-only environment inspection).
 
 Exposes three read-only tools wrapping env_probe.py
-(.claude/skills/environment-manager/env_probe.py) as a token-cheap MCP surface,
+(.claude/skills/grm-environment-manager/env_probe.py) as a token-cheap MCP surface,
 built on the reusable stdlib runtime (.claude/mcp-servers/lib/mcp_runtime.py).
 No third-party dependencies (#75: Python 3 stdlib only).
 
 Lifecycle operations (kill, start) are deliberately EXCLUDED from this server.
-Per docs/design/environment-manager-design.md §3, lifecycle actions require
+Per docs/grimoire/design/environment-manager-design.md §3, lifecycle actions require
 per-action authorization — that responsibility stays agent-side where the
 authorization gate is enforced. This server is read-only: it inspects, never
 mutates.

@@ -1,5 +1,12 @@
 # Version history
 
+## v1.3.3 (2026-07-09)
+
+- Development tooling upgraded to Grimoire framework v3.55 (from v3.36): refreshed skill set, standard project-doc structure, and workspace-hygiene housekeeping — no change to Warden's runtime behavior
+- Skill namespacing cutover: internal Grimoire skills now live under a collision-safe `grm-` prefix
+- Framework-internal operational docs relocated out of the top-level docs tree to keep Warden's own documentation separate from Grimoire's
+- Justfile confirmed against the new standard build/run/deploy recipe contract (no behavior change)
+
 ## v1.3.2 (2026-07-02)
 
 - obsidian pin bumped v0.45.0 → v0.55.0, picking up the regenerated Aura v3.541.0 token values through obsidian's generated Rust bindings — Warden now renders the fleet-standard Aura v3.541.0 design language on screen (a substantial value-level visual change from the previous v2.34-era values; expected and correct)

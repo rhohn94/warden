@@ -66,7 +66,7 @@ export const meta = {
 if (meta.tier === 'write-capable' && activeParadigm() !== 'Noir') {
   throw new Error(
     'write-capable workflows require the Noir paradigm. ' +
-    'Switch paradigm (work-paradigm-switch skill) or use a read-only workflow.'
+    'Switch paradigm (grm-work-paradigm-switch skill) or use a read-only workflow.'
   )
 }
 

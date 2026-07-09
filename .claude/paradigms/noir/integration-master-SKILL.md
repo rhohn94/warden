@@ -30,15 +30,15 @@ into phases and dispatch each work item as a separate isolated-worktree agent �
 
 ## Scope under a Project Manager (v3.1)
 
-When a **Project Manager** (PM) owns the release (a `project-manager` config
+When a **Project Manager** (PM) owns the release (a `grm-project-manager` config
 block is present and a PM is engaged), the integration master is **narrowed to
 one feature lane**: it implements the lane's feature(s) — plans the lane's
 items, spawns task agents, merges their branches into its **lane branch**
 `version/{X.Y}/<lane>` — and reports lane status up to the PM. In that mode the
 PM, not the master, owns release planning/agreement, lane integration, the QA
-gate, `project-release`, and the push.
+gate, `grm-project-release`, and the push.
 
-Absent a PM (no `project-manager` block, or a single-feature release), the
+Absent a PM (no `grm-project-manager` block, or a single-feature release), the
 master is unchanged: it remains the top-level orchestrator and runs the whole
 pipeline below exactly as documented (the degenerate one-lane case). The PM
 layer is additive — it does not remove the standalone master path. See
@@ -68,7 +68,7 @@ The master executes the following without pausing for confirmation:
 | Scope planning | Read docs, select work items, write the plan. |
 | Scope lock | Lock the agreed plan and create the staging branch. |
 | Batch grouping | Apply the §3 conflict map; group items into batches. |
-| Model assignment | Apply the `repo-reference` table; no override needed. |
+| Model assignment | Apply the `grm-repo-reference` table; no override needed. |
 | Dispatch batch | Dispatch all items in the current batch as isolated-worktree subagents (`Agent` with `isolation:"worktree"`, or a write-capable Workflow) — no `spawn_task` chips. |
 | Per-branch merge | Run `git diff`, review, merge, test — unsupervised. |
 | Ledger tick | Tick §5 after each successful merge. |
@@ -91,14 +91,14 @@ Once a plan is agreed, the master MUST, by default:
 1. **Decompose into phases.** Read §2/§3 of the agreed plan; identify the
    current open phase and its parallel batches per the conflict map.
 2. **Dispatch work items as separate isolated-worktree subagents.** For each
-   item in the current batch, dispatch a distinct subagent via `release-phase` —
+   item in the current batch, dispatch a distinct subagent via `grm-release-phase` —
    `Agent` with `isolation:"worktree"`, or a write-capable Workflow — whose
    agents each receive their own isolated worktree and short-lived branch. Noir
    does **not** drop `spawn_task` chips for dispatch (chips need a human click);
    that path is Supervised / Weiss only. The master does **not** implement the
    items inline.
 3. **Merge per phase.** As branches report back, review, test, and merge them
-   into `version/{X.Y}` via `release-phase-merge`, tick §5 after each merge,
+   into `version/{X.Y}` via `grm-release-phase-merge`, tick §5 after each merge,
    then advance to the next phase — exactly as this project is dogfooded.
 
 Solo inline implementation by the master is the anti-pattern, not the default.
@@ -110,7 +110,7 @@ work-item row of the current phase in its own worktree, rather than spawning an
 agent for it), surface this advisory reminder:
 
 > *Noir default is distributed dispatch: this work maps to planned item
-> {ITEM-ID}. Spawn an isolated-worktree agent via `release-phase` instead of
+> {ITEM-ID}. Spawn an isolated-worktree agent via `grm-release-phase` instead of
 > implementing inline, so the work keeps its per-item isolation, review gate,
 > and ledger row. Proceed inline only if this is intentionally out of the
 > phased plan.*
@@ -153,7 +153,7 @@ The master MUST defend against this on **every** dispatch batch:
    with an explicit "never `git switch/checkout/branch/merge/push`" constraint,
    then verifies HEAD and branch-content before merging. Full contract:
    `docs/design/dispatch-hardening-design.md` §7.3.
-   Scriptable check: `python3 .claude/skills/integration-master/verify_isolation.py
+   Scriptable check: `python3 .claude/skills/grm-integration-master/verify_isolation.py
    --result-file <path> --staging-branch version/{X.Y}`.
 
 2. **Re-verify HEAD after every batch and before every merge:**
@@ -167,10 +167,21 @@ The master MUST defend against this on **every** dispatch batch:
    exist and carry commits beyond the staging tip
    (`git log --oneline version/{X.Y}..<branch>` non-empty).
 
-These checks are mandatory steps in `release-phase-merge` (Noir, §Before every
+These checks are mandatory steps in `grm-release-phase-merge` (Noir, §Before every
 merge run). The `protected-branch-guard.sh` hook backstops them by failing
 closed if the marker-blessed master attempts to commit/merge while HEAD is off a
 staging branch.
+
+**Before-promotion divergence gate (BMI-2, v3.38, #126).** Before **both**
+promotion boundaries the master drives — `version/{X.Y}→dev` *and* the
+`dev→main` promotion at `grm-project-release` — run the model-aware divergence check
+(`merge_preflight` runs it automatically; CLI fallback `python3
+.claude/skills/grm-release-agent-tracker/release_plan.py divergence-check`). It HALTs
+iff `main` carries tree content not reachable from the integration line and does
+**not** false-positive when `main` is ahead only by promotion merges. On a HALT
+the master **must stop** (a stop condition below): reconcile by merging `main`
+INTO the integration line (merge-forward) — never `reset --hard` across the fork.
+See `docs/grimoire/integration-workflow.md` §merge-forward recovery.
 
 ---
 
@@ -243,14 +254,14 @@ Design: `docs/design/autonomy-scheduling-design.md` §1.
 
 ## Skills in order
 
-1. `release-planning` — produce the work-items report; proceed directly to lock.
-2. `release-agreement` — lock scope immediately after planning.
-3. `release-phase` — dispatch full batch of subagents without per-item confirmation.
-4. `release-agent-tracker` — poll for completed branches; proceed to merge
+1. `grm-release-planning` — produce the work-items report; proceed directly to lock.
+2. `grm-release-agreement` — lock scope immediately after planning.
+3. `grm-release-phase` — dispatch full batch of subagents without per-item confirmation.
+4. `grm-release-agent-tracker` — poll for completed branches; proceed to merge
    as each batch completes.
-5. `release-phase-merge` — merge each branch autonomously; pause only on
+5. `grm-release-phase-merge` — merge each branch autonomously; pause only on
    conflict/test failure. This step no longer pushes.
-6. `project-release` — promote `dev` → `main` and tag, then propose the single
+6. `grm-project-release` — promote `dev` → `main` and tag, then propose the single
    push of `dev` + `main` + tag together and wait for explicit confirmation.
 
 ---
@@ -265,7 +276,7 @@ master dispatches the full batch of work-item subagents at once via `Agent` with
 queues the merges as those subagents return their branches.
 
 This applies to work-item dispatch specifically. The autonomous loop's
-exception remains the single human-gated push at `project-release`.
+exception remains the single human-gated push at `grm-project-release`.
 
 ### Subagent spawn_task guard
 
@@ -305,7 +316,7 @@ out many parallel implementation items unattended:
 | Invoke | `Workflow({ name: '<name>', args: { variant: '…', … } })` — fully autonomous, no human click. |
 | Receive output | Workflow returns `{ variant, branches: [{ branch, mergeAfter, status, result }, …] }`. |
 | Triage failures | Surface any `failed` branches to the user before starting merges. |
-| Merge sequence | Call `release-phase-merge` (Noir variant, §Write-capable workflow agent branches) with the branch list, following the `mergeAfter` topological order. |
+| Merge sequence | Call `grm-release-phase-merge` (Noir variant, §Write-capable workflow agent branches) with the branch list, following the `mergeAfter` topological order. |
 | Push gate | Propose the push and wait for explicit user confirmation — same gate as for subagent branches. |
 
 **Variant selection** is the master's choice at invocation:
@@ -335,14 +346,14 @@ field, treat it as `Default`. Full spec:
 
 - **`Default` (default).** Decompose into phases and dispatch each work item as
   a separate isolated-worktree subagent (`Agent` with `isolation:"worktree"`) —
-  chip-free, no `spawn_task` — merging each branch via `release-phase-merge`.
+  chip-free, no `spawn_task` — merging each branch via `grm-release-phase-merge`.
   See §Default execution path.
 - **`Auto` (Noir only).** The master drives the whole release **in-session**
   via a write-capable Workflow (see §Write-capable Workflow integration above —
   that tier already exists; `Auto` simply makes it the *default execution
   model* for the release). It fans out the phase's items to isolated-worktree
   agents, collects the returned branch list, and continuously merges + tests
-  the branches via `release-phase-merge` (write-capable variant) in `mergeAfter`
+  the branches via `grm-release-phase-merge` (write-capable variant) in `mergeAfter`
   order. Like `Default`, it is fully chip-free; it differs in driving the whole
   release through one Workflow rather than per-item subagent dispatches. The
   master prompts the user only for the final review before release.
@@ -361,12 +372,12 @@ dial, exactly as in §Write-capable Workflow integration. The two dials compose:
 dial reads `Auto` but `work-paradigm.value != Noir` at execution time (e.g. a
 later paradigm switch left the dial stale), the master **falls back to
 `Default`** and logs the downgrade — it **never** runs write-capable agents
-outside Noir. (The `release-phase-model-switch` skill also refuses to *set*
+outside Noir. (The `grm-release-phase-model-switch` skill also refuses to *set*
 `Auto` under a non-Noir paradigm; this runtime fallback is the second line of
 defence.)
 
 **Push stays human-gated under both paths.** `Auto` does not change the
-push invariant: the master proposes the push at `project-release` and waits for
+push invariant: the master proposes the push at `grm-project-release` and waits for
 explicit human confirmation (unless `autonomous-push.enabled` is set — the
 separate, never-inferred opt-in described at the top of this guide). `Auto`
 does **not** imply autonomous push.
@@ -395,7 +406,7 @@ Full procedure: `integration-workflow.md` §Run teardown (end-of-run). Design:
 - Pushing without human confirmation — push is always human-gated.
 - Resolving ambiguous merge conflicts by guessing — stop and surface.
 - Leaving `dev` in a broken state after a test failure — debug first.
-- Skipping `release-agent-tracker` — never merge a branch that isn't
+- Skipping `grm-release-agent-tracker` — never merge a branch that isn't
   ☑ Implemented.
 - Implementing an agreed plan's work items inline in the master's own session
   instead of dispatching isolated-worktree agents (see §Default execution path).
@@ -413,9 +424,9 @@ Cost levers for long autonomous campaigns. Authority:
 - **Shared-context dispatch (#59).** When fanning out N agents, hoist the common
   context (design doc, standards, acceptance criteria) into one compact **shared
   brief** and send each agent only its **per-item delta** — not the whole context
-  per agent. See `release-phase`.
+  per agent. See `grm-release-phase`.
 - **Per-release baseline (#58).** At closeout, capture/compare the token baseline
-  via `token-measure` (`.claude/cache/token-baseline.json`); flag output-token
+  via `grm-token-measure` (`.claude/cache/token-baseline.json`); flag output-token
   regressions beyond threshold (informational).
 
 ## Autonomy hardening (v1.30)
