@@ -2,7 +2,7 @@
 """server.py — Grimoire issue-tracker MCP server (first McpServer instance).
 
 Exposes the issue-tracker engine
-(.claude/skills/issue-tracker/issue_tracker.py) as a small, token-cheap MCP
+(.claude/skills/grm-issue-tracker/issue_tracker.py) as a small, token-cheap MCP
 tool surface, built on the reusable stdlib runtime
 (.claude/mcp-servers/lib/mcp_runtime.py). No third-party dependencies (#75:
 Python 3 stdlib only). The engine keeps all backend/routing/cache/cost logic;

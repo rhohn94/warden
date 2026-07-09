@@ -14,7 +14,7 @@ even when stealth is off.
 Only the *active* variant is installed into the `CLAUDE.md`
 `<!-- STEALTH_SECTION:start --> … <!-- STEALTH_SECTION:end -->` block (lean by
 design — an off-stealth project carries only the pointer). Switch with the
-**`stealth-mode-switch`** skill; it also writes the managed-path exclusions into
+**`grm-stealth-mode-switch`** skill; it also writes the managed-path exclusions into
 `.git/info/exclude`, snapshots the branch baseline, and records the
 ephemeral-context acknowledgement. The state is stored in
 `.claude/grimoire-config.json` as `stealth-mode.value`.

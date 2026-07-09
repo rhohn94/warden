@@ -16,7 +16,7 @@ A local Rust desktop app launched by double-clicking a compiled binary. It watch
 
 ## Grimoire bootstrap
 
-This project uses Grimoire v3.36, **Noir paradigm**, **Efficient workflow**, and the **Cheap-Sonnet model profile** (Sonnet for all non-trivial tasks; no Opus). The `grimoire-config.json` is already pre-populated. Run `workflow-bootstrap` non-interactively to finish repo setup (create `dev` + `version/0.1` branches, write remaining config, initialize docs). Then proceed with the v0.1 release plan below.
+This project uses Grimoire v3.36, **Noir paradigm**, **Efficient workflow**, and the **Cheap-Sonnet model profile** (Sonnet for all non-trivial tasks; no Opus). The `grimoire-config.json` is already pre-populated. Run `grm-workflow-bootstrap` non-interactively to finish repo setup (create `dev` + `version/0.1` branches, write remaining config, initialize docs). Then proceed with the v0.1 release plan below.
 
 ---
 
@@ -236,7 +236,7 @@ Parse with `std::env::args()` directly — no clap dependency needed for v0.1.
 
 ## Design language (Aura / Obsidian)
 
-Run **`design-language-adapt`** early in the release to pull the current Aura token snapshot into `docs/design/ux/design-language.md`. Then run **`ux-demo-build`** to stand up a `ux-demo/` widget gallery so you can visually verify the Aura token application before building the main app.
+Run **`grm-design-language-adapt`** early in the release to pull the current Aura token snapshot into `docs/design/ux/design-language.md`. Then run **`grm-ux-demo-build`** to stand up a `ux-demo/` widget gallery so you can visually verify the Aura token application before building the main app.
 
 Key principle: use Obsidian's widget primitives and `aura_generated` constants everywhere. Do not hand-roll colors or spacing values.
 
@@ -251,7 +251,7 @@ Key principle: use Obsidian's widget primitives and `aura_generated` constants e
 - [ ] `app.rs`: egui window with app list, status badges, Start/Stop buttons, scan button
 - [ ] `main.rs`: AppRunner entry, tokio runtime, CLI arg parsing
 - [ ] `docs/design/app-design.md`: architecture decision record
-- [ ] `docs/design/ux/design-language.md`: Aura adaptation (via `design-language-adapt`)
+- [ ] `docs/design/ux/design-language.md`: Aura adaptation (via `grm-design-language-adapt`)
 - [ ] Passing `cargo build --release` + `cargo test` + `cargo clippy`
 
 **Out of scope for v0.1:**
@@ -286,14 +286,14 @@ Key principle: use Obsidian's widget primitives and `aura_generated` constants e
 - **Obsidian version:** v0.44.0 (latest tag at project creation)
 - **Aura version:** v3.82 (latest at project creation)
 - **Familiar** (`../familiar/`): the best working example of an Obsidian consumer; look at its `src/` and `ux-demo/` for egui integration patterns
-- **Grimoire v3.36 skills:** `.claude/skills/` — `design-language-adapt`, `ux-demo-build`, `repo-reference`, `workflow-bootstrap`
+- **Grimoire v3.36 skills:** `.claude/skills/` — `grm-design-language-adapt`, `grm-ux-demo-build`, `grm-repo-reference`, `grm-workflow-bootstrap`
 
 ---
 
 ## First steps for the agent
 
-1. Run `workflow-bootstrap` non-interactively (Noir, Cheap-Sonnet, Efficient) — creates `dev` + `version/0.1` branches, fills command table in `CLAUDE.md`, seeds `docs/`
+1. Run `grm-workflow-bootstrap` non-interactively (Noir, Cheap-Sonnet, Efficient) — creates `dev` + `version/0.1` branches, fills command table in `CLAUDE.md`, seeds `docs/`
 2. File v0.1 work items in GitHub Issues (`rhohn94/warden`) using the scope list above — one issue per logical component
-3. Run `release-planning` to size and assign items
-4. Begin the release: `integration-master` drives `release-phase` per item
-5. Run `design-language-adapt` early (before any widget work) to establish the Aura adaptation doc
+3. Run `grm-release-planning` to size and assign items
+4. Begin the release: `grm-integration-master` drives `grm-release-phase` per item
+5. Run `grm-design-language-adapt` early (before any widget work) to establish the Aura adaptation doc

@@ -1,7 +1,7 @@
 export const meta = {
   name: 'source-to-design-docs',
   tier: 'read-only',   // all paradigms; no file writes, no branch ops, no commits
-  description: 'Analysis fan-out version of the source-to-design-docs skill: parallel per-module/subsystem readers → candidate manifest → structured design-doc content proposals. Stops at the user-confirmation gate; no files are written.',
+  description: 'Analysis fan-out version of the grm-source-to-design-docs skill: parallel per-module/subsystem readers → candidate manifest → structured design-doc content proposals. Stops at the user-confirmation gate; no files are written.',
   whenToUse: 'When onboarding an existing codebase that lacks design docs, or when you want broad, parallel coverage of all subsystems before confirming which docs to write. Produces a candidate manifest + per-area content proposals; the user reviews and confirms before the skill writes any file.',
   phases: [
     { title: 'Orient', detail: 'one haiku agent: survey top-level structure (README, docs/, directory tree, entrypoints) in one pass', model: 'haiku' },
@@ -13,7 +13,7 @@ export const meta = {
 
 // ---------------------------------------------------------------------------
 // This workflow mechanises the ANALYSIS PHASE of
-// .claude/skills/source-to-design-docs/SKILL.md (Steps 1-2 + the survey
+// .claude/skills/grm-source-to-design-docs/SKILL.md (Steps 1-2 + the survey
 // content for Step 4). It fans out parallel per-module reads, then classifies
 // what warrants a design doc and drafts the content structure for each.
 //
@@ -127,7 +127,7 @@ const CANDIDATE_SCHEMA = {
     keyFiles: {
       type: 'array',
       items: { type: 'string' },
-      description: '2-6 files that contain the core logic (for the design-doc-scaffold skill to reference).',
+      description: '2-6 files that contain the core logic (for the grm-design-doc-scaffold skill to reference).',
     },
     whatItDoes: { type: 'string', description: 'One sentence: what this subsystem does.' },
     dependencies: {

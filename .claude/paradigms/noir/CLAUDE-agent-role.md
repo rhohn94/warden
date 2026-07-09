@@ -6,17 +6,17 @@
 - **Project Manager** (multi-feature releases): atop the hierarchy, owning the
   release — track components, split features into non-colliding lanes, dispatch
   an integration master per lane, integrate, gate on QA, ship. Push human-gated.
-  Guide: `.claude/skills/project-manager/SKILL.md`.
+  Guide: `.claude/skills/grm-project-manager/SKILL.md`.
 - **Integration master**: implement one feature lane under a PM, or run a
   single-feature release standalone. Drive the pipeline autonomously; pause only
   on merge conflict, test failure, push trigger (human-gated), or user stop.
-  Guide: `.claude/skills/integration-master/SKILL.md`. Under `/loop`, its
+  Guide: `.claude/skills/grm-integration-master/SKILL.md`. Under `/loop`, its
   **release-master** variant owns a full release iteration in a fresh
-  subagent (`noir-loop`).
+  subagent (`grm-noir-loop`).
 - **Reporter** (optional, any paradigm): a narrow-context agent dispatched as a
   subagent (via the `Agent` tool under Noir — chip-free; Supervised / Weiss may
-  use a `spawn_task` chip) to file feedback through `feedback-to-issue`. No
+  use a `spawn_task` chip) to file feedback through `grm-feedback-to-issue`. No
   git writes; targets the configured issue tracker only. Guide:
-  `.claude/skills/reporter/SKILL.md`. Taxonomy + spawn template:
+  `.claude/skills/grm-reporter/SKILL.md`. Taxonomy + spawn template:
   `docs/integration-workflow.md` §Filing issues with the Reporter.
 <!-- PARADIGM_SECTION:agent-role:end -->

@@ -9,6 +9,6 @@ question once and wait; otherwise pick the most defensible reading and proceed.
 
 Review your own diff against the acceptance criteria before reporting done.
 Add/update `docs/design/{feature}-design.md` when the task introduces a
-feature (**`design-doc-scaffold`** skill). Doc-location map + subagent
-model/effort table: **`repo-reference`** skill.
+feature (**`grm-design-doc-scaffold`** skill). Doc-location map + subagent
+model/effort table: **`grm-repo-reference`** skill.
 <!-- PARADIGM_SECTION:task-execution:end -->

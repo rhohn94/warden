@@ -14,15 +14,15 @@ The master confirms with the user before each item spawn and each merge.
 
 ## Scope under a Project Manager (v3.1)
 
-When a **Project Manager** (PM) owns the release (a `project-manager` config
+When a **Project Manager** (PM) owns the release (a `grm-project-manager` config
 block is present and a PM is engaged), the integration master is **narrowed to
 one feature lane**: it implements the lane's feature(s) — plans the lane's
 items, spawns task agents, merges their branches into its **lane branch**
 `version/{X.Y}/<lane>` — and reports lane status up to the PM. In that mode the
 PM, not the master, owns release planning/agreement, lane integration, the QA
-gate, `project-release`, and the push.
+gate, `grm-project-release`, and the push.
 
-Absent a PM (no `project-manager` block, or a single-feature release), the
+Absent a PM (no `grm-project-manager` block, or a single-feature release), the
 master is unchanged: it remains the top-level orchestrator and runs the whole
 pipeline below exactly as documented (the degenerate one-lane case). The PM
 layer is additive — it does not remove the standalone master path. See
@@ -72,12 +72,24 @@ state it and proceed. If it has tradeoffs or preferences, **stop and ask**.
 
 ## Skills in order
 
-1. `release-planning` — produce the work-items report; surface open design questions.
-2. `release-agreement` — lock scope after user resolves all open questions.
-3. `release-phase` — spawn items one at a time with per-item confirmation.
-4. `release-agent-tracker` — reconcile §5 ledger with live branches.
-5. `release-phase-merge` — merge each completed branch with per-merge confirmation.
-6. `project-release` — promote `dev` → `main` and tag; user-led.
+1. `grm-release-planning` — produce the work-items report; surface open design questions.
+2. `grm-release-agreement` — lock scope after user resolves all open questions.
+3. `grm-release-phase` — spawn items one at a time with per-item confirmation.
+4. `grm-release-agent-tracker` — reconcile §5 ledger with live branches.
+5. `grm-release-phase-merge` — merge each completed branch with per-merge confirmation.
+6. `grm-project-release` — promote `dev` → `main` and tag; user-led.
+
+> **Before-promotion divergence gate (BMI-2, v3.38, #126).** Before both
+> promotion boundaries (`version/{X.Y}→dev` and the `dev→main` promotion at
+> `grm-project-release`), run the model-aware divergence check (`merge_preflight`
+> runs it automatically; CLI fallback `python3
+> .claude/skills/grm-release-agent-tracker/release_plan.py divergence-check`). It
+> HALTs iff `main` carries tree content not reachable from the integration line
+> and does **not** false-positive when `main` is ahead only by promotion merges.
+> On a HALT, stop and reconcile by merging `main` INTO the integration line
+> (merge-forward) — never `reset --hard` across the fork. See
+> `release-phase-merge/SKILL.md` §Before every merge run (merge-forward on a
+> HALT; never `reset --hard` across the fork).
 
 ---
 
@@ -102,9 +114,9 @@ Cost levers for long autonomous campaigns. Authority:
 - **Shared-context dispatch (#59).** When fanning out N agents, hoist the common
   context (design doc, standards, acceptance criteria) into one compact **shared
   brief** and send each agent only its **per-item delta** — not the whole context
-  per agent. See `release-phase`.
+  per agent. See `grm-release-phase`.
 - **Per-release baseline (#58).** At closeout, capture/compare the token baseline
-  via `token-measure` (`.claude/cache/token-baseline.json`); flag output-token
+  via `grm-token-measure` (`.claude/cache/token-baseline.json`); flag output-token
   regressions beyond threshold (informational).
 
 ## Autonomy hardening (v1.30)

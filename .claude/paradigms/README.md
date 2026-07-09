@@ -15,7 +15,7 @@ when only one paradigm's content is active.
 
 The active paradigm is recorded in `.claude/grimoire-config.json` as
 `work-paradigm.value` and stamped into `CLAUDE.md`. Switch it with the
-**`work-paradigm-switch`** skill, which file-swaps the chosen paradigm's
+**`grm-work-paradigm-switch`** skill, which file-swaps the chosen paradigm's
 content into the active paths and refreshes the `CLAUDE.md` stamp.
 
 Full design: `docs/design/work-paradigm-design.md`.

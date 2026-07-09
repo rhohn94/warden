@@ -1,4 +1,13 @@
 #!/usr/bin/env python3
+""":"
+# Bash polyglot preamble — bash ignores the shebang and lands here.
+# Re-execute with python3, or emit a clear error if unavailable.
+if command -v python3 >/dev/null 2>&1; then
+  exec python3 "$0" "$@"
+fi
+printf 'error: %s requires python3. Re-run as: python3 %s %s\n' "$0" "$0" "$*" >&2
+exit 1
+":"""
 """Push guard (marker + whitelist gated).
 
 PreToolUse Bash hook. Blocks `git push` unless BOTH:
