@@ -23,9 +23,24 @@ phases are complete.
 > deterministically. It is **read-only — it never merges**; act on the verdict.
 > A `head_ok:false` is the HEAD-drift signal (do not merge — investigate per the
 > stranded-branch recovery below). **CLI fallback** (no MCP / disabled): `python3
-> .claude/skills/release-agent-tracker/release_plan.py merge-preflight --staging
+> .claude/skills/grm-release-agent-tracker/release_plan.py merge-preflight --staging
 > version/{X.Y}`. The numbered steps below are the fallback procedure. Design:
 > `docs/design/grimoire-release-server-design.md`.
+
+> **Before-promotion divergence gate (BMI-2, v3.38, #126).** A promotion targets
+> the published line (`main`) via the integration line, so before **both**
+> promotion boundaries — `version/{X.Y}→dev` *and* `dev→main` — run the
+> model-aware divergence check: it HALTs iff `main` carries tree content not
+> reachable from the integration line, and (crucially) does **not** false-positive
+> when `main` is ahead only by promotion merges. `merge_preflight` already runs it
+> and folds a real fork into `head_ok:false`, surfacing the report under
+> `divergence`. **CLI fallback:** `python3
+> .claude/skills/grm-release-agent-tracker/release_plan.py divergence-check`
+> (exit 2 + a readable report on real divergence; integration line read from
+> `branch-model.integration-branch`, default `dev`). On a HALT, do **not** merge —
+> reconcile by **merging `main` INTO** the integration line (merge-forward); never
+> `reset --hard` across the fork (data loss). See
+> `docs/grimoire/integration-workflow.md` §merge-forward recovery.
 
 1. **HEAD-verification gate (#35).** Assert HEAD is exactly the staging branch
    before *every* merge:
@@ -42,7 +57,7 @@ phases are complete.
    The `protected-branch-guard.sh` hook also fails closed if the master tries to
    commit/merge while HEAD is off a staging branch.
 
-2. **Run `release-agent-tracker`** to confirm which branches are
+2. **Run `grm-release-agent-tracker`** to confirm which branches are
    ☑ Implemented ☐ Merged and their dependency order. Do not guess.
 
 ---
@@ -122,7 +137,7 @@ After the last branch in a phase is merged and tested:
 
 1. Run `{build-command}` to confirm the integrated build is clean.
 2. Report the phase complete to the user.
-3. Ask: "Proceed to Phase {N+1} prompts?" — run `release-phase` if yes.
+3. Ask: "Proceed to Phase {N+1} prompts?" — run `grm-release-phase` if yes.
 
 ---
 
@@ -136,7 +151,7 @@ When all phases are ☑ Merged and the user confirms readiness:
 - [ ] `{build-command}` clean
 - [ ] All §5 rows ☑ Merged
 - [ ] `version-history.md` entry written on `version/{X.Y}` (required
-       by `project-release` later)
+       by `grm-project-release` later)
 
 ### Confirm before merging (Supervised gate)
 
@@ -164,11 +179,11 @@ broken state.
 
 - Update `docs/roadmap.md`: change the `v{X.Y}` entry from
   `(planning in flight)` to `(implementation complete — pending release)`.
-- The `project-release` skill handles the final `dev` → `main` promotion and
+- The `grm-project-release` skill handles the final `dev` → `main` promotion and
   tagging. Do not tag from this skill.
 - **Branch + worktree cleanup is a post-release step, not this skill's job.**
   The just-merged work-item worktrees are cleaned up after the release tags and
-  pushes — see `project-release` §Post-release cleanup, governed by
+  pushes — see `grm-project-release` §Post-release cleanup, governed by
   `docs/integration-workflow.md` §Dead-worktree cleanup. Removing dead
   worktrees here, mid-release, is premature.
 
@@ -177,10 +192,10 @@ broken state.
 ## Push to origin — not here
 
 **This skill pushes nothing.** After the `version/{X.Y}` → `dev` integration,
-`dev` stays local. Pushing now happens **once, at `project-release`** time, in
+`dev` stays local. Pushing now happens **once, at `grm-project-release`** time, in
 a single human-gated prompt that pushes `dev` + `main` + the version tag
 together — see `docs/integration-workflow.md` §Pushing to origin and the
-`project-release` skill. Do not propose a `dev` push from this skill.
+`grm-project-release` skill. Do not propose a `dev` push from this skill.
 
 ---
 
@@ -196,5 +211,5 @@ together — see `docs/integration-workflow.md` §Pushing to origin and the
 - Deleting `version/{X.Y}` before the user confirms the `dev` merge is
   correct. Require explicit confirmation each time (per CLAUDE.md
   "Destructive operations" rule — authorisation is per-action).
-- Running `project-release` from this skill. Tag only after the user reviews
+- Running `grm-project-release` from this skill. Tag only after the user reviews
   `dev` and explicitly asks to release.

@@ -15,7 +15,7 @@ spacing values.
 
 ## Primary stack
 
-Primary stack: `obsidian (egui/wgpu)` — consumed by `ux-demo-build`.
+Primary stack: `obsidian (egui/wgpu)` — consumed by `grm-ux-demo-build`.
 
 Dependency: `obsidian = { git = "https://github.com/rhohn94/obsidian.git", tag = "v0.44.0" }`.
 The `obsidian` crate re-exports `obsidian_api`, so token paths resolve as:

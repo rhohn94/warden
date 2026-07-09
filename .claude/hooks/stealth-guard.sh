@@ -6,7 +6,7 @@ PreToolUse Bash hook. NO-OP unless `.claude/grimoire-config.json` has
 cheapest possible exit) for the common, stealth-off case.
 
 When Stealth Mode IS on, it enforces — fail-closed — the four artifact rails
-from docs/design/stealth-mode-design.md §6/§10:
+from docs/grimoire/design/stealth-mode-design.md §6/§10:
 
   1. NO PUSH.  Every `git push` is denied (a strict superset of push-guard.sh;
      in stealth even the marker-blessed integration worktree may not push —

@@ -67,7 +67,7 @@ When confirmed, call `mcp__ccd_session__spawn_task`:
 
 - **title**: `{ITEM-ID}: {short title} — set model {model}/{effort}`
 - **tldr**: one plain-English sentence on what the session will do.
-- **prompt**: self-contained task block (see Supervised `release-phase` for
+- **prompt**: self-contained task block (see Supervised `grm-release-phase` for
   the full prompt template).
 
 ---
@@ -77,7 +77,7 @@ When confirmed, call `mcp__ccd_session__spawn_task`:
 Tell the user:
 - The chip was dropped.
 - To open it, set the named model, and let it run.
-- To report back when the session is done so `release-agent-tracker` can
+- To report back when the session is done so `grm-release-agent-tracker` can
   mark it ☑ Implemented.
 
 Then ask: "Ready to spawn the next item, or wait for this one to report back?"

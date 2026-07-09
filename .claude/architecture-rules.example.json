@@ -1,6 +1,24 @@
 {
   "schema-version": 1,
-  "_comment": "Opt-in architecture fitness rules for the architecture-audit skill. Copy to .claude/architecture-rules.json and adapt globs/edges to this project. Absent file => architecture-audit reports 'no rules declared' and exits clean. Design: docs/design/architecture-fitness-design.md",
+  "_comment": "Opt-in architecture + structure fitness rules for the grm-architecture-audit skill. Copy to .claude/architecture-rules.json and adapt to this project. Absent file => architecture-audit reports 'no rules declared' and exits clean. The 'structure' block encodes the standard project layout — full contract: docs/project-structure.md. Design: docs/grimoire/design/architecture-fitness-design.md, docs/grimoire/design/file-structure-standard-design.md",
+  "structure": {
+    "spec": "docs/project-structure.md",
+    "required": ["src", "docs", "tests"],
+    "aliases": {
+      "vendor": "lib/third-party",
+      "deps": "lib/third-party",
+      "third_party": "lib/third-party",
+      "test": "tests",
+      "spec": "tests",
+      "script": "scripts",
+      "source": "src",
+      "build": "dist",
+      "out": "dist",
+      "static": "assets",
+      "resources": "assets"
+    },
+    "gitignored": ["dist", "build"]
+  },
   "layers": {
     "presentation": ["src/ui/**", "src/views/**", "src/components/**"],
     "application": ["src/services/**", "src/app/**"],

@@ -1,6 +1,6 @@
 ---
 name: release-phase
-description: Spawn work-item sessions (via spawn_task) for the next open phase of the in-flight release. Groups work by dependency, sizes each item by token estimate, and assigns model/effort per the `repo-reference` skill table. Use when the user says "start phase N", "spawn the tasks", "kick off phase", "what do agents need to do for phase N", or "distribute phase work". Run after release-agreement has locked the plan.
+description: Spawn work-item sessions (via spawn_task) for the next open phase of the in-flight release. Groups work by dependency, sizes each item by token estimate, and assigns model/effort per the `grm-repo-reference` skill table. Use when the user says "start phase N", "spawn the tasks", "kick off phase", "what do agents need to do for phase N", or "distribute phase work". Run after release-agreement has locked the plan.
 ---
 
 # Release phase — spawn work-item sessions (Supervised)
@@ -25,7 +25,7 @@ Read §3 (pass structure + conflict map) and §5 (ledger) to determine:
 - If a phase is partially done (some ☑, some ☐), it is still the current
   phase — only spawn the ☐ rows.
 - If all passes are ☑, there is nothing to spawn; move to
-  `release-phase-merge` for the final `version/{X.Y}` → `dev` step.
+  `grm-release-phase-merge` for the final `version/{X.Y}` → `dev` step.
 
 ---
 
@@ -90,7 +90,7 @@ Recommended model: {model} | effort: {effort} — set this in your session befor
 You are running in your own fresh, isolated worktree. Stay in it.
 
 ### Root your worktree on the release-staging ref
-Run the `worktree-preflight` skill first. Your work must be rooted on
+Run the `grm-worktree-preflight` skill first. Your work must be rooted on
 `version/{X.Y}` (the staging tip), not `main`. If the harness left HEAD
 elsewhere, branch in place from the ref (name the REF, not ambient HEAD):
 
@@ -143,9 +143,9 @@ and tell the user:
 - How many chips were dropped and which items they cover.
 - To open each chip, set the named model, and let the session run.
 - To say "agent {branch-name} is done" when a session reports back, so
-  `release-agent-tracker` can mark it ☑ Implemented and queue it for merge.
+  `grm-release-agent-tracker` can mark it ☑ Implemented and queue it for merge.
 - **Do not** spawn the next batch until the current batch is merged
-  (`release-phase-merge`) — later batches build on earlier merges.
+  (`grm-release-phase-merge`) — later batches build on earlier merges.
 
 ---
 

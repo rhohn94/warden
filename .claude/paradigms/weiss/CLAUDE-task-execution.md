@@ -12,6 +12,6 @@ Once the user has approved an approach, implement to the agreed checkpoint,
 then review for bugs/incomplete work before reporting done.
 
 Add/update `docs/design/{feature}-design.md` when the task introduces a
-feature (**`design-doc-scaffold`** skill). Doc-location map + subagent
-model/effort table: **`repo-reference`** skill.
+feature (**`grm-design-doc-scaffold`** skill). Doc-location map + subagent
+model/effort table: **`grm-repo-reference`** skill.
 <!-- PARADIGM_SECTION:task-execution:end -->

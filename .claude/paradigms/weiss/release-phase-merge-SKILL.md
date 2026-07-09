@@ -22,9 +22,24 @@ sequencing; the master surfaces the diff and waits.
 > deterministically. It is **read-only — it never merges**; act on the verdict.
 > A `head_ok:false` is the HEAD-drift signal (do not merge — investigate per the
 > stranded-branch recovery below). **CLI fallback** (no MCP / disabled): `python3
-> .claude/skills/release-agent-tracker/release_plan.py merge-preflight --staging
+> .claude/skills/grm-release-agent-tracker/release_plan.py merge-preflight --staging
 > version/{X.Y}`. The numbered steps below are the fallback procedure. Design:
 > `docs/design/grimoire-release-server-design.md`.
+
+> **Before-promotion divergence gate (BMI-2, v3.38, #126).** A promotion targets
+> the published line (`main`) via the integration line, so before **both**
+> promotion boundaries — `version/{X.Y}→dev` *and* `dev→main` — run the
+> model-aware divergence check: it HALTs iff `main` carries tree content not
+> reachable from the integration line, and (crucially) does **not** false-positive
+> when `main` is ahead only by promotion merges. `merge_preflight` already runs it
+> and folds a real fork into `head_ok:false`, surfacing the report under
+> `divergence`. **CLI fallback:** `python3
+> .claude/skills/grm-release-agent-tracker/release_plan.py divergence-check`
+> (exit 2 + a readable report on real divergence; integration line read from
+> `branch-model.integration-branch`, default `dev`). On a HALT, do **not** merge —
+> reconcile by **merging `main` INTO** the integration line (merge-forward); never
+> `reset --hard` across the fork (data loss). See
+> `docs/grimoire/integration-workflow.md` §merge-forward recovery.
 
 1. **HEAD-verification gate (#35).** Assert HEAD is exactly the staging branch
    before *every* merge:
@@ -38,7 +53,7 @@ sequencing; the master surfaces the diff and waits.
    hook also fails closed if the master tries to commit/merge while HEAD is off
    a staging branch.
 
-2. **Run `release-agent-tracker`** to show the user which branches are
+2. **Run `grm-release-agent-tracker`** to show the user which branches are
    ☑ Implemented ☐ Merged. Present the list and ask which branch to merge
    first — do not pick an order independently when multiple are ready.
 
@@ -128,7 +143,7 @@ After tests pass, ask before deleting the staging branch:
 
 **Branch + worktree cleanup is a post-release step, not this skill's job.** The
 just-merged work-item worktrees are cleaned up after the release tags and
-pushes — see `project-release` §Post-release cleanup, governed by
+pushes — see `grm-project-release` §Post-release cleanup, governed by
 `docs/integration-workflow.md` §Dead-worktree cleanup.
 
 ---
@@ -136,7 +151,7 @@ pushes — see `project-release` §Post-release cleanup, governed by
 ## Push to origin — not here
 
 This skill pushes nothing. After the `version/{X.Y}` → `dev` integration, `dev`
-stays local. Pushing happens **once, at `project-release`**, in a single
+stays local. Pushing happens **once, at `grm-project-release`**, in a single
 human-gated prompt that pushes `dev` + `main` + the version tag together (see
 `docs/integration-workflow.md` §Pushing to origin). Do not propose a `dev` push
 from this skill.

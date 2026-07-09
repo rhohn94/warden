@@ -2,7 +2,7 @@
 """server.py — Grimoire grimoire-status MCP server (read-only project overview).
 
 Exposes the status-broker script
-(.claude/skills/status-broker/project_status.py) as a single, token-cheap
+(.claude/skills/grm-status-broker/project_status.py) as a single, token-cheap
 read-only MCP tool, built on the reusable stdlib runtime
 (.claude/mcp-servers/lib/mcp_runtime.py). No third-party dependencies (#75:
 Python 3 stdlib only).
@@ -10,8 +10,8 @@ Python 3 stdlib only).
 Read-only contract: this server NEVER writes files, runs git mutations, or
 calls any issue-tracker API. It parses structured sources (grimoire-config.json,
 version-history.md, roadmap.md, feature-manifest.md, package manifests) and
-emits a structured JSON overview. Design: docs/design/status-broker-design.md +
-docs/design/mcp-server-design.md.
+emits a structured JSON overview. Design: docs/grimoire/design/status-broker-design.md +
+docs/grimoire/design/mcp-server-design.md.
 
 Registered by the project-root .mcp.json as `grimoire-status`:
     { "command": "python3",

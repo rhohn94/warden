@@ -11,7 +11,20 @@ perf.log
 # macOS
 .DS_Store
 
+# Python bytecode cache
+__pycache__/
+
+# Grimoire runtime state (regenerated)
+.claude/cache/
+
 # Claude Code local-only files
 .claude/settings.local.json
 .claude/integration-allow.local
 .design-language-source/
+
+# Grimoire workspace artifacts (grm-workspace-clean v3.52)
+.scaffold-base/
+.scaffold-sync-backup/
+.grimoire-golden/
+.grimoire-source/
+.grimoire-archive/

@@ -69,14 +69,14 @@ return compact issues **without** body (body-on-demand via `get_issue`):
 
 **MCP-first, CLI-fallback contract.** Consumers prefer these tools when
 `mcp.enabled` + `mcp.prefer-for-tracker` and the server is registered; otherwise
-they fall back to `python3 .claude/skills/issue-tracker/issue_tracker.py …`, so
+they fall back to `python3 .claude/skills/grm-issue-tracker/issue_tracker.py …`, so
 non-MCP harnesses and disabled configs keep working unchanged.
 
 ## The grimoire-release server — tool surface (v3.27)
 
 The second instance of the template: a thin adapter over the release-planning
-ledger engine (`.claude/skills/release-agent-tracker/release_plan.py`) and the
-noir-loop state helper (`.claude/skills/noir-loop/noir_loop_state.py`). Seven
+ledger engine (`.claude/skills/grm-release-agent-tracker/release_plan.py`) and the
+noir-loop state helper (`.claude/skills/grm-noir-loop/noir_loop_state.py`). Seven
 tools, terse by design; compact JSON responses:
 
 | Tool | Purpose |
@@ -93,10 +93,10 @@ tools, terse by design; compact JSON responses:
 call is a read. The only side effect is editing the §5 ledger (via `tick_rows`)
 or the gitignored loop-state file (via `advance_loop`); `merge_preflight` is
 read-only and never merges. The **agent** commits. **CLI fallback**: `python3
-.claude/skills/release-agent-tracker/release_plan.py
+.claude/skills/grm-release-agent-tracker/release_plan.py
 {get-ledger|diff|merge-queue|merge-preflight|plan-phase|tick}`. Consumers
-(`release-agent-tracker`, `ledger-tick`, `release-phase`, `release-phase-merge`,
-`noir-loop`) are re-pointed MCP-first. Design:
+(`grm-release-agent-tracker`, `grm-ledger-tick`, `grm-release-phase`, `grm-release-phase-merge`,
+`grm-noir-loop`) are re-pointed MCP-first. Design:
 `docs/design/grimoire-release-server-design.md`.
 
 ## The v3.28 ops servers — `grimoire-status`, `grimoire-recipe`, `grimoire-environment`
@@ -111,8 +111,8 @@ read-only/structured adapter over an existing engine; compact JSON responses:
 | `grimoire-recipe`      | `build-recipe/recipe.py`          | `list_targets`, `dry_run`, `run_recipe` | Recipes stay project-defined in `.claude/recipes.json`; the server adds **no new execution authority**. `run_recipe` returns structured `{target, exit_code, ok, stdout, stderr}`. |
 | `grimoire-environment` | `environment-manager/env_probe.py`| `list_processes`, `port_status`, `instance_urls` | **Read-only** process/port inspection. Lifecycle ops (`kill`/`start`) are deliberately **not** exposed — they stay per-action-authorized agent-side per `environment-manager-design.md`. |
 
-**MCP-first, CLI-fallback contract.** Consumers (`status-broker`, `build-recipe`,
-`environment-manager`) prefer these tools when `mcp.enabled` and the server is
+**MCP-first, CLI-fallback contract.** Consumers (`grm-status-broker`, `grm-build-recipe`,
+`grm-environment-manager`) prefer these tools when `mcp.enabled` and the server is
 registered; otherwise they fall back to the identical engine CLI
 (`project_status.py` / `recipe.py` / `env_probe.py`). Designs:
 `docs/design/status-broker-design.md`, `build-recipe-interface-design.md`,

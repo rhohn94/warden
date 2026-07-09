@@ -79,8 +79,23 @@ db-down:
 # App lifecycle (depend on db-up so the DB is ready first)
 # ---------------------------------------------------------------------------
 
+# build — compile/package the project into dist/ artifacts.
+# env: "dev" skips optimisations; "prod" for release artifacts.
+# grimoire:placeholder
+build env="dev":
+    @echo "TODO: replace with build command (e.g. npm run build, cargo build, python -m build)"
+
+# run — start the web app in dev mode. Run `just build` first if your project
+# requires compiled artifacts before the process can start.
 run: db-up
     @echo "Replace this with the project's run command (e.g. the web app entrypoint)."
+
+# deploy — push artifacts to a live environment.
+# env: REQUIRED (no default — forces explicit choice); one of: dev | staging | prod.
+# dry_run: "true" to plan without executing side effects.
+# grimoire:placeholder
+deploy env dry_run="false":
+    @echo "TODO: replace with deploy command (e.g. fly deploy --env {{env}})"
 
 test: db-up
     @echo "Replace this with the project's test command."

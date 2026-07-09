@@ -2,8 +2,8 @@
 """server.py — Grimoire grimoire-release MCP server (second McpServer instance).
 
 Exposes the release-planning ledger engine
-(.claude/skills/release-agent-tracker/release_plan.py) and the noir-loop state
-helper (.claude/skills/noir-loop/noir_loop_state.py) as a small, token-cheap MCP
+(.claude/skills/grm-release-agent-tracker/release_plan.py) and the noir-loop state
+helper (.claude/skills/grm-noir-loop/noir_loop_state.py) as a small, token-cheap MCP
 tool surface, built on the reusable stdlib runtime
 (.claude/mcp-servers/lib/mcp_runtime.py). No third-party dependencies (#75:
 Python 3 stdlib only).
@@ -11,7 +11,7 @@ Python 3 stdlib only).
 File-write-only contract: this server NEVER runs git mutations. It parses,
 computes, and edits the §5 ledger file only when asked via `tick_rows` (and the
 loop-state file via `advance_loop`); the AGENT commits. Design:
-docs/design/grimoire-release-server-design.md.
+docs/grimoire/design/grimoire-release-server-design.md.
 
 Registered by the project-root .mcp.json as `grimoire-release`:
     { "command": "python3",
