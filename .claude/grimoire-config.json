@@ -1,6 +1,6 @@
 {
   "schema-version": 4,
-  "framework-version": "3.55",
+  "framework-version": "3.89",
   "name": "Warden",
   "work-paradigm": {
     "value": "Noir"
@@ -35,42 +35,89 @@
     "acknowledged-risk": false
   },
   "project-manager": {
-    "max-parallel": { "value": 2 },
-    "overlap-policy": { "value": "balanced" },
-    "qa-gate": { "value": "block" }
+    "max-parallel": {
+      "value": 2
+    },
+    "overlap-policy": {
+      "value": "balanced"
+    },
+    "qa-gate": {
+      "value": "block"
+    }
   },
   "github-pr": {
-    "enabled": { "value": false },
-    "boundary": { "value": "version-to-dev" },
-    "merge-method": { "value": "merge" },
+    "enabled": {
+      "value": false
+    },
+    "boundary": {
+      "value": "version-to-dev"
+    },
+    "merge-method": {
+      "value": "merge"
+    },
     "review": {
-      "auto-dispatch": { "value": true },
-      "post-comments": { "value": "comment" }
+      "auto-dispatch": {
+        "value": true
+      },
+      "post-comments": {
+        "value": "comment"
+      }
     }
   },
   "code-quality": {
-    "audit-gate": { "value": "warn" },
-    "auto-reviewer": { "value": "noir" },
-    "coverage-threshold": { "value": null },
-    "typecheck": { "value": "build" }
+    "audit-gate": {
+      "value": "warn"
+    },
+    "auto-reviewer": {
+      "value": "noir"
+    },
+    "coverage-threshold": {
+      "value": null
+    },
+    "typecheck": {
+      "value": "build"
+    }
   },
   "qa": {
-    "window-mode": { "value": "earliest-unverified" },
-    "window-size": { "value": 1 },
-    "verify-depth": { "value": "acceptance" },
-    "auto-file-findings": { "value": true }
+    "window-mode": {
+      "value": "earliest-unverified"
+    },
+    "window-size": {
+      "value": 1
+    },
+    "verify-depth": {
+      "value": "acceptance"
+    },
+    "auto-file-findings": {
+      "value": true
+    }
   },
   "worktree-ports": {
-    "enabled": { "value": false }
+    "enabled": {
+      "value": false
+    }
   },
   "iterate": {
-    "quota": { "XXL": 1, "XL": 2, "L": 4, "M": 8, "SM": 12, "XS": 20 },
+    "quota": {
+      "XXL": 1,
+      "XL": 2,
+      "L": 4,
+      "M": 8,
+      "SM": 12,
+      "XS": 20
+    },
     "default-iterations": 1,
     "min-issues-floor": 3,
-    "audit-agent": { "value": "dispatched" }
+    "audit-agent": {
+      "value": "dispatched"
+    }
   },
   "mcp": {
-    "enabled": { "value": true },
-    "prefer-for-tracker": { "value": true }
+    "enabled": {
+      "value": true
+    },
+    "prefer-for-tracker": {
+      "value": true
+    }
   }
 }

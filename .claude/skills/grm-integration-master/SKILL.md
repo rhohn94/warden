@@ -56,6 +56,8 @@ Escalation runs *before* the stop conditions: a clear, confident adjudicator
 verdict is acted on autonomously; an ambiguous or low-confidence one falls
 through to the normal stop-and-surface path.
 
+**Resume note:** model pins don't survive `SendMessage`-resume; re-dispatch.
+
 ---
 
 ## Role overview

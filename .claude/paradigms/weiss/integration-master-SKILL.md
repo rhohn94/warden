@@ -58,6 +58,14 @@ The adjudicator runs *before* the collaborative checkpoint: its recommendation
 is surfaced at the checkpoint discussion — escalation sharpens the question, it
 never replaces the collaboration.
 
+**Resume caveat (Trial 1 lesson, v3.89):** a dispatched agent's model pin does
+not survive an inter-agent `SendMessage`-resume — it silently reverts to the
+parent session's model. Keep orchestration briefs single-shot through a
+checkpoint (give the dispatched agent everything it needs in one shot); if
+further work is needed, **re-dispatch** a fresh agent with a complete brief and
+bring it back to the collaborative checkpoint, rather than resuming the
+existing session via `SendMessage`.
+
 ---
 
 ## Role overview

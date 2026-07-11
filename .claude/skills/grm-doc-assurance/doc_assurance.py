@@ -130,7 +130,7 @@ manifest version readable -> no-op. Deterministic; fails only the --strict gate.
 """
 from __future__ import annotations
 
-import os, re, sys, json, glob
+import os, re, sys, json, glob, subprocess
 
 CHECKS = [
     "flavor-parity", "design-layout", "links", "docs-map",
@@ -139,6 +139,7 @@ CHECKS = [
     "skill-budget", "relative-links", "hierarchy", "lean-index",
     "monolith-cap", "description-cap", "anti-patterns", "portal-stale",
     "design-index-stale", "product-readme-present", "version-claim-freshness",
+    "orchestrate-band-present", "server-selftest-parity",
 ]
 
 # Mirror of build_distributables.py EXCLUDED_PATH_PREFIXES + sync-from-upstream.sh
@@ -1387,6 +1388,96 @@ def check_ported_pair_presence(root: str) -> list:
             findings.append(
                 f"ported-pair regression: codex/.codex/hooks/{codex_name} "
                 f"has no .claude/hooks/{root_name} counterpart (previously tracked)")
+    return findings
+
+
+# ── Check: orchestrate-band presence (#368) ──────────────────────────────
+# The "orchestrate" band (model-effort-profiles-design.md) must be declared
+# and fully wired in every model-effort-profiles.json a flavor actually
+# ships. Multi-flavor by nature (root + claude-code); copilot has no model
+# knob and carries no such file, so the check only evaluates candidates that
+# exist rather than failing on copilot's absence.
+_ORCHESTRATE_BAND_CANDIDATES = (
+    ".claude/model-effort-profiles.json",
+    "claude-code/.claude/model-effort-profiles.json",
+)
+
+
+def check_orchestrate_band_present(root: str) -> list:
+    """For each present model-effort-profiles.json, assert the "orchestrate"
+    band is declared in the top-level `bands` array AND every entry under
+    `profiles` carries an `orchestrate` key whose value is an object with
+    non-empty `model` and `effort` string fields. Scoped to files that
+    exist — a flavor without a model-effort-profiles.json (copilot) is never
+    flagged for lacking one."""
+    findings = []
+    for rel_path in _ORCHESTRATE_BAND_CANDIDATES:
+        p = os.path.join(root, rel_path)
+        if not os.path.isfile(p):
+            continue
+        try:
+            data = json.load(open(p, encoding="utf-8"))
+        except (ValueError, OSError) as e:
+            findings.append(f"{rel_path}: unreadable or malformed JSON ({e})")
+            continue
+        bands = data.get("bands", [])
+        if "orchestrate" not in bands:
+            findings.append(f"{rel_path}: 'orchestrate' missing from top-level bands array")
+        profiles = data.get("profiles", {})
+        for name in sorted(profiles):
+            entry = profiles[name].get("orchestrate")
+            if not isinstance(entry, dict):
+                findings.append(f"{rel_path}: profile '{name}' missing 'orchestrate' entry")
+                continue
+            model = entry.get("model")
+            effort = entry.get("effort")
+            if not (isinstance(model, str) and model.strip()):
+                findings.append(f"{rel_path}: profile '{name}'.orchestrate missing non-empty 'model'")
+            if not (isinstance(effort, str) and effort.strip()):
+                findings.append(f"{rel_path}: profile '{name}'.orchestrate missing non-empty 'effort'")
+    return findings
+
+
+# ── Check 5e: server.py self-test parity (#364) ──────────────────────────
+# Paths are discovered by glob (5 servers x 3 flavors), never hardcoded, so a
+# newly added MCP server or flavor is picked up automatically without a
+# doc-assurance edit.
+_SERVER_SELFTEST_GLOBS = (
+    os.path.join(".claude", "mcp-servers", "*", "server.py"),
+    os.path.join("claude-code", ".claude", "mcp-servers", "*", "server.py"),
+    os.path.join("copilot", "mcp-servers", "*", "server.py"),
+)
+
+
+def check_server_selftest_parity(root: str) -> list:
+    """Run `python3 <path>/server.py --self-test` for every MCP server.py
+    copy in the framework monorepo and fail if any copy's self-test does not
+    exit 0. Each invocation is its own short-lived subprocess (bounded by a
+    timeout so a hang can't stall doc-assurance) — fast and hermetic, no
+    shared state between copies."""
+    findings = []
+    paths = sorted({
+        p for pat in _SERVER_SELFTEST_GLOBS
+        for p in glob.glob(os.path.join(root, pat))
+    })
+    for path in paths:
+        relp = os.path.relpath(path, root)
+        try:
+            proc = subprocess.run(
+                [sys.executable, path, "--self-test"],
+                capture_output=True, text=True, timeout=30,
+            )
+        except subprocess.TimeoutExpired:
+            findings.append(f"server self-test timed out (30s): {relp}")
+            continue
+        except OSError as exc:
+            findings.append(f"server self-test failed to launch: {relp} ({exc})")
+            continue
+        if proc.returncode != 0:
+            tail_lines = (proc.stdout + proc.stderr).strip().splitlines()
+            tail = tail_lines[-1] if tail_lines else "(no output)"
+            findings.append(
+                f"server self-test failed (exit {proc.returncode}): {relp} — {tail}")
     return findings
 
 
@@ -3359,6 +3450,47 @@ def self_test() -> tuple:
     finally:
         shutil.rmtree(tmp_p47, ignore_errors=True)
 
+    # 47b/47c. server-selftest-parity (#364): fake server.py copies across the
+    # three flavor dirs, standing in for the real 5x3 grid.
+    def _write_fake_server(path, exit_code):
+        _os.makedirs(_os.path.dirname(path), exist_ok=True)
+        with open(path, "w") as fh:
+            fh.write(
+                "import sys\n"
+                "if '--self-test' in sys.argv:\n"
+                "    print('fake self-test')\n"
+                f"    sys.exit({exit_code})\n"
+            )
+
+    _FAKE_SERVER_RELDIRS = (
+        _os.path.join(".claude", "mcp-servers", "grimoire-recipe"),
+        _os.path.join("claude-code", ".claude", "mcp-servers", "grimoire-recipe"),
+        _os.path.join("copilot", "mcp-servers", "grimoire-recipe"),
+    )
+
+    # 47b. all three copies exit 0 -> zero findings.
+    tmp_s47b = _tmpmod.mkdtemp()
+    try:
+        for reldir in _FAKE_SERVER_RELDIRS:
+            _write_fake_server(_os.path.join(tmp_s47b, reldir, "server.py"), 0)
+        f47b = check_server_selftest_parity(tmp_s47b)
+        cases.append(("server-selftest-parity: all copies pass -> zero findings",
+                      len(f47b) == 0))
+    finally:
+        shutil.rmtree(tmp_s47b, ignore_errors=True)
+
+    # 47c. the copilot copy exits non-zero -> a finding naming that path.
+    tmp_s47c = _tmpmod.mkdtemp()
+    try:
+        for reldir in _FAKE_SERVER_RELDIRS:
+            exit_code = 1 if reldir.startswith("copilot") else 0
+            _write_fake_server(_os.path.join(tmp_s47c, reldir, "server.py"), exit_code)
+        f47c = check_server_selftest_parity(tmp_s47c)
+        cases.append(("server-selftest-parity: failing copy detected",
+                      any("copilot" in x and "grimoire-recipe" in x for x in f47c)))
+    finally:
+        shutil.rmtree(tmp_s47c, ignore_errors=True)
+
     # 48. product-readme-present: no README.md at all -> finding.
     tmp_r48 = _tmpmod.mkdtemp()
     try:
@@ -3469,7 +3601,8 @@ def main() -> None:
     if consumer_mode:
         print("doc-assurance: consumer-mode (no flavor dirs detected) — "
               "flavor-parity, manifest-detect-hygiene, shipped-pointers, "
-              "mirrored-script-parity, ported-pair-presence skipped.")
+              "mirrored-script-parity, ported-pair-presence, "
+              "orchestrate-band-present, server-selftest-parity skipped.")
 
     # Determine dial value for check 7 + 8 (relative-links and hierarchy).
     # --strict escalates warn->block, but an explicit 'off' stays off — a project
@@ -3482,7 +3615,8 @@ def main() -> None:
     # flavor dirs present).  Skipped with a notice in consumer-mode.
     _FRAMEWORK_ONLY_CHECKS = frozenset({"flavor-parity", "manifest-detect-hygiene",
                                          "shipped-pointers", "mirrored-script-parity",
-                                         "ported-pair-presence"})
+                                         "ported-pair-presence", "orchestrate-band-present",
+                                         "server-selftest-parity"})
 
     named = [a for a in args if a in CHECKS] or CHECKS
     total = 0
@@ -3500,6 +3634,8 @@ def main() -> None:
         elif c == "shipped-pointers":    f = check_shipped_pointers(root)
         elif c == "mirrored-script-parity": f = check_mirrored_script_parity(root)
         elif c == "ported-pair-presence": f = check_ported_pair_presence(root)
+        elif c == "orchestrate-band-present": f = check_orchestrate_band_present(root)
+        elif c == "server-selftest-parity": f = check_server_selftest_parity(root)
         elif c == "skill-budget":        f = check_skill_budget(root)
         elif c == "lean-index":          f = check_lean_index(root)
         elif c == "monolith-cap":        f = check_monolith_cap(root)

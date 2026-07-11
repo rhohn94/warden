@@ -79,6 +79,13 @@ Escalation runs *before* the stop conditions: a clear, confident adjudicator
 verdict is acted on autonomously; an ambiguous or low-confidence one falls
 through to the normal stop-and-surface path.
 
+**Resume caveat (Trial 1 lesson, v3.89):** a dispatched agent's model pin does
+not survive an inter-agent `SendMessage`-resume — it silently reverts to the
+parent session's model. Keep orchestration briefs single-shot through a
+checkpoint (give the dispatched agent everything it needs in one shot); if
+further work is needed, **re-dispatch** a fresh agent with a complete brief
+rather than resuming the existing one via `SendMessage`.
+
 ---
 
 ## Role overview
