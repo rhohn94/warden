@@ -1,17 +1,21 @@
 {
   "deps": {
     "aura": {
-      "artifact": "aura-v3.541.0.tar.gz",
-      "artifact_sha256": "sha256:f22f7c52f36296e85e76783b7367e0438ffad2ebd5e42c8a9d40ad82731cc502",
+      "artifact": "aura-v3.554.0.tar.gz",
+      "artifact_sha256": "sha256:7c04e121dedc1f7b33e20f5aafed13970b26267eb1de4233161b96f352d45b17",
       "channel": "stable",
-      "git_sha": "d389da5cbabb1a4ee08834f2066b4631c867663b",
-      "release_json_sha256": "sha256:fd5019956cff6a480622a0c0a06a8ff8d1074605ae3b0ad543fd953dce813086",
-      "release_tag": "v3.541.0",
-      "release_url": "https://github.com/rhohn94/design-language/releases/tag/v3.541.0",
-      "signature_verified": false,
-      "synced_at": "2026-07-02T16:24:35Z",
-      "tree_sha256": "sha256:c9c8757953c3bf0920d415aba604f526333e426abd401406907bb3016651aa84",
-      "version": "3.541.0"
+      "git_sha": "399dd382b0cb1155674201ee5d4c80f7a695fa66",
+      "release_json_sha256": "sha256:82ca93796b421c0a96f4f2c6b99264e707b952725fb9c90d7f8d02e47fdea333",
+      "release_tag": "v3.554.0",
+      "release_url": "https://github.com/rhohn94/design-language/releases/tag/v3.554.0",
+      "signature_verified": "unsigned",
+      "synced_at": "2026-07-11T19:46:02Z",
+      "tree_manifest": {
+        "css/tokens.css": "2802dd35756817ce05c02143d56f969d2f93735691d95f6a2a4b95615d2342ff",
+        "dist/aura-tokens-meta.json": "ddafc53ae6143db6ea28301fac162fb9ec7d5ef212814d7faff3d9c80fee603e"
+      },
+      "tree_sha256": "sha256:238040380141b2b678695771f2d873bbd19cd7a67447a0e7e50358e10c74f773",
+      "version": "3.554.0"
     }
   },
   "schema_version": 1

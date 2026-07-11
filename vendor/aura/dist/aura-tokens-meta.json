@@ -1445,6 +1445,18 @@
     "category": "Component-specific tokens",
     "cssVar": "--aura-fmb-column-easing"
   },
+  "fmb-column-gap": {
+    "value": "0.75rem",
+    "kind": "value",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-fmb-column-gap"
+  },
+  "fmb-column-reveal-size": {
+    "value": "44px",
+    "kind": "value",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-fmb-column-reveal-size"
+  },
   "fmb-column-size": {
     "value": "96px",
     "kind": "value",
@@ -2028,7 +2040,7 @@
     "cssVar": "--aura-sidebar-saturate"
   },
   "sidebar-surface": {
-    "value": "color(srgb 1 1 1 / 0.11)",
+    "value": "oklch(0.880709 0.0639375 286.532 / 0.107)",
     "kind": "color",
     "category": "Component-specific tokens",
     "cssVar": "--aura-sidebar-surface"
@@ -2044,6 +2056,12 @@
     "kind": "value",
     "category": "Component-specific tokens",
     "cssVar": "--aura-sidebar-width"
+  },
+  "sidebar-z": {
+    "value": "calc(100 - 1)",
+    "kind": "value",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-sidebar-z"
   },
   "split-handle-size": {
     "value": "0.5rem",
@@ -2153,6 +2171,24 @@
     "category": "Component-specific tokens",
     "cssVar": "--aura-tooltip-surface-solid"
   },
+  "user-fmb-duration": {
+    "value": "200ms",
+    "kind": "value",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-user-fmb-duration"
+  },
+  "user-fmb-easing": {
+    "value": "cubic-bezier(0.16, 1, 0.3, 1)",
+    "kind": "value",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-user-fmb-easing"
+  },
+  "user-fmb-size": {
+    "value": "3rem",
+    "kind": "value",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-user-fmb-size"
+  },
   "video-caption-scrim": {
     "value": "color(srgb 0 0 0 / 0.6)",
     "kind": "color",
@@ -2170,5 +2206,17 @@
     "kind": "color",
     "category": "Component-specific tokens",
     "cssVar": "--aura-video-letterbox"
+  },
+  "z-fmb-active": {
+    "value": "calc(1000 + 1)",
+    "kind": "value",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-z-fmb-active"
+  },
+  "z-fmb-reveal": {
+    "value": "calc(calc(1000 + 1) + 1)",
+    "kind": "value",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-z-fmb-reveal"
   }
 }
