@@ -66,8 +66,11 @@ If `dev` carries an unreleased version (a `version-history.md` entry exists for
 2. Run `grm-project-release` — it handles the `dev` → `main` merge, version bump,
    tag, build of distributables and `release.json`, signing, and the GitHub Release.
 3. Push: `git push origin dev main --follow-tags`. This is the **single** push
-   moment for the release. Under `autonomous-push.enabled` (Noir) it is prompt-free;
-   otherwise propose and wait for explicit user confirmation.
+   moment for the release, per `grm-project-release` §push. Under Noir +
+   `autonomous-push.enabled: true` it runs immediately, no question asked.
+   Otherwise, actively prompt via `AskUserQuestion` (`Push now` / `Hold`) with
+   the exact push plan (refs, tag, remote) in the body — never a passive
+   "next is the push" statement — and push only on `Push now`.
 
 If nothing is staged for release, skip to Step 4 after ensuring `dev` is pushed
 per the project's push policy.
@@ -133,4 +136,4 @@ Confirm the session is genuinely clean before declaring done.
   missed branches, or releasing the wrong version.
 - **Relabeling or closing tracker issues without authorization.** End-session
   cleanup touches git and docs only; issue-tracker writes require explicit user
-  direction or the `grm-triager` role.
+  direction or the `grm-agent-triager` role.

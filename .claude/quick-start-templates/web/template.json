@@ -42,9 +42,40 @@
       "aura.css",
       "SRI.txt"
     ],
-    "note": "Aura ships the framework-neutral artifacts (rhohn94/design-language#26). This template references them at vendor/aura and copies no upstream code. The default consumption mechanism is a vendor.toml dep synced via sync-deps (channel stable, kind asset-bundle, dest vendor/aura); git submodule and static/aura + build step are recorded alternatives. vendor/aura/SRI.txt is an additional browser-SRI asset (per-file subresource-integrity hashes), not the dependency pin. Where an artifact is not yet published, the scaffolded payloads point at its intended path; see docs/web-app-aura-adoption-guide.md."
+    "note": "Aura ships the framework-neutral artifacts (rhohn94/design-language#26). This template references them at vendor/aura and copies no upstream code. The default consumption mechanism is a vendor.toml dep synced via sync-deps (channel stable, kind asset-bundle, dest vendor/aura); git submodule and static/aura + build step are recorded alternatives. vendor/aura/SRI.txt is an additional browser-SRI asset (per-file subresource-integrity hashes), not the dependency pin. Where an artifact is not yet published, the scaffolded payloads point at its intended path; full adoption guidance lives in the upstream Grimoire repository (framework-internal)."
   },
-  "post-apply-notes": "Add the [deps.aura] entry to vendor.toml (repo rhohn94/design-language, channel stable, kind asset-bundle, dest vendor/aura) and run `recipe.py sync-deps` to land the bundle at vendor/aura (or use the git-submodule / static/aura build-step alternative). Config defaults (model-effort-profile, execution-strategy) are applied via the model-effort-profile-switch and workflow-variant-switch skills \u2014 not edited inline. Scaffolded templates/ (base.html, pages/index.html, fragments/example.html) are thin Grimoire-owned skeletons that include/reference Aura's artifacts; replace the include mechanism to match your template engine. A `justfile` + `compose.yaml` ship the idempotent, multi-worktree-safe Dockerized-Postgres `db-up` recipe (#81 — reuses a running shared container by exact name via `docker ps` filters, starts a stopped one, only `docker compose up`s when none exists; never Go-template `{{...}}` output which collides with just's `{{ }}`); edit `db_name`/`container_name` and the `run`/`test` bodies, and see the inline multi-worktree shared-container note near the DB recipes. Full guidance: docs/web-app-aura-adoption-guide.md.",
+  "standard-packages": {
+    "note": "Framework standard packages (Rust) for web apps, registered in the required-feature catalog (.claude/skills/grm-web-app-apply/required-feature-catalog.md). Each is consumed through the Dependency Channel: declare it in vendor.toml with kind=vendored-crate and dest under lib/third-party/<dep>/ (the standard structure — never a top-level vendor/), then run `recipe.py sync-deps`. This template scaffolds SCAFFOLD SEAMS only (src/*_seam.rs, migrations/) — placeholder wiring points marked `grimoire:placeholder`, NOT working implementations. Delete a seam file if its package does not apply to your app. Design rationale (§5.5-§5.7) lives in the upstream Grimoire repository (framework-internal).",
+    "gatekeeper": {
+      "catalog-entry": "Entry 4 (key: adopt-gatekeeper)",
+      "purpose": "web-app authentication (session and/or bearer Cargo features; storage-agnostic store-trait seam)",
+      "vendor-toml": { "repo": "rhohn94/gatekeeper", "channel": "stable", "kind": "vendored-crate", "dest": "lib/third-party/gatekeeper" },
+      "seam": "src/auth_seam.rs",
+      "applies-when": "web-app.value == yes (an authenticated surface); delete the seam for a static/no-auth app"
+    },
+    "recordkeeper": {
+      "catalog-entry": "Entry 5 (key: adopt-recordkeeper)",
+      "purpose": "database access (Turso default backend, Postgres opt-in; provides gatekeeper's store-trait default implementation)",
+      "vendor-toml": { "repo": "rhohn94/recordkeeper", "channel": "stable", "kind": "vendored-crate", "dest": "lib/third-party/recordkeeper" },
+      "seam": "src/db_seam.rs + migrations/{turso,postgres}/",
+      "applies-when": "web-app.value == yes (a stateful app); delete the seam + migrations for a stateless app"
+    },
+    "token-bookkeeper": {
+      "catalog-entry": "Entry 3 (key: adopt-token-bookkeeper)",
+      "purpose": "OPTIONAL, agentic-only — agentic token/cost/throughput rollups over the canonical run.json artifacts",
+      "vendor-toml": { "repo": "rhohn94/token-bookkeeper", "channel": "stable", "kind": "vendored-crate", "dest": "lib/third-party/token-bookkeeper" },
+      "seam": "src/cost_surface_seam.rs",
+      "applies-when": "web-app.agentic == yes; delete the seam for a non-agentic app"
+    },
+    "meta-updater": {
+      "catalog-entry": "Entry 6 (key: adopt-meta-updater)",
+      "purpose": "health-gated self-update with auto-rollback (web-app-deployment-protocol.md §6); SPEC-ONLY as of catalog-version 6, no published release yet",
+      "vendor-toml": { "repo": "rhohn94/meta-updater", "channel": "stable", "kind": "vendored-crate", "dest": "lib/third-party/meta-updater" },
+      "seam": "src/updater_seam.rs",
+      "applies-when": "web-app.value == yes (an independently deployed/updated app); delete the seam for an app with no update lifecycle"
+    }
+  },
+  "post-apply-notes": "Add the [deps.aura] entry to vendor.toml (repo rhohn94/design-language, channel stable, kind asset-bundle, dest vendor/aura) and run `recipe.py sync-deps` to land the bundle at vendor/aura (or use the git-submodule / static/aura build-step alternative). Config defaults (model-effort-profile, execution-strategy) are applied via the model-effort-profile-switch and workflow-variant-switch skills \u2014 not edited inline. Scaffolded templates/ (base.html, pages/index.html, fragments/example.html) are thin Grimoire-owned skeletons that include/reference Aura's artifacts; replace the include mechanism to match your template engine. A `justfile` + `compose.yaml` ship the idempotent, multi-worktree-safe Dockerized-Postgres `db-up` recipe (#81 — reuses a running shared container by exact name via `docker ps` filters, starts a stopped one, only `docker compose up`s when none exists; never Go-template `{{...}}` output which collides with just's `{{ }}`); edit `db_name`/`container_name` and the `run`/`test` bodies, and see the inline multi-worktree shared-container note near the DB recipes. STANDARD-PACKAGE SEAMS (Rust): src/auth_seam.rs (gatekeeper — Entry 4), src/db_seam.rs + migrations/{turso,postgres}/ (recordkeeper — Entry 5), src/cost_surface_seam.rs (token-bookkeeper — Entry 3, optional/agentic-only), and src/updater_seam.rs (meta-updater — Entry 6, self-update, SPEC-ONLY as of catalog-version 6 — no crate published yet) are SCAFFOLD SEAMS marked `grimoire:placeholder` — placeholder wiring points, NOT working implementations. For each package your app needs, add its [deps.<name>] entry to vendor.toml (kind=vendored-crate, dest under lib/third-party/<name>/), run `recipe.py sync-deps`, then replace the placeholders per the catalog entry's sub-requirements; delete a seam file that does not apply. See the `standard-packages` block above (design rationale, §5.5-§5.7, and full adoption guidance live in the upstream Grimoire repository, framework-internal).",
   "languages": {
     "python": {
       "test": "pytest",

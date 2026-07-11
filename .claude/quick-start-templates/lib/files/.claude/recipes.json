@@ -1,0 +1,36 @@
+{
+  "interface-version": 6,
+  "stack": "library",
+  "targets": {
+    "build": {
+      "command": "just build ${env}",
+      "implemented": false,
+      "params": {"env": {"default": "dev"}}
+    },
+    "server": {"command": null, "implemented": false},
+    "stop": {"command": null, "implemented": false},
+    "test": {
+      "command": "just test ${filter}",
+      "implemented": false,
+      "params": {"filter": {"default": ""}, "watch": {"default": ""}}
+    },
+    "seed": {"command": null, "implemented": false},
+    "migrate": {"command": null, "implemented": false},
+    "lint": {"command": null, "implemented": false},
+    "clean": {"command": null, "implemented": false},
+    "package": {"command": null, "implemented": false},
+    "deploy": {"command": null, "implemented": false},
+    "smoke": {"command": null, "implemented": false},
+    "release": {"command": null, "implemented": false},
+    "sync-deps": {
+      "command": "just sync-deps ${mode}",
+      "implemented": true,
+      "params": {"mode": {"default": ""}}
+    },
+    "vendor-check": {
+      "command": "just vendor-check ${full}",
+      "implemented": true,
+      "params": {"full": {"default": ""}}
+    }
+  }
+}

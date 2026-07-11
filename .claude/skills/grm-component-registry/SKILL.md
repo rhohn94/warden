@@ -8,9 +8,11 @@ description: Build or update the versioned component registry .claude/component-
 Builds and maintains `.claude/component-registry.json`, the **versioned**,
 diffable catalog of the project's reusable components. The scalable successor to
 the `grm-component-catalog-export` flat-scan stopgap (which becomes a *view* over
-this registry once it exists). Pillar 1 of
-`docs/design/component-catalog-architecture-design.md`; vocabulary authority is
-`docs/design/component-taxonomy.md`.
+this registry once it exists). The design rationale (Pillar 1) and the
+vocabulary authority (`component-taxonomy.md`) are framework-internal design
+specs — see the upstream Grimoire repository for that rationale; a project may
+supply its own `docs/grimoire/design/component-taxonomy.md` to opt into tag
+validation, otherwise it is skipped (see Step 4).
 
 Unlike the stopgap, this **persists** per-component metadata + a version, so a
 rebuild *diffs* against the prior state rather than re-deriving blind.
@@ -35,8 +37,8 @@ rebuild *diffs* against the prior state rather than re-deriving blind.
 > script is **file-write-only** (writes only `.claude/component-registry.json`) —
 > **you still commit** the result. Verify the engine with `… component_registry.py
 > --self-test`. The Steps below are the conceptual model the script implements (and
-> the contract it must honour). Design: `docs/design/scripting-unification-design.md`
-> §5 + `docs/design/mcp-expansion-audit.md` rank 3.
+> the contract it must honour). Design rationale lives in the upstream Grimoire
+> repository (framework-internal — not shipped).
 
 ## Step 1 — Resolve scan paths
 
@@ -70,9 +72,13 @@ that later declares a version flips cleanly from hash to semver as a *change*).
 
 ## Step 4 — Validate tags against the taxonomy
 
-Read the allowed term sets from `docs/design/component-taxonomy.md` — §2 for
-`profiles`, §3 for the shared `provides`/`requires` capability vocabulary.
-For each component, check every tag against the matching set:
+Read the allowed term sets from `docs/grimoire/design/component-taxonomy.md` —
+§2 for `profiles`, §3 for the shared `provides`/`requires` capability
+vocabulary — **if present**. This doc is framework-internal and not shipped by
+default; when absent, validation degrades to a no-op (every tag is accepted,
+`unknown-tags` stays empty) rather than failing the build. A project that wants
+tag validation supplies its own copy at that path. When present, for each
+component check every tag against the matching set:
 
 - A recognized tag is recorded normally.
 - An **unknown tag is surfaced**, not silently accepted into a clean entry and

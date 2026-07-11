@@ -12,7 +12,8 @@ CLI: python3 verify_isolation.py --result-file <path> --staging-branch <ref>
      Exit 0 = footer present and HEAD on expected staging branch.
      Exit nonzero = footer absent or HEAD drifted (do not merge).
 
-Design reference: docs/grimoire/design/dispatch-hardening-design.md §7
+Design reference (§7) lives in the upstream Grimoire repository
+(framework-internal -- not shipped).
 """
 
 from __future__ import annotations

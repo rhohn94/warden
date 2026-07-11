@@ -5,8 +5,8 @@ description: One-shot migration of an existing git submodule (or hand-vendored d
 
 # vendor-migrate
 
-The **Dependency Channel** migration helper (design
-`docs/design/dependency-channel-design.md` §7). It converts a legacy
+The **Dependency Channel** migration helper (design rationale §7 in the
+upstream Grimoire repository, framework-internal). It converts a legacy
 **git submodule** (or a hand-vendored dir) into the committed Dependency Channel
 artifacts — `vendor.toml` (intent) + `vendor.lock` (resolved truth) — so the
 dependency is thereafter sourced from a published GitHub Release **channel**
@@ -106,4 +106,5 @@ clobber (and `--force` overrides); the **no-match path emits the loud fallback**
 (records commit + content-sha, writes no lock, the stub declares no active dep);
 https + `git@` slug derivation; a missing `.gitmodules` URL is a hard error.
 
-Design: `docs/design/dependency-channel-design.md` §7 (+ §3 for the produced shapes).
+(Design rationale, §7 + §3 for the produced shapes, in the upstream Grimoire
+repository, framework-internal.)

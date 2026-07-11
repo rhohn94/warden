@@ -58,130 +58,67 @@ Read §3 (pass structure + conflict map) and §5 (ledger) to determine:
 
 Read §3's conflict map. Items are in the same batch if:
 
-1. Neither depends on the other's output (no shared files that must serialise),
-   AND
+1. Neither depends on the other's output (no shared files that must serialise), AND
 2. They are marked as parallel in §3's merge order.
 
 Each batch is a set of work items that can run concurrently in separate
-worktrees. Within a batch, order doesn't matter. Across batches, earlier
-batches must be merged before later ones start.
-
-If §3 has no explicit conflict map, apply the conservative default: one item
-per batch (fully serialised).
+worktrees. If §3 has no explicit conflict map, apply the conservative default:
+one item per batch (fully serialised).
 
 ---
 
 ## Step 2.5 — Choose the dispatch posture (execution-strategy)
 
-Step 2 produced the *dependency-correct* batches. The **execution-strategy**
-dial now sets the **dispatch posture** — fan-out width and isolation mode — over
-those batches. This is independent of the tier resolved in Step 3 and the Noir
-ceiling in Step 3a: see the orthogonality note below.
-
 Read `workflow-variant.value` from `.claude/grimoire-config.json`
-(absent/unset → `Efficient`; canonical preset set `{Fast, Efficient,
-Cheap-Slow}`, matched case-insensitively; a legacy `Careful-Serial` value is
-migrated to `Cheap-Slow` by `grm-workflow-variant-switch` — treat any residual
-`Careful-Serial` here as `Cheap-Slow`). Apply the posture:
+(absent/unset → `Efficient`; match case-insensitively; treat legacy
+`Careful-Serial` as `Cheap-Slow`).
 
-| execution-strategy | Dispatch posture (fan-out + isolation) |
+| execution-strategy | Dispatch posture |
 |---|---|
-| **Fast** | **Max fan-out** — dispatch every independent item in the current batch concurrently via isolated-worktree subagents. Minimum wall-clock. |
-| **Efficient** | **Balanced — default behaviour (unchanged).** Keep Step 2's conflict-map–respecting batches as-is, dedup shared reads via the Step 4 shared-context brief, honour `mergeAfter` ordering. |
-| **Cheap-Slow** | **Low fan-out, small batches.** Cap concurrent dispatches to a **small batch (≈2–3 items)**; if a Step 2 batch is wider, sub-split it into sequential small batches (merge each before dispatching the next). Pairs with the Eco-Budget tier profile for genuine cost reduction. NOT literal solo — see the regimes below. |
+| **Fast** | Max fan-out — spawn every independent item in the current batch concurrently. Minimum wall-clock. |
+| **Efficient** | Balanced (today's default) — conflict-map batches, shared brief dedup, `mergeAfter` ordering. |
+| **Cheap-Slow** | Low fan-out — cap concurrent spawns to ~2–3; sub-split wider batches into sequential small batches. |
 
-**Cheap-Slow regime selection** (per `execution-profiles-design.md` §C / §E):
+**Cheap-Slow regime selection and the three-dial orthogonality rule** are in
+`reference.md` §Step 2.5. Record the chosen posture in the Step 4 preview.
 
-- **Many light / mechanical items** → low fan-out, small parallel batches, tiered down (Eco-Budget).
-- **Few (≤ ~10) large / dependent items (the small-heavy corner)** → small-batch parallel dispatch (still cheaper than wide fan-out or solo for this K range).
-- **≤ 3 hard-sequential items** → literal solo-serial dispatch is acceptable.
-- **Many heavy items** → parallel dispatch, NOT solo.
-
-Record the chosen posture (and, for Cheap-Slow, the regime + whether you
-sub-split) to surface in the Step 5 report.
-
-> **Three dials, three independent reads.** This step reads **only**
-> `workflow-variant.value` (fan-out / isolation). Step 3 reads **only**
-> `model-effort-profile.value` (tier). Step 3a reads **only**
-> `work-paradigm.value` (the Noir autonomy ceiling). They **compose** and never
-> derive one from another.
+> **Three independent reads.** `workflow-variant` (fan-out/isolation) ·
+> `model-effort-profile` (tier) · `work-paradigm` (Noir ceiling). They compose
+> and never derive from one another.
 
 ---
 
 ## Step 3 — Assign model and effort
 
 For each item, resolve `{model, effort}` through the **active model/effort
-profile** — do not hard-code a table here. Use the single resolver documented in
-the **`grm-repo-reference`** skill (§Subagent model & effort → The resolver):
+profile** — do not hard-code a table here. Use the resolver from the
+**`grm-repo-reference`** skill (§Subagent model & effort → The resolver):
 
 1. Read `model-effort-profile.value` from `.claude/grimoire-config.json`
    (absent/unset → `Medium`).
-2. Classify the item into a complexity **band** from its recorded token estimate
-   + design/review flag (trivial ≤ 15 K · small 15–40 K · medium 40–80 K · large
-   > 80 K · review = any planning/review/architecture, regardless of estimate).
-3. Look up `profiles[<active>][<band>]` in
-   `.claude/model-effort-profiles.json` → the `{model, effort}` pair. UX-pin
-   items (`grm-design-language-adapt`, `grm-ux-demo-build`) resolve to their fixed pins.
+2. Classify into a complexity band from token estimate + design/review flag
+   (trivial ≤ 15 K · small 15–40 K · medium 40–80 K · large > 80 K · review).
+3. Look up `profiles[<active>][<band>]` in `.claude/model-effort-profiles.json`.
+   UX-pin items (`grm-design-language-adapt`, `grm-ux-demo-build`) keep fixed pins.
 
-This `{model, effort}` pair is the recommended tier. Err toward sonnet when uncertain.
+When in doubt, err toward sonnet. `spawn_task` cannot set the spawned session's
+model, so carry the resolved tier into the chip title + prompt.
 
-### Step 3a — Noir dispatch ceiling (always active)
-
-After the resolver yields `{model, effort}`, cap the model at **Sonnet** for
-every item that is **neither a review item nor `opus-required`-flagged** (v1.9
-audit recs D2/A3/B3):
-
-- **Review items** (band `review` — any planning/review/architecture/security
-  analysis) are exempt: keep the resolver's tier.
-- **`opus-required` items** (see flag contract below) are exempt: keep the
-  resolver's tier.
-- **All other items** (trivial/small/medium/large implementation, mechanical):
-  if the resolver returned `opus`, lower the model to `sonnet` and keep the
-  resolver's `effort` (e.g. `opus/high` → `sonnet/high`). Items the resolver
-  already put at Sonnet or Haiku are unchanged.
-
-Note each clamp in the Step 5 report (e.g. `E5: opus/high → sonnet/high (Noir
-ceiling)`) so the plan can add `opus-required` if a clamp is wrong.
-
-### The `opus-required` escape hatch
-
-A release plan may declare that a specific item needs Opus despite being
-non-review work.
-
-**Flag contract:**
-
-- **Where declared:** in `docs/release-planning/release-planning-v{X.Y}.md`, on the
-  item's §2.{N} entry and/or its §5 ledger row, as the literal token
-  `opus-required` (e.g. an `opus-required: yes` field, or `opus-required` in the
-  item's flags list).
-- **Effect:** the item is exempt from the Step 3a ceiling — the resolver's tier
-  stands as-is. It does **not** force-raise an item the resolver put below Opus.
-- **Scope:** load-bearing only under Noir (this paradigm); advisory under
-  Supervised/Weiss.
+**Step 3a — Noir dispatch ceiling and `opus-required` escape hatch:** load
+`reference.md` §Step 3a only when `work-paradigm.value` is `Noir`.
 
 ---
 
 ## Step 3.5 — Validate milestone labels (hard gate)
 
-Before dispatching any work item, verify that every planned issue for the current
-release carries a `milestone:vX.Y` label matching the release version in the
-active plan file.
+Verify every planned issue for the current release carries a `milestone:vX.Y`
+label before dispatching. Check via the issue-tracker abstraction; full code
+examples in `reference.md` §Step 3.5.
 
-**How to check:**
-
-```bash
-python3 .claude/skills/grm-issue-tracker/issue_tracker.py list --state open \
-  | grep -v "milestone:v{X.Y}"
-```
-
-**Gate behavior:**
-
-- If **all** planned issues carry the correct `milestone:vX.Y` label → proceed
-  to Step 4 (dispatch).
-- If **any** planned issue is missing the label → **STOP**. Do not dispatch any
-  items. Output a clear error listing every unlabeled issue.
-
-This is a **hard gate**, not advisory.
+**Gate behaviour:** if any planned issue is missing the label, **STOP** — output
+a clear error listing each unlabeled issue and instruct the user to run the
+Triager with milestone-assignment scope before re-running. `milestone:backlog`
+also blocks. Do not dispatch until all planned issues are labeled.
 
 ---
 
@@ -195,16 +132,98 @@ in Step 2.5: `Fast` = max fan-out; `Efficient` = balanced batches (default);
 Workflow). Each subagent receives its own worktree and short-lived branch,
 implements one item, and returns its branch for merge.
 
-- **model/effort**: set directly on the dispatch per the Step 3 resolver result
-  (after Step 3a ceiling) — the master sizes each subagent; there is no chip for
-  a human to size.
-- **label/description**: `{ITEM-ID}: {short title}`.
-- **prompt**: self-contained task block (same task template as Supervised
-  `grm-release-phase`), built per the §Shared-context dispatch guidance below.
+- **Lead with the dispatch posture** (Step 2.5): active execution-strategy and
+  what it does to this batch (e.g. `Efficient → balanced, 3 items concurrent`).
+- List each item: ID, title, recommended model, branch name.
+- Ask: "Spawn these N items now?"
+
+Wait for explicit confirmation. Do not spawn until the user says yes.
 
 ---
 
-## Step 5 — Report and proceed to merge
+## Step 5 — Spawn each item with `spawn_task`
+
+For each item in the current batch, call the **`spawn_task`** tool
+(`mcp__ccd_session__spawn_task`). The spawned session has no memory of this
+session, so the `prompt` must be self-contained.
+
+**First, synthesize the shared context brief (once per batch):** write a
+**≤800-token digest** covering what agents would otherwise cold-read, and
+embed it identically in every spawn prompt's `### Shared context (pre-digested)`
+block. Each agent still reads its own §2.{N} scope in full.
+
+**Brief contents** (agents do zero cold doc-reading on opening turns):
+
+1. **Standards excerpt** — pointers to `docs/coding-standards.md` and
+   `docs/architecture-guidelines.md` plus standing constraints (test/build
+   commands, project-structure rules).
+2. **Conflict-map slice** — the §3 rows for this batch: shared files, parallel
+   items, `mergeAfter` ordering (so agents skip reading §3 themselves).
+3. **Acceptance-criteria summary** — release theme + criteria common to the
+   batch; unique-to-one-item criteria go in the per-item delta.
+4. **Doc-location pointers** — `grm-repo-reference` paths for the relevant
+   design docs (e.g. `docs/design/{feature}-design.md`).
+
+Keep it compact (≤800 tokens total) — a cache-hit lever that does **not**
+relax worktree isolation. Each agent gets its **per-item delta** separately.
+
+- **title**: `[{model}/{effort}] {ITEM-ID}: {short title}` — lead with the
+  resolved tier tag (lowercase; e.g. `[opus/high] E7: …`, `[sonnet/inherit]
+  E3: …`). `spawn_task` cannot set the session's model, so the tag is the
+  carrier; keep the "set this model/effort" line in the prompt body too.
+- **tldr**: one plain-English sentence on what the session will do.
+- **prompt**: the self-contained block below.
+
+```
+## Task: {ITEM-ID} — {short title}
+Recommended model: {model} | effort: {effort} — set this in your session before starting.
+
+You are running in your own fresh, isolated worktree. Stay in it.
+Worktree + git protocol: read CLAUDE.md §Worktree isolation and §Commits.
+
+### Root your worktree on the release-staging ref
+Run the `grm-worktree-preflight` skill first, then:
+
+    git switch -c {branch-name} version/{X.Y}
+
+Verify (must print ROOT-OK):
+    [ "$(git merge-base HEAD version/{X.Y})" = "$(git rev-parse version/{X.Y})" ] && echo ROOT-OK || echo ROOT-BAD
+
+`grm-worktree-preflight`'s Step 0.5 (parent sync) runs right after ROOT-OK — if
+your branch is behind `version/{X.Y}`, sync-merge it in now, before touching
+code. Re-run the whole preflight, Step 0.5 included, if this session is
+**resumed** later rather than freshly spawned.
+
+### Shared context (pre-digested)
+{The ≤800-token batch digest: standards excerpt, conflict-map slice for this batch, acceptance-criteria summary, grm-repo-reference doc-location pointers. Identical across the batch. Replaces cold doc-reading. You still read your own §2.{N} scope below.}
+
+### Context — read before touching code
+- docs/release-planning/release-planning-v{X.Y}.md §2.{N} — this item's scope + acceptance
+- docs/design/{feature}-design.md — full feature design
+- {any other design doc cross-linked in the plan}
+
+### Work
+{Exact item description copied from the release plan §2.{N}.
+Include acceptance criteria verbatim.}
+
+### Constraints
+- Scope strictly to the files listed in §2.{N}. Do not touch
+  docs/release-planning/release-planning-v{X.Y}.md.
+- Write or extend the design doc for this item if §2.{N} flags one missing.
+- Run `{test-command}` and `{build-command}` before finishing.
+- Fix all errors and warnings introduced by your changes.
+- Review your own diff against the acceptance criteria before reporting done.
+
+### When done
+Do NOT merge. Report back:
+1. The branch name you worked on
+2. Test result (pass / N failures)
+3. One-paragraph summary of what was implemented
+4. Any deferred follow-ups discovered (gaps left for a future item)
+```
+
+Replace `{test-command}` and `{build-command}` with your project's actual
+commands (see CLAUDE.md §Project commands).
 
 After dispatching the batch, report to the user:
 
@@ -220,43 +239,19 @@ to resolve headlessly.
 
 ---
 
-## Anti-patterns
+## Anti-patterns (summary — full detail in `reference.md` §Anti-patterns)
 
-- Dropping `spawn_task` chips for work-item dispatch — chips are a
-  Supervised / Weiss mechanism; Noir dispatches via isolated-worktree subagents.
-- Pausing between items for per-item confirmation (use Supervised posture
-  for that).
-- Including merge instructions in a dispatched prompt — work-item agents never
-  merge.
-- Batching items that share files — check §3's conflict map carefully.
-- Dispatching Batch 2 before Batch 1 is merged.
-- Implementing the phase's work items inline in the master's own session
-  instead of dispatching them — dispatch is the Noir default (see the
-  integration-master §Default execution path soft guard).
-- Dispatching non-review, non-`opus-required` implementation work to Opus —
-  the Step 3a ceiling clamps it to Sonnet; only review items and
-  `opus-required`-flagged items keep Opus.
-- Treating `opus-required` as a promotion — it only exempts an already-Opus
-  item from the Noir clamp; it never raises a sub-Opus item (re-band the plan
-  for that).
-- Letting **execution-strategy change the tier** (or vice versa) — they are
-  independent reads (Step 2.5 vs Step 3). Cheap-Slow does not lower the model;
-  the Eco-Budget *profile* does.
-- **Treating Cheap-Slow as literal solo** — solo cost is quadratic in K.
-  Cheap-Slow is low fan-out + small batches; literal solo is reserved for
-  ≤3 hard-sequential items.
-- Skipping or oversizing the shared context brief — it must be ≤800 tokens,
-  synthesized once by the master, and must not replace per-item §2.{N} scope
-  or relax worktree isolation.
-
-## Shared-context dispatch (v1.29, #59)
-
-When dispatching a batch of agents, minimize per-agent prompt size:
-
-- Write the **shared brief once** — the design doc reference, the relevant
-  standards, and the common acceptance criteria — as a compact preamble the batch
-  shares. Do not paste the full context into every agent prompt.
-- Give each agent only its **per-item delta**: its specific files, its branch, and
-  its one acceptance criterion. Label by item, not by re-stating shared context.
-- Result: materially smaller per-agent prompts with no loss of fidelity.
-  Authority: `docs/design/context-efficiency-design.md`.
+- Spawning without user confirmation; handing the user raw copy-paste prompts
+  instead of calling `spawn_task`.
+- Including merge instructions in a spawned prompt (agents never merge);
+  batching items that share files (check §3's conflict map).
+- Forgetting the leading `[{model}/{effort}]` tier tag, or oversizing/skipping
+  the ≤800-token shared context brief, or missing the "set this model/effort"
+  line in the prompt body.
+- Spawning Batch 2 before Batch 1 is merged.
+- Under Noir, dispatching non-review, non-`opus-required` work to Opus (Step 3a
+  ceiling — see `reference.md`), or treating `opus-required` as a promotion.
+- Treating Cheap-Slow as literal solo, or letting execution-strategy change the
+  tier or vice versa — see `reference.md` §Step 2.5.
+- Implementing in-session subagents for Cheap-Slow's small-heavy corner — N1 is
+  deferred; use the small-batch `spawn_task` fallback.

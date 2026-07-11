@@ -16,6 +16,6 @@
 - **Reporter** (optional, any paradigm): a narrow-context, own-session agent
   spawned via `spawn_task` to file feedback through `grm-feedback-to-issue`. No
   git writes; targets the configured issue tracker only. Guide:
-  `.claude/skills/grm-reporter/SKILL.md`. Taxonomy + spawn template:
-  `docs/integration-workflow.md` §Filing issues with the Reporter.
+  `.claude/skills/grm-agent-reporter/SKILL.md`. Taxonomy + spawn template:
+  `docs/grimoire/integration-workflow.md` §Filing issues with the Reporter.
 <!-- PARADIGM_SECTION:agent-role:end -->

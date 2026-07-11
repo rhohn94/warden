@@ -1,0 +1,37 @@
+{
+  "schema-version": 1,
+  "_comment": "Starter architecture-fitness ruleset for the service/api quick-start family (grm-quick-start-template, #314). Adapt the layer globs to the project's real module layout — this is a starting point, not a fixed schema. The 'structure' block already matches docs/project-structure.md. To decline enforcement entirely, replace this file's contents with { \"schema-version\": 1, \"opt_out\": true, \"opt_out-reason\": \"...\" } — grm-architecture-audit surfaces that decision explicitly instead of silently passing. Design: docs/grimoire/design/architecture-fitness-design.md §Scaffold defaults.",
+  "structure": {
+    "spec": "docs/project-structure.md",
+    "required": ["src", "docs", "tests"],
+    "aliases": {
+      "vendor": "lib/third-party",
+      "deps": "lib/third-party",
+      "third_party": "lib/third-party",
+      "test": "tests",
+      "spec": "tests",
+      "script": "scripts",
+      "source": "src",
+      "build": "dist",
+      "out": "dist",
+      "static": "assets",
+      "resources": "assets"
+    },
+    "gitignored": ["dist", "build"]
+  },
+  "layers": {
+    "api": ["src/api/**", "src/handlers/**", "src/routes/**"],
+    "domain": ["src/domain/**", "src/core/**"],
+    "persistence": ["src/db/**", "src/store/**", "src/repositories/**"]
+  },
+  "allowed-edges": [
+    ["api", "domain"],
+    ["api", "persistence"],
+    ["persistence", "domain"]
+  ],
+  "forbidden-imports": [
+    { "id": "no-http-framework-in-domain", "from": "domain", "pattern": "axum|actix|express|flask|fastapi|django|gin|echo", "severity": "error" },
+    { "id": "no-internal-reach", "pattern": "/internal/|/_private/", "severity": "warn" }
+  ],
+  "forbid-cycles": true
+}

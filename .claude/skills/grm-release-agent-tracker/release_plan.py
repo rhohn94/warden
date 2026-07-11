@@ -21,10 +21,16 @@ Capabilities (each also a CLI verb + an MCP tool on server.py):
     reachable from the integration line; benign promotion merges do NOT HALT
   - tick rows atomically + idempotently (file edit only)
   - plan a phase (first all-unticked pass -> batches + model assignments)
+  - detect-merged (maintenance-automation-design.md item 2, v3.58): diff the
+    ledger's un-ticked rows against `git log --merges` on the integration line
+    and PROPOSE (never apply) branch-name-substring matches + merge SHAs for
+    confirmation via the existing `tick` / grm-ledger-tick path.
 
 File-write-only contract: this engine NEVER runs git mutations. Every git call
 is a read; the only side effect is editing the §5 ledger file via `tick`. The
 AGENT commits. Design: docs/grimoire/design/grimoire-release-server-design.md.
+`detect-merged` is READ-ONLY even of the ledger file — it only proposes ticks;
+the human/agent applies them via `tick` (or the grm-ledger-tick skill).
 
 Standard: Python 3 stdlib-only (docs/grimoire/design/scripting-unification-design.md).
 
@@ -37,6 +43,7 @@ CLI:
   release_plan.py divergence-check [--integration BR] [--published BR] [--root DIR]
   release_plan.py plan-phase [--plan FILE] [--root DIR]
   release_plan.py tick --branch B --column COL --value (true|false) [...] [--plan FILE] [--root DIR]
+  release_plan.py detect-merged [--staging REF] [--json] [--plan FILE] [--root DIR]
   release_plan.py --self-test
 Exit 0 on success; 2 on bad input / plan error.
 """
@@ -398,6 +405,28 @@ class GitView:
             rows.append((sha, subject.strip()))
         return rows
 
+    def merges_oneline(self, branch):
+        """`git log --merges --oneline branch` -> [(sha, subject)] (newest first).
+
+        Used by MergeDetector (--detect-merged) to enumerate merge commits on
+        the integration/staging line for branch-name-substring matching against
+        un-ticked ledger rows. A read-only, best-effort call: any git failure
+        (unknown ref, no repo) yields an empty list rather than raising, since
+        detect-merged degrades gracefully to "no matches found".
+        """
+        code, out, _ = self._runner(
+            ["log", "--merges", "--oneline", "--no-decorate", branch])
+        if code != 0:
+            return []
+        rows = []
+        for ln in out.splitlines():
+            ln = ln.strip()
+            if not ln:
+                continue
+            sha, _, subject = ln.partition(" ")
+            rows.append((sha, subject.strip()))
+        return rows
+
     def commit_introduces_work_absent_from(self, commit, base):
         """True iff `commit`'s patch is NOT already reachable from `base`.
 
@@ -499,6 +528,71 @@ class MergeQueue:
         return {"order": order, "blocked": blocked}
 
 
+# ── Merged-branch auto-detection (maintenance-automation-design.md item 2) ──
+class MergeDetector:
+    """Propose §5 ledger flips by matching un-ticked rows to merge commits.
+
+    Diffs the ledger's un-ticked (`merged` column == False) rows against
+    `git log --merges --oneline <staging>` on the integration/staging branch
+    (whichever the caller resolves — see IntegrationLineResolver / the plan's
+    own staging ref). A row matches a merge commit when the row's branch name
+    appears as a **substring** of the merge commit's subject line (the subject
+    of a `git merge` commit is typically "Merge branch '<name>' into <target>"
+    or the project's own "merge(...): <branch> ..." convention).
+
+    This is explicitly a HEURISTIC, not an infallible match:
+      - a short/generic branch name can substring-match an unrelated subject;
+      - a squash-merge (no merge commit) never surfaces here;
+      - a branch renamed between ledger-authoring and merge time is missed.
+    For this reason MergeDetector only PROPOSES — it never calls Ticker itself.
+    The proposal is a report (stdout / --json) a human or agent reviews before
+    applying via `release_plan.py tick` (or the grm-ledger-tick skill), mirroring
+    the confirm-then-apply pattern release-planning already uses elsewhere
+    (e.g. the Step 4 destructive-op gate in grm-hard-reset).
+    """
+
+    def __init__(self, ledger, git):
+        self.ledger = ledger
+        self.git = git
+
+    def _unticked_rows(self):
+        return [row for row in self.ledger.all_rows() if row.merged is False]
+
+    def detect(self, staging):
+        """Return {"staging": ref, "proposals": [...], "unmatched": [...]}.
+
+        Each proposal: {branch, item, pass, sha, subject}. `unmatched` lists
+        un-ticked rows (branch/item/pass) with no matching merge commit found —
+        still open, nothing to propose.
+        """
+        merges = self.git.merges_oneline(staging)
+        proposals, unmatched = [], []
+        for row in self._unticked_rows():
+            match = self._match(row.branch, merges)
+            if match:
+                sha, subject = match
+                proposals.append({
+                    "branch": row.branch, "item": row.item_id,
+                    "pass": row.pass_name, "sha": sha, "subject": subject,
+                })
+            else:
+                unmatched.append({
+                    "branch": row.branch, "item": row.item_id,
+                    "pass": row.pass_name,
+                })
+        return {"staging": staging, "proposals": proposals,
+                "unmatched": unmatched}
+
+    @staticmethod
+    def _match(branch, merges):
+        """First merge commit (newest-first order) whose subject contains
+        `branch` as a substring; None if no merge commit matches."""
+        for sha, subject in merges:
+            if branch and branch in subject:
+                return sha, subject
+        return None
+
+
 # ── Merge preflight (structured verdict) ────────────────────────────────────
 class MergePreflight:
     """Assert HEAD == staging + per-branch exists/commits-ahead. Read-only."""
@@ -564,6 +658,19 @@ class DivergenceGuard:
     solely of promotion merges (identical trees) is **benign** and must NOT
     HALT — this is the false-positive the naive `is-ancestor` check trips on the
     default model, where promotion-merge commits live only on `main`.
+
+    RECONCILIATION NOTE (#126 acceptance criterion 2, re-affirmed v3.67): #126's
+    original prescription asked for a literal `git merge-base --is-ancestor main
+    <integration>` check. This tree-content-reachability predicate is the
+    ACCEPTED implementation of that criterion, not a deviation from it — it is
+    STRICTER (catches every real fork `is-ancestor` would, per Worked example
+    (ii) in the design doc) and additionally avoids a false-positive the naive
+    `is-ancestor` check trips on this repo's own healthy default model (Worked
+    example (i): nine benign promotion-merge commits make `main` a non-ancestor
+    of `dev` even though zero real divergence exists). See design §2 "Why the
+    naive `is-ancestor` check is WRONG for the default model" for the full
+    justification with verified command output. A future audit should treat
+    this class, not a literal `is-ancestor` shell-out, as satisfying criterion 2.
 
     Algorithm:
       1. Fast accept — `git diff --quiet INT main`. Trees identical ⇒ no
@@ -782,6 +889,22 @@ class ReleasePlanEngine:
 
     def tick(self, ticks):
         return Ticker(self.plan_path).tick(ticks)
+
+    def default_staging(self):
+        """`version/{X.Y}` per the plan's own version, matching the staging-
+        branch convention `grm-release-phase-merge` / `merge-preflight` use
+        (falls back to the resolved integration line, usually `dev`, if the
+        plan carries no parseable version)."""
+        if self.ledger.version:
+            return "version/%s" % self.ledger.version
+        return IntegrationLineResolver(self.root).resolve()
+
+    def detect_merged(self, staging=None):
+        """Propose §5 ledger flips for un-ticked rows matching a merge commit
+        on `staging` (default: this plan's `version/{X.Y}`, or the integration
+        line). Never mutates the ledger — see MergeDetector docstring."""
+        ref = staging or self.default_staging()
+        return MergeDetector(self.ledger, self.git).detect(ref)
 
 
 # ── Self-test (fixture plan in a temp dir; never the repo's real plans) ──────
@@ -1033,6 +1156,108 @@ def _divergence_git_self_test():
     return failures
 
 
+class _FakeMergeGit:
+    """Minimal GitView runner scripting only `git log --merges --oneline`.
+
+    Kept separate from `_FakeGit` (which scripts the merge-preflight and
+    divergence-guard reads over a `base..tip` spec) because `merges_oneline`
+    calls `git log --merges --oneline --no-decorate <branch>` — a single-ref
+    spec, not a range — so overloading the same fixture would blur two
+    different fake-git contracts.
+    """
+
+    def __init__(self, merges):
+        self.merges = merges  # [(sha, subject)]
+
+    def __call__(self, args):
+        if args[:2] == ["log", "--merges"]:
+            body = "".join("%s %s\n" % (s, sub) for s, sub in self.merges)
+            return 0, body, ""
+        return 1, "", "unhandled"
+
+
+def _detect_merged_self_test():
+    """MergeDetector matching logic against a fixture ledger + fake merge log.
+
+    No real git history required — the merge log is an injected fixture list,
+    exercising the substring-match heuristic, the unmatched-row path, and the
+    default-staging (`version/{X.Y}`) resolution.
+    """
+    failures = []
+    ledger = Ledger.__new__(Ledger)  # bypass file I/O; build passes by hand
+    ledger.path = "<fixture>"
+    ledger.version = "9.9"
+    ledger.passes = {
+        "Pass 1": [
+            LedgerRow("Pass 1", "alpha-v99", "A1",
+                      {"design_doc": True, "implemented": True,
+                       "reviewed": True, "merged": False}),
+            LedgerRow("Pass 1", "beta-v99", "B2",
+                      {"design_doc": None, "implemented": True,
+                       "reviewed": False, "merged": False}),
+        ],
+        "Pass 2": [
+            LedgerRow("Pass 2", "gamma-v99", "C3",
+                      {"design_doc": False, "implemented": False,
+                       "reviewed": False, "merged": False}),
+            # Already ticked — must never be proposed again.
+            LedgerRow("Pass 2", "delta-v99", "D4",
+                      {"design_doc": True, "implemented": True,
+                       "reviewed": True, "merged": True}),
+        ],
+    }
+    ledger.conflict_map = {}
+
+    git = GitView(".", runner=_FakeMergeGit(merges=[
+        ("f00d1e1", "merge(v9.9): alpha-v99 — adds the foo widget"),
+        ("c0ffee2", "Merge branch 'beta-v99' into version/9.9"),
+        ("aaaaaaa", "release(v9.9): promote version/9.9 to dev"),
+    ]))
+
+    detector = MergeDetector(ledger, git)
+    result = detector.detect("version/9.9")
+
+    if result["staging"] != "version/9.9":
+        failures.append("detect-merged staging echo: %r" % result["staging"])
+
+    by_branch = {p["branch"]: p for p in result["proposals"]}
+    if "alpha-v99" not in by_branch or by_branch["alpha-v99"]["sha"] != "f00d1e1":
+        failures.append("alpha-v99 should propose sha f00d1e1: %r" % result)
+    if "beta-v99" not in by_branch or by_branch["beta-v99"]["sha"] != "c0ffee2":
+        failures.append("beta-v99 should propose sha c0ffee2: %r" % result)
+    if "delta-v99" in by_branch:
+        failures.append("already-merged delta-v99 must never be proposed: %r"
+                        % result)
+
+    unmatched_branches = {u["branch"] for u in result["unmatched"]}
+    if unmatched_branches != {"gamma-v99"}:
+        failures.append("gamma-v99 (no matching merge) should be unmatched: %r"
+                        % result["unmatched"])
+
+    # Never mutates the ledger — proposing is not applying.
+    gamma = next(r for r in ledger.all_rows() if r.branch == "gamma-v99")
+    if gamma.merged is not False:
+        failures.append("detect-merged must not mutate the ledger in place")
+
+    # The human-readable report names the proposal and never claims to apply.
+    report = _format_detect_merged(result)
+    if "f00d1e1" not in report or "PROPOSED" not in report:
+        failures.append("report must surface the proposed sha: %r" % report)
+    if "release_plan.py tick" not in report:
+        failures.append("report must point at the apply path (tick): %r" % report)
+
+    # default_staging() resolves version/{X.Y} from the ledger's own version.
+    eng = ReleasePlanEngine.__new__(ReleasePlanEngine)
+    eng.root = "."
+    eng.ledger = ledger
+    eng.git = git
+    if eng.default_staging() != "version/9.9":
+        failures.append("default_staging should be version/9.9: %r"
+                        % eng.default_staging())
+
+    return failures
+
+
 def _self_test():
     import tempfile
 
@@ -1181,6 +1406,11 @@ def _self_test():
             except PlanError:
                 pass
 
+        # 11) detect-merged (maintenance-automation-design.md item 2): the
+        #     matching heuristic, unmatched rows, non-mutation, the report, and
+        #     default_staging() — all via an injected fixture (no real git log).
+        failures.extend(_detect_merged_self_test())
+
     if failures:
         print("SELF-TEST FAILED:")
         for f in failures:
@@ -1191,7 +1421,8 @@ def _self_test():
           "merge-preflight verdict + head-drift, divergence guard "
           "[healthy/benign-only/real-fork + integration-line detection + temp-git "
           "e2e], idempotent/atomic tick + n/a guard, plan_phase batches + model "
-          "assignments, facade, missing-plan raise)")
+          "assignments, facade, missing-plan raise, detect-merged proposal "
+          "[match/unmatch/non-mutation/report/default-staging])")
     return 0
 
 
@@ -1200,15 +1431,49 @@ def _emit(obj):
     print(json.dumps(obj, separators=JSON_COMPACT, default=str))
 
 
-def main(argv=None):
+def _format_detect_merged(result):
+    """Human-readable proposed-changes report for `detect-merged`.
+
+    Never applies anything — the report is the confirmation artifact a human
+    or agent reviews before running `tick` (or grm-ledger-tick).
+    """
+    lines = ["detect-merged: staging=%s" % result["staging"]]
+    proposals = result["proposals"]
+    if not proposals:
+        lines.append("  no un-ticked row matches a merge commit on %s"
+                      % result["staging"])
+    else:
+        lines.append("  PROPOSED ticks (branch-name-substring match — "
+                      "review before applying; NOT auto-applied):")
+        for p in proposals:
+            item = " (%s)" % p["item"] if p["item"] else ""
+            lines.append("    [%s] `%s`%s -> merged=true  %s %s"
+                          % (p["pass"], p["branch"], item, p["sha"],
+                             p["subject"]))
+        lines.append("  Apply with: release_plan.py tick "
+                      + " ".join("--branch %s --column merged --value true"
+                                 % p["branch"] for p in proposals))
+    if result["unmatched"]:
+        lines.append("  still open (no matching merge commit found):")
+        for u in result["unmatched"]:
+            item = " (%s)" % u["item"] if u["item"] else ""
+            lines.append("    [%s] `%s`%s" % (u["pass"], u["branch"], item))
+    return "\n".join(lines)
+
+
+def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(
         description="Deterministic engine for the §5 release-planning ledger (#MCP-1).")
     ap.add_argument("verb", nargs="?", help="locate|get-ledger|diff|merge-queue|"
-                    "merge-preflight|divergence-check|plan-phase|tick")
+                    "merge-preflight|divergence-check|plan-phase|tick|"
+                    "detect-merged")
     ap.add_argument("--root", default=".")
     ap.add_argument("--plan", default=None)
     ap.add_argument("--phase", default=None)
-    ap.add_argument("--staging", default=None)
+    ap.add_argument("--staging", default=None,
+                    help="staging/integration ref to diff merges against "
+                         "(detect-merged default: version/{X.Y} from the "
+                         "plan, else the resolved integration line)")
     ap.add_argument("--integration", default=None,
                     help="integration line for divergence-check "
                          "(default: branch-model.integration-branch or 'dev')")
@@ -1217,6 +1482,9 @@ def main(argv=None):
     ap.add_argument("--branch", action="append", dest="branches", default=None)
     ap.add_argument("--column", action="append", dest="columns", default=None)
     ap.add_argument("--value", action="append", dest="values", default=None)
+    ap.add_argument("--json", action="store_true",
+                    help="detect-merged: emit the proposal as JSON instead of "
+                         "the human-readable report")
     ap.add_argument("--self-test", action="store_true")
     args = ap.parse_args(argv)
 
@@ -1258,6 +1526,12 @@ def main(argv=None):
             ticks = [(b, c, v.lower() in ("true", "1", "yes", "☑"))
                      for b, c, v in zip(args.branches, args.columns, args.values)]
             _emit(eng.tick(ticks))
+        elif args.verb == "detect-merged":
+            result = eng.detect_merged(args.staging)
+            if args.json:
+                _emit(result)
+            else:
+                print(_format_detect_merged(result))
         else:
             ap.error("unknown verb: %s" % args.verb)
     except PlanError as exc:

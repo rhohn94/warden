@@ -5,16 +5,15 @@ description: Issue-tracker abstraction — nine operations (list/get/create/upda
 
 # Issue Tracker
 
-Pluggable, multi-target issue-tracker abstraction for Grimoire. Exposes seven
+Pluggable, multi-target issue-tracker abstraction for Grimoire. Exposes nine
 operations over a **normalized Issue object**; routes creates, aggregates list/search
 across trackers, and caches reads per session. Two backends ship: `roadmap` (zero
 network, reads/writes `docs/roadmap.md ## Backlog`) and `github` (wraps `gh`
 with R1's recommended field-filtered, body-on-demand, server-side-filtered,
 session-snapshot-cached access pattern).
 
-Design authority: `docs/grimoire/design/issue-tracker-design.md`.
-
-Cost rationale: `docs/grimoire/issue-tracker-cost-spike.md`.
+Design rationale and cost analysis are framework-internal — see the upstream
+Grimoire repository for that rationale.
 
 ---
 
@@ -218,6 +217,14 @@ If the block is absent, the abstraction synthesizes this structure internally
 The script reads `.claude/grimoire-config.json` relative to the **repo root**,
 detected by walking up from `cwd` until `.claude/grimoire-config.json` is found.
 Override with `--config <path>`.
+
+## Cross-skill dependency
+
+`grm-issue-tracker-switch/issue_tracker_switch.py` imports `CONFIG_FILE`
+directly from this skill's `issue_tracker.py` rather than duplicating the
+config path constant. `issue_tracker.py` declares `CONFIG_FILE` in its
+`__all__` and marks it as consumed by grm-issue-tracker-switch — do not rename
+it here without updating that consumer (#351).
 
 ---
 

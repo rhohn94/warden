@@ -1,5 +1,5 @@
 ---
-name: integration-master
+name: grm-integration-master
 description: Guide for the integration master role — autonomous posture. Master designs, plans, issues tasks, merges, and releases unsupervised until a specified milestone or user stop. Push remains human-gated. Use when acting as the integration master in Noir (Autonomous) paradigm.
 ---
 
@@ -10,14 +10,19 @@ merges completed branches, and drives the release pipeline unsupervised until
 a specified **milestone** or an explicit user stop signal. The master does not
 pause for confirmation at scope lock, batch spawn, or merge steps.
 
-**Push to origin remains human-gated by default.** The master proposes the
-push and waits for the user's explicit instruction. **Opt-in exception (#16):**
-if `grimoire-config.json` contains `autonomous-push: { enabled: true }` (an
-explicit, never-inferred project setting; default **false**), the master MAY
-push at the release moment without waiting — the `push-guard.sh` mechanical
-rails still apply (blessed-worktree marker required; only allowlisted refs;
-destructive flags always denied). With the flag absent or `false`, behaviour is
-unchanged: propose and wait. See `docs/design/autonomy-scheduling-design.md` §2.
+**Push to origin remains human-gated by default.** At the push boundary the
+master does not just announce "next is the push" and move on — it actively
+prompts via `AskUserQuestion` (`Push now` / `Hold`) with the exact push plan
+(refs, tag, remote) in the question body, and pushes only on `Push now`.
+**Opt-in exception (#16):** if `grimoire-config.json` contains
+`autonomous-push: { enabled: true }` (an explicit, never-inferred project
+setting; default **false**), the master pushes immediately at the release
+moment with no question asked — the `push-guard.sh` mechanical rails still
+apply (blessed-worktree marker required; only allowlisted refs; destructive
+flags always denied). With the flag absent or `false`, behaviour is the active
+`AskUserQuestion` prompt described above. Decision table:
+`docs/grimoire/design/autonomous-push-prompt-suppression-design.md` §Two push
+modes. Design rationale (§2) lives in the upstream Grimoire repository (framework-internal — not shipped).
 
 **Execute the plan by dispatching, never solo.** Once a release plan reaches
 `status: agreed` and a `version/{X.Y}` staging branch exists, "execute the
@@ -41,8 +46,38 @@ gate, `grm-project-release`, and the push.
 Absent a PM (no `grm-project-manager` block, or a single-feature release), the
 master is unchanged: it remains the top-level orchestrator and runs the whole
 pipeline below exactly as documented (the degenerate one-lane case). The PM
-layer is additive — it does not remove the standalone master path. See
-`docs/design/project-manager-role-design.md` §5.
+layer is additive — it does not remove the standalone master path. The PM role
+is a framework-internal design (§5) — see the upstream Grimoire repository for
+that rationale.
+
+---
+
+## Model & escalation (orchestrate band)
+
+The integration master itself resolves through the **`orchestrate` band** of the
+active model/effort profile (`.claude/model-effort-profiles.json`) — **Sonnet in
+every starter profile**. Whoever dispatches a master as a subagent (the Noir
+loop's release-master spawn, a Project Manager lane dispatch) resolves
+`orchestrate` and passes the resulting `{model, effort}` pair on the `Agent`
+call; a master running as the user's own session keeps the session model.
+
+The lean orchestrator is safe because judgment-heavy moments are **escalated,
+never absorbed**. On any of these exceptional conditions —
+
+- a merge conflict whose resolution is not mechanically obvious,
+- a post-merge test failure with unclear root cause,
+- a design or planning question (architecture choice, scope interpretation),
+- acceptance-criteria ambiguity about whether an item is genuinely done —
+
+the master spawns a one-shot **adjudicator** (or **designer**, for design and
+planning questions) at the active profile's **`review` band** — Opus-class in
+most profiles — handing it the concrete artifacts (diff, conflict hunks, failing
+test output, plan excerpt, acceptance criteria) and a mandate to return a
+verdict with an explicit confidence.
+
+Escalation runs *before* the stop conditions: a clear, confident adjudicator
+verdict is acted on autonomously; an ambiguous or low-confidence one falls
+through to the normal stop-and-surface path.
 
 ---
 
@@ -128,7 +163,8 @@ Worktree isolation **occasionally degrades silently**: a dispatched `Agent`
 fresh one. Its `git switch -c <branch>` then relocates the **master's own HEAD**
 onto the work-item branch, and every later merge/commit piles onto that stray
 branch while `version/{X.Y}` never advances — shipping an empty release (the
-v1.15 incident; see `docs/design/dispatch-hardening-design.md`).
+v1.15 incident; design rationale lives in the upstream Grimoire repository,
+framework-internal).
 
 The master MUST defend against this on **every** dispatch batch:
 
@@ -151,8 +187,8 @@ The master MUST defend against this on **every** dispatch batch:
    (b) If a second dispatch is also footerless, invoke the **serial-in-place
    fallback**: the master pre-creates the feature branch, dispatches one agent
    with an explicit "never `git switch/checkout/branch/merge/push`" constraint,
-   then verifies HEAD and branch-content before merging. Full contract:
-   `docs/design/dispatch-hardening-design.md` §7.3.
+   then verifies HEAD and branch-content before merging. Full contract (§7.3)
+   lives in the upstream Grimoire repository (framework-internal — not shipped).
    Scriptable check: `python3 .claude/skills/grm-integration-master/verify_isolation.py
    --result-file <path> --staging-branch version/{X.Y}`.
 
@@ -191,7 +227,8 @@ The master **must** stop and surface to the user when:
 
 1. A merge conflict cannot be resolved by reading the code (ambiguous intent).
 2. The test suite fails after a merge and the root cause is unclear.
-3. A push to origin is ready (human-gated — propose and wait).
+3. A push to origin is ready (human-gated — actively prompt via
+   `AskUserQuestion` with the push plan; `Push now` / `Hold`).
 4. The user explicitly says "stop" / "pause."
 5. The specified milestone is reached.
 
@@ -204,7 +241,8 @@ what the user needs to decide.
 
 A long autonomous run can approach a usage/token limit mid-campaign. Account-level
 cap and reset-cadence signals are **not reliably observable from inside a run**
-(see `docs/design/cost-governance-design.md` §Token-limit observability), so the
+(design rationale on token-limit observability lives in the upstream Grimoire
+repository, framework-internal), so the
 master does **not** try to catch a cap and pause an in-flight generation. Instead
 it survives limit windows by **checkpointing and re-entering on a schedule**:
 
@@ -248,7 +286,8 @@ extra checkpoint file is needed.
 **Supervised and Weiss keep human-driven resumption** — they do **not**
 auto-schedule wakeups. **Push stays human-gated even when a wakeup resumes the
 run** (unless `autonomous-push.enabled` is set, per the top of this guide).
-Design: `docs/design/autonomy-scheduling-design.md` §1.
+Design rationale (§1) lives in the upstream Grimoire repository
+(framework-internal — not shipped).
 
 ---
 
@@ -261,8 +300,10 @@ Design: `docs/design/autonomy-scheduling-design.md` §1.
    as each batch completes.
 5. `grm-release-phase-merge` — merge each branch autonomously; pause only on
    conflict/test failure. This step no longer pushes.
-6. `grm-project-release` — promote `dev` → `main` and tag, then propose the single
-   push of `dev` + `main` + tag together and wait for explicit confirmation.
+6. `grm-project-release` — promote `dev` → `main` and tag, then the single push
+   of `dev` + `main` + tag together per §push: `AskUserQuestion` prompt
+   (`Push now` / `Hold`) when gated, immediate push with no question when
+   `autonomous-push.enabled`.
 
 ---
 
@@ -317,7 +358,7 @@ out many parallel implementation items unattended:
 | Receive output | Workflow returns `{ variant, branches: [{ branch, mergeAfter, status, result }, …] }`. |
 | Triage failures | Surface any `failed` branches to the user before starting merges. |
 | Merge sequence | Call `grm-release-phase-merge` (Noir variant, §Write-capable workflow agent branches) with the branch list, following the `mergeAfter` topological order. |
-| Push gate | Propose the push and wait for explicit user confirmation — same gate as for subagent branches. |
+| Push gate | Same gate as for subagent branches — active `AskUserQuestion` prompt when gated, immediate push with no question when `autonomous-push.enabled`. |
 
 **Variant selection** is the master's choice at invocation:
 - `Efficient` (default): parallel, low-waste; honours the conflict map for
@@ -333,16 +374,16 @@ merges autonomously, stops only on the listed stop conditions, and never pushes
 without human confirmation.
 
 See `.claude/workflows/write-capable-example.js` for the canonical reference
-implementation, and `docs/design/write-capable-workflow-design.md` for the
-full tier specification.
+implementation. The full tier specification is a framework-internal design —
+see the upstream Grimoire repository for that rationale.
 
 ### `release-phase-model` dial — `Default` vs `Auto` execution paths
 
 The `release-phase-model` config dial selects **how the master executes an
 agreed plan**. The master reads `release-phase-model.value` **live** at
 execution time (no file-swap — same pattern as `workflow-variant`); absent the
-field, treat it as `Default`. Full spec:
-`docs/design/release-phase-model-design.md`.
+field, treat it as `Default`. The full spec is a framework-internal design —
+see the upstream Grimoire repository for that rationale.
 
 - **`Default` (default).** Decompose into phases and dispatch each work item as
   a separate isolated-worktree subagent (`Agent` with `isolation:"worktree"`) —
@@ -376,11 +417,13 @@ outside Noir. (The `grm-release-phase-model-switch` skill also refuses to *set*
 `Auto` under a non-Noir paradigm; this runtime fallback is the second line of
 defence.)
 
-**Push stays human-gated under both paths.** `Auto` does not change the
-push invariant: the master proposes the push at `grm-project-release` and waits for
-explicit human confirmation (unless `autonomous-push.enabled` is set — the
-separate, never-inferred opt-in described at the top of this guide). `Auto`
-does **not** imply autonomous push.
+**Push stays gated (or ungated) under both paths identically.** `Auto` does not
+change the push behavior in either direction: the master follows
+`grm-project-release` §push exactly as it would under `Default` — an active
+`AskUserQuestion` prompt when `autonomous-push.enabled` is unset/false, or an
+immediate no-question push when it is true (the separate, never-inferred
+opt-in described at the top of this guide). `Auto` does **not** imply
+autonomous push on its own.
 
 ---
 
@@ -396,14 +439,18 @@ the default-on #13 scheduling); **hand off your own worktree** — you cannot
 exact removal command for the operator (or parent PM) to run elsewhere, never
 abandon it silently; **drop the now-stale** `.claude/integration-allow.local`
 marker; **clear scratch** (`/tmp/notes-*.md`, etc.); and **report the tally**.
-Full procedure: `integration-workflow.md` §Run teardown (end-of-run). Design:
-`docs/design/agent-teardown-design.md`.
+Full procedure: `integration-workflow.md` §Run teardown (end-of-run). Design
+rationale lives in the upstream Grimoire repository (framework-internal — not
+shipped).
 
 ## Anti-patterns
 
 - Pausing for confirmation at steps not in the stop-conditions list (defeats
   the paradigm).
-- Pushing without human confirmation — push is always human-gated.
+- Pushing without an `AskUserQuestion` confirmation when gated, or announcing
+  "next is the push" and moving on instead of actively prompting.
+- Stopping to ask when `autonomous-push.enabled` is true — that defeats the
+  documented ungated contract; push immediately instead.
 - Resolving ambiguous merge conflicts by guessing — stop and surface.
 - Leaving `dev` in a broken state after a test failure — debug first.
 - Skipping `grm-release-agent-tracker` — never merge a branch that isn't
@@ -413,8 +460,8 @@ Full procedure: `integration-workflow.md` §Run teardown (end-of-run). Design:
 
 ## Context efficiency (v1.29)
 
-Cost levers for long autonomous campaigns. Authority:
-`docs/design/context-efficiency-design.md`.
+Cost levers for long autonomous campaigns. Design rationale lives in the
+upstream Grimoire repository (framework-internal — not shipped).
 
 - **Cache-friendly ordering (#57).** Read **stable** content first (coding
   standards, design docs, the agreed release plan) and **volatile** content last
@@ -431,7 +478,8 @@ Cost levers for long autonomous campaigns. Authority:
 
 ## Autonomy hardening (v1.30)
 
-Authority: `docs/design/autonomy-hardening-design.md`.
+Design rationale lives in the upstream Grimoire repository (framework-internal
+— not shipped).
 
 - **Chip-free dispatch (#60).** `spawn_task` chips need a human click, so Noir
   never uses them for work-item dispatch — always dispatch via the write-capable

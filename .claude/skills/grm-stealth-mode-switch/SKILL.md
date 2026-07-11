@@ -16,7 +16,8 @@ description: >-
 
 Activate or deactivate **Stealth Mode** by reading/writing
 `stealth-mode` in `.claude/grimoire-config.json` and updating the active
-surfaces. Full design + rationale: `docs/design/stealth-mode-design.md`.
+surfaces. The full design + rationale is framework-internal — see the
+upstream Grimoire repository for that rationale.
 
 Stealth Mode composes with **any** work paradigm — it does not change the
 paradigm. It changes *what artifacts the work may leave behind*.

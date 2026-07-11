@@ -137,11 +137,11 @@ EXCLUDED_PATH_PREFIXES = (
     "docs/grimoire/sync-flow-audit.md",
     "docs/grimoire/docs-organization-design.md",    # now internal (DS-1 §6)
     "docs/grimoire/maintaining-grimoire.md",         # root-only internal home
+    "docs/grimoire/authoring-grimoire-docs.md",      # root-only internal doc-authoring guide (v3.46)
     # ── v3.41 "Clean-Room" CR-2: relocated operational docs (clean-room-design
     #    §4). Each relocated from top-level docs/ into docs/grimoire/ and excluded
     #    here. Kept synchronized with sync-from-upstream.sh is_excluded().
     "docs/grimoire/integration-workflow.md",        # framework-process doc
-    "docs/grimoire/version-design.md",              # framework versioning scheme
     "docs/grimoire/qa-ledger.md",                   # framework retrospective-QA ledger
     "docs/grimoire/execution-profile-spike-s1.md",  # framework-dev spike artifact
     "docs/grimoire/token-efficiency-",              # token-efficiency-* study artifacts (prefix)
@@ -239,6 +239,39 @@ class DistributableBuilder:
             if child.is_dir() and (child / FLAVOR_MARKER).is_file():
                 flavors.append(child.name)
         return flavors
+
+    def is_framework_repo(self) -> bool:
+        """True when `self.root` IS grimoire-framework itself, not a consumer project.
+
+        Deliberately reads a signal ORTHOGONAL to `discover_flavors()` (#328/
+        BF-7): `.claude/recipes.json`'s top-level `"stack"` field. This repo's
+        own root `recipes.json` is the one place in the whole portfolio that
+        declares `"stack": "framework"` — every quick-start template a consumer
+        project bootstraps from sets a stack-specific value instead (`"web"`,
+        `"gui"`, `"library"`, `"server"`, or `grm-recipe-migrate`'s `"custom"`
+        default), never `"framework"`.
+
+        Using a directory-layout signal here (e.g. "any `.grimoire-flavor`
+        marker present") would be circular with the caller's own "no flavors
+        found" check, AND would mislabel a consumer repo that happens to carry
+        stray flavor-marked content (e.g. a botched bootstrap that left a whole
+        `claude-code/` tree in place instead of flattening it) as the framework
+        itself — exactly the second failure mode #328/BF-7 reports. Reading
+        `recipes.json` instead means: flavor dirs present + this IS the
+        framework repo → build normally; flavor dirs present but this is NOT
+        the framework repo → stray content, skip and warn rather than package;
+        no flavor dirs + this IS the framework repo → a genuine misconfiguration
+        (hard error); no flavor dirs + not the framework repo → an ordinary
+        consumer project, skip cleanly.
+        """
+        recipes_path = self.root / ".claude" / "recipes.json"
+        if not recipes_path.is_file():
+            return False
+        try:
+            data = json.loads(recipes_path.read_text())
+        except (json.JSONDecodeError, OSError):
+            return False
+        return isinstance(data, dict) and data.get("stack") == "framework"
 
     def _collect_files(self, flavor_dir: Path):
         """Sorted list of (abs_path, arcname) for the flavor, honouring exclusions.
@@ -374,9 +407,31 @@ class DistributableBuilder:
         its key is absent; it never silently skips. `release.json` is the single
         manifest / channel-of-record (the retired `RELEASE-META.json` is no longer
         emitted).
+
+        Consumer-project detection (#328/BF-7): when no `flavors` are given
+        explicitly, flavor-based packaging only runs when `is_framework_repo()`
+        is True — flavor `.zip`s, the canonical `.tar.gz`, and the golden image
+        are all grimoire-framework-only concepts. Two non-framework cases are
+        both handled the same way (skip entirely, loud message, empty list
+        returned — never a silent no-op, never a crash): (1) no flavor dirs at
+        all (the ordinary consumer-project shape) and (2) stray flavor-marked
+        content present without this actually being the framework repo (a
+        botched bootstrap that left a flavor dir intact instead of flattening
+        it) — case (2) is what previously caused a consumer's stray content to
+        be built and mislabeled as its own release artifact. Only "no flavor
+        dirs AND this genuinely is the framework repo" still hard-errors, since
+        that combination means the framework repo's own flavor dirs are
+        missing — a real misconfiguration, not a consumer project. The
+        GitHub-Release step for a consumer project is expected to publish
+        whatever its own `recipe.py package`/`build` target produced instead
+        (see the distribution design doc's §Consumer vs. framework packaging).
         """
         if flavors is None:
             flavors = self.discover_flavors()
+            framework_repo = self.is_framework_repo()
+            if not framework_repo:
+                self._loud_consumer_skip(stray_flavors=flavors)
+                return []
             if not flavors:
                 raise RuntimeError(
                     f"no flavors found under {self.root} "
@@ -390,7 +445,8 @@ class DistributableBuilder:
         # and feed the same list to both integrity surfaces so they can't drift.
         published = archives + [tarball, golden]
         asset_entries = [self._asset_entry(p) for p in published]
-        json_path = self.write_release_json(tarball, asset_entries)
+        resolved, _reason = self._signing_precheck()
+        json_path = self.write_release_json(tarball, asset_entries, will_sign=resolved is not None)
         sums_path = self.write_checksums(published + [json_path])
         outputs = archives + [tarball, golden, json_path, sums_path]
         sig_path = self.sign_checksums(sums_path)
@@ -451,16 +507,22 @@ class DistributableBuilder:
             return None
         return sha
 
-    def write_release_json(self, tarball: Path, asset_entries) -> Path:
+    def write_release_json(self, tarball: Path, asset_entries, will_sign: bool = False) -> Path:
         """Write the generalized `release.json` manifest (schema §2).
 
         `release.json` is the single manifest / channel-of-record; it generalizes
         and replaces the retired `RELEASE-META.json` (a strict superset). This
         repo's builder always emits `artifact_kind: asset-bundle` with the
-        canonical `.tar.gz` as the primary artifact. `signature` is `null` (signing
-        deferred in v1). Deterministic: sorted keys + sorted `assets[]` + a fixed
-        2-space indent + a trailing newline, so the same inputs at a fixed commit
-        produce byte-identical bytes.
+        canonical `.tar.gz` as the primary artifact.
+
+        `signature` (v3.79, dependency-channel-design.md §Signing / #318): a
+        *declaration* of the detached sidecar — `{"algo": "minisign", "file":
+        "SHA256SUMS.minisig"}` — when `will_sign` is True (resolved by the
+        caller's precheck BEFORE this write, so the manifest is single-pass and
+        deterministic; no rewrite after the actual signing happens), else `null`
+        exactly as before signing was available. Deterministic: sorted keys +
+        sorted `assets[]` + a fixed 2-space indent + a trailing newline, so the
+        same inputs at a fixed commit produce byte-identical bytes.
         """
         primary = tarball.name
         primary_sha256 = next(
@@ -475,12 +537,34 @@ class DistributableBuilder:
             "artifact_kind": ARTIFACT_KIND_ASSET_BUNDLE,
             "primary_artifact": primary,
             "primary_artifact_sha256": primary_sha256,
-            "signature": None,
+            "signature": (
+                {"algo": "minisign", "file": MINISIG_NAME} if will_sign else None
+            ),
             "assets": sorted(asset_entries, key=lambda e: e["name"]),
         }
         out_path = self.out_dir / RELEASE_JSON_NAME
         out_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
         return out_path
+
+    def _signing_precheck(self):
+        """Resolve whether a minisign signature CAN be produced, without signing.
+
+        Read-only: checks the same three preconditions `sign_checksums` checks
+        (tool on PATH, key env set, key file exists) so `release.json.signature`
+        can be declared correctly BEFORE `write_release_json` runs (single-pass,
+        no post-sign manifest rewrite). Returns (tool_path, key_path) on success,
+        or (None, reason) with a human-readable reason on failure — the same
+        reason `sign_checksums` would print if it were asked to sign right now.
+        """
+        tool = shutil.which("minisign")
+        key = os.environ.get(MINISIGN_KEY_ENV, "").strip()
+        if tool is None:
+            return None, "the 'minisign' tool is not installed / not on PATH"
+        if not key:
+            return None, f"no signing key (env {MINISIGN_KEY_ENV} is unset/empty)"
+        if not Path(key).is_file():
+            return None, f"signing key file does not exist: {key}"
+        return (tool, key), None
 
     def write_checksums(self, files) -> Path:
         """Write `SHA256SUMS` over `files` in the canonical `<hex>  <name>` form.
@@ -500,26 +584,18 @@ class DistributableBuilder:
         Returns the signature path on success, or None when signing was skipped.
         A skip is never silent: it prints exactly which precondition was missing
         (tool absent vs. key absent) and that the build proceeds with the
-        always-present `SHA256SUMS` as the integrity floor. (Signing is deferred
-        in v1 — `release.json` `signature` stays null — but the seam is preserved.)
+        always-present `SHA256SUMS` as the integrity floor. When minisign + a key
+        ARE configured, `release.json.signature` was already declared non-null by
+        `write_release_json` (via `_signing_precheck`, called before this), so a
+        precheck-pass-but-invocation-failure here is treated as a hard build
+        error rather than a silent downgrade — the manifest already promised a
+        signature that would otherwise never materialize.
         """
-        tool = shutil.which("minisign")
-        key = os.environ.get(MINISIGN_KEY_ENV, "").strip()
-        if tool is None:
-            self._loud_signing_skip(
-                "the 'minisign' tool is not installed / not on PATH"
-            )
+        resolved, reason = self._signing_precheck()
+        if resolved is None:
+            self._loud_signing_skip(reason)
             return None
-        if not key:
-            self._loud_signing_skip(
-                f"no signing key (env {MINISIGN_KEY_ENV} is unset/empty)"
-            )
-            return None
-        if not Path(key).is_file():
-            self._loud_signing_skip(
-                f"signing key file does not exist: {key}"
-            )
-            return None
+        tool, key = resolved
         sig_path = self.out_dir / MINISIG_NAME
         try:
             subprocess.run(
@@ -529,8 +605,16 @@ class DistributableBuilder:
                 stderr=subprocess.PIPE,
             )
         except (subprocess.CalledProcessError, OSError) as e:
-            self._loud_signing_skip(f"minisign invocation failed: {e}")
-            return None
+            # The precheck just passed (tool + key both resolved), so
+            # release.json.signature has already been written declaring a
+            # signature will exist. A hard failure here would otherwise leave a
+            # manifest that lies about its own sidecar — fail the build loudly
+            # rather than silently downgrade to unsigned after the fact.
+            raise RuntimeError(
+                f"minisign invocation failed after the signing precheck passed "
+                f"(release.json already declares signature={{'algo': 'minisign', "
+                f"'file': '{MINISIG_NAME}'}}): {e}"
+            ) from e
         print(f"Signed {CHECKSUMS_NAME} -> {sig_path.name} (minisign).")
         return sig_path
 
@@ -544,6 +628,46 @@ class DistributableBuilder:
             "         build. Install minisign and set "
             + MINISIGN_KEY_ENV
             + " to sign.",
+            file=sys.stderr,
+        )
+
+    @staticmethod
+    def _loud_consumer_skip(stray_flavors=None) -> None:
+        """Emit the documented, unmissable notice for a skipped consumer build.
+
+        `stray_flavors` (#328/BF-7): when non-None/non-empty, flavor-marked
+        directories WERE found but this repo is not grimoire-framework itself —
+        the "stray content" case, where the old behaviour would have built and
+        mislabeled them as this consumer project's own release artifact.
+        """
+        not_framework = (
+            'this is NOT the grimoire-framework repo itself (no "stack": '
+            '"framework" in .claude/recipes.json)'
+        )
+        publish_instead = (
+            "the GitHub-Release step should publish whatever this project's "
+            "own recipe.py 'package'/'build' target produces instead."
+        )
+        if stray_flavors:
+            plural = "y" if len(stray_flavors) == 1 else "ies"
+            print(
+                f"WARNING: found flavor-marked director{plural} "
+                f"{sorted(stray_flavors)} under this repo, but {not_framework} "
+                "— skipping flavor-based packaging rather than building and "
+                "mislabeling that content as this project's own release "
+                "artifact. If this is a consumer project, these dirs are "
+                f"likely leftover from a botched bootstrap/sync and can be "
+                f"removed; {publish_instead}",
+                file=sys.stderr,
+            )
+            return
+        print(
+            f"grm-project-release: no .grimoire-flavor directories found, and "
+            f"{not_framework} — this looks like a consumer project "
+            "bootstrapped FROM grimoire-framework's scaffolding. Flavor-based "
+            "packaging (per-flavor .zip archives, the canonical .tar.gz, and "
+            "the golden image) is a grimoire-framework-only concept and does "
+            f"not apply here. Skipping it entirely — {publish_instead}",
             file=sys.stderr,
         )
 
@@ -605,6 +729,13 @@ def _self_test() -> int:
         shutil.copy2(_real_gen, _gen_dst / "generate_golden.py")
         (root / "not-a-flavor").mkdir()
         (root / "not-a-flavor" / "f.txt").write_text("x")
+        # #328/BF-7: this synthetic tree stands in for grimoire-framework's own
+        # repo throughout the rest of this self-test, so it needs the same
+        # "stack": "framework" recipes.json signal is_framework_repo() reads.
+        (root / ".claude").mkdir(parents=True, exist_ok=True)
+        (root / ".claude" / "recipes.json").write_text(
+            json.dumps({"stack": "framework"})
+        )
 
         b = DistributableBuilder(root, "9.9", root / "dist")
 
@@ -629,6 +760,9 @@ def _self_test() -> int:
 
         # discovery (sorted, marker-gated, excludes non-flavor dir)
         check(b.discover_flavors() == [CANONICAL_FLAVOR, "flavor-b"], "discover flavors")
+
+        # #328/BF-7: framework-repo identity (stack: framework recipes.json).
+        check(b.is_framework_repo(), "is_framework_repo True when recipes.json declares stack=framework")
 
         # build all (stable): .zips + canonical .tar.gz + release.json + SHA256SUMS,
         # no minisig unless minisign + key are present (not configured here).
@@ -781,11 +915,117 @@ def _self_test() -> int:
         # signing degrades to None (loud) when no key is configured.
         check(bb.sign_checksums(bb.out_dir / CHECKSUMS_NAME) is None, "unsigned build returns None")
 
+        # signed build (v3.79, #318): a fake `minisign` shim on PATH + a key file
+        # exercise the single-pass declaration — release.json.signature is
+        # non-null BEFORE signing runs, and the sidecar it names actually lands.
+        fake_bin = root / "fake-bin"
+        fake_bin.mkdir()
+        minisign_shim = fake_bin / "minisign"
+        minisign_shim.write_text(
+            "#!/bin/sh\n"
+            '# Fake minisign: writes a syntactically-plausible sidecar to -x.\n'
+            'out=""\n'
+            'while [ "$#" -gt 0 ]; do\n'
+            '  case "$1" in -x) out="$2"; shift 2 ;; *) shift ;; esac\n'
+            'done\n'
+            'printf "untrusted comment: fake\\nZmFrZXNpZw==\\n" > "$out"\n'
+        )
+        minisign_shim.chmod(0o755)
+        key_file = root / "fake.key"
+        key_file.write_text("fake secret key\n")
+        old_path = os.environ.get("PATH", "")
+        os.environ["PATH"] = str(fake_bin) + os.pathsep + old_path
+        os.environ[MINISIGN_KEY_ENV] = str(key_file)
+        try:
+            bs = DistributableBuilder(root, "9.9", root / "dist-signed")
+            paths_signed = bs.build_all()
+            manifest_signed = json.loads((bs.out_dir / RELEASE_JSON_NAME).read_text())
+            check(
+                manifest_signed["signature"] == {"algo": "minisign", "file": MINISIG_NAME},
+                "release.json declares the signature when minisign+key are configured",
+            )
+            check(
+                any(p.name == MINISIG_NAME for p in paths_signed),
+                "SHA256SUMS.minisig sidecar emitted when signed",
+            )
+            check(
+                (bs.out_dir / MINISIG_NAME).is_file(),
+                "signature sidecar file actually written to disk",
+            )
+        finally:
+            os.environ["PATH"] = old_path
+            os.environ.pop(MINISIGN_KEY_ENV, None)
+
         # build_flavor rejects a non-flavor
         try:
             b.build_flavor("not-a-flavor")
             check(False, "non-flavor build should raise")
         except ValueError:
+            pass
+
+    def _make_repo(root: Path, stack=None, claude_md=True):
+        """Write the minimal synthetic-repo shape (#328/BF-7 fixtures)."""
+        if claude_md:
+            (root / "CLAUDE.md").write_text("# synthetic repo\n")
+        if stack is not None:
+            (root / ".claude").mkdir(exist_ok=True)
+            (root / ".claude" / "recipes.json").write_text(json.dumps({"stack": stack}))
+
+    # #328/BF-7: consumer-repo detection — a synthetic tree simulating a
+    # project bootstrapped FROM grimoire-framework's scaffolding (no flavor
+    # dirs, no "stack": "framework" recipes.json). build_all() must not crash
+    # and must not produce any flavor-based assets.
+    with tempfile.TemporaryDirectory() as td:
+        consumer_root = Path(td)
+        _make_repo(consumer_root, stack="web")
+        cb = DistributableBuilder(consumer_root, "1.0", consumer_root / "dist")
+        check(cb.discover_flavors() == [], "consumer repo has no flavor dirs")
+        check(not cb.is_framework_repo(), "consumer repo is not the framework repo")
+        consumer_paths = cb.build_all()
+        check(consumer_paths == [], "consumer repo build_all() returns an empty list, not a crash")
+        check(not cb.out_dir.exists() or not any(cb.out_dir.iterdir()),
+              "consumer repo build_all() writes no flavor-based assets to dist/")
+
+    # #328/BF-7: a consumer repo missing its recipes.json entirely (the
+    # bare-minimum bootstrapped shape) must behave identically — no crash, no
+    # assets, no exception from a missing file.
+    with tempfile.TemporaryDirectory() as td:
+        bare_root = Path(td)
+        _make_repo(bare_root)
+        bb2 = DistributableBuilder(bare_root, "1.0", bare_root / "dist")
+        check(not bb2.is_framework_repo(), "repo with no recipes.json at all is not the framework repo")
+        check(bb2.build_all() == [], "missing-recipes.json consumer repo build_all() returns empty, not a crash")
+
+    # #328/BF-7: stray flavor-marked content in a non-framework repo must be
+    # skipped, not built-and-mislabeled as the consumer project's own release
+    # artifact (the second failure mode #328 reports).
+    with tempfile.TemporaryDirectory() as td:
+        stray_root = Path(td)
+        _make_repo(stray_root, stack="custom")
+        stray_flavor = stray_root / "claude-code"
+        stray_flavor.mkdir()
+        (stray_flavor / FLAVOR_MARKER).write_text("")
+        (stray_flavor / "CLAUDE.md").write_text("# leftover flavor content\n")
+        sb = DistributableBuilder(stray_root, "1.0", stray_root / "dist")
+        check(sb.discover_flavors() == ["claude-code"], "stray flavor dir is discoverable")
+        check(not sb.is_framework_repo(), "repo with stray flavor content but stack != framework is not the framework repo")
+        stray_paths = sb.build_all()
+        check(stray_paths == [], "stray flavor content is skipped, not built, in a non-framework repo")
+        check(not sb.out_dir.exists() or not any(sb.out_dir.iterdir()),
+              "stray flavor content produces no dist/ assets (not mislabeled as the consumer's own artifact)")
+
+    # #328/BF-7: the framework repo itself (stack: framework) with NO flavor
+    # dirs is a genuine misconfiguration and must still hard-error — only
+    # non-framework repos get the graceful skip.
+    with tempfile.TemporaryDirectory() as td:
+        broken_root = Path(td)
+        _make_repo(broken_root, stack="framework", claude_md=False)
+        fb = DistributableBuilder(broken_root, "1.0", broken_root / "dist")
+        check(fb.is_framework_repo(), "framework repo (stack=framework) is recognized as such")
+        try:
+            fb.build_all()
+            check(False, "framework repo with no flavor dirs should still raise")
+        except RuntimeError:
             pass
 
     if failures:

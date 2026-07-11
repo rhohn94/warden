@@ -266,7 +266,7 @@ writes a coherent dial set (via the existing switch skills). Authority:
 |---|---|---|---|---|
 | **Ship fast** | Noir | Fast | Efficient | low |
 | **Highest quality** | Supervised | Cheap-Slow | High Effort | high |
-| **Lowest cost** | Noir | Cheap-Slow | Eco-Budget | low |
+| **Lowest cost** | Noir | Cheap-Slow | Eco/Budget | low |
 | **Long-horizon steady** | Noir | Efficient | Medium | low (Steady Steward preset) |
 
 Manual per-dial selection remains available as the second path. The Steady

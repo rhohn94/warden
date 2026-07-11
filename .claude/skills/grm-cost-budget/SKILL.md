@@ -75,7 +75,7 @@ Each sub-object is independently optional.
 | Field | Type | Default | Meaning |
 |---|---|---|---|
 | `default` | `"terse"` \| `"normal"` \| `"verbose"` | `"normal"` | Verbosity for any agent not named in `by-agent`. |
-| `by-agent` | map<role, level> | `{}` | Per-role overrides. Valid keys: `grm-scout`, `grm-reviewer`, `grm-researcher`, `grm-verifier`, `grm-reporter`, `grm-triager`, `task-agent`, `grm-integration-master`. |
+| `by-agent` | map<role, level> | `{}` | Per-role overrides. Valid keys: `grm-agent-scout`, `grm-agent-reviewer`, `grm-agent-researcher`, `grm-agent-verifier`, `grm-agent-reporter`, `grm-agent-triager`, `task-agent`, `grm-integration-master`. |
 
 ### schedule fields
 
@@ -180,6 +180,16 @@ only autonomous/scheduled dispatch consults the schedule.
    - If inside a window and mode is `off-peak-only` or `avoid-peak`:
      → **defer** (§6).
 4. On wakeup after a deferral, re-check; the window may have shifted.
+
+---
+
+## Cross-skill dependency
+
+`cost_budget.py` imports `parse_transcript` and `TranscriptError` directly
+from the sibling `grm-token-measure/parse_usage.py` rather than duplicating
+the transcript-accumulator logic. `parse_usage.py` declares both names in its
+`__all__` and marks them as consumed by this skill — do not rename them in
+either file without updating the other (#363).
 
 ---
 

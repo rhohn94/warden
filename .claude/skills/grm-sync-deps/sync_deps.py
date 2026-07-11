@@ -30,6 +30,10 @@ Modes:
                nonzero on drift; WRITE NOTHING.
   --offline    Validate vendored bytes vs the lock with ZERO gh/network calls.
   --update     Resolve latest-on-channel (gh), rewrite the vendor.toml pin, sync.
+  --verify     Vendor provenance integrity check (#315, read-only, offline):
+               LOCAL-FORK / DEAD-VENDOR / VERSION-CONTRADICTION (deterministic,
+               fail the run) + STUB-VENDOR-MANIFEST (WARN-only heuristic).
+               See vendor_verify.py.
   --self-test  Deterministic, stdlib-only, offline-fixture-based regression run.
 
 Security (Ollama-RCE avoidance, design §11): asset-name allowlist, fixed app-owned
@@ -41,6 +45,8 @@ parser is a NON-GOAL this release). vendor.lock + the read/gate path stay pure J
 
 Design: docs/grimoire/design/dependency-channel-design.md §3-§4.
 """
+
+from __future__ import annotations
 
 import argparse
 import os
@@ -56,9 +62,13 @@ from sync_deps_engine import (  # noqa: E402
     SyncDepsError,
     run_self_test,
 )
+from vendor_verify import (  # noqa: E402
+    VendorVerifier,
+    run_self_test as run_verify_self_test,
+)
 
 
-def build_parser():
+def build_parser() -> argparse.ArgumentParser:
     """Construct the argparse CLI surface."""
     p = argparse.ArgumentParser(
         prog="sync_deps.py",
@@ -78,19 +88,36 @@ def build_parser():
                            "gh/network calls.")
     mode.add_argument("--update", action="store_true",
                       help="Resolve latest-on-channel (gh) and rewrite the pin.")
+    mode.add_argument("--verify", action="store_true",
+                      help="Vendor provenance integrity check (#315): LOCAL-FORK / "
+                           "DEAD-VENDOR / VERSION-CONTRADICTION + STUB-VENDOR-MANIFEST "
+                           "(WARN-only). Read-only, offline.")
     mode.add_argument("--self-test", action="store_true",
-                      help="Run the deterministic offline self-test and exit.")
+                      help="Run the deterministic offline self-test and exit "
+                           "(covers both sync_deps and vendor_verify).")
+    p.add_argument("--json", action="store_true",
+                   help="With --verify, emit findings as JSON instead of the "
+                        "human-readable report.")
     return p
 
 
-def main(argv=None):
+def main(argv: list[str] | None = None) -> int:
     """CLI entry point. Returns a process exit code."""
     args = build_parser().parse_args(argv)
 
     if args.self_test:
-        ok = run_self_test()
+        ok = run_self_test() and run_verify_self_test()
         print("sync_deps self-test: PASS" if ok else "sync_deps self-test: FAIL")
         return EXIT_OK if ok else EXIT_VIOLATION
+
+    if args.verify:
+        result = VendorVerifier(root=args.root).run(only=args.dep)
+        if args.json:
+            import json
+            print(json.dumps(result.to_dict(), indent=2, sort_keys=True))
+        else:
+            print(result.report())
+        return result.exit_code()
 
     try:
         engine = SyncDepsEngine(root=args.root)

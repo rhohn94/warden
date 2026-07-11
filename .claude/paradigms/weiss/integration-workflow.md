@@ -40,37 +40,9 @@ version/<number>  ──►  dev  ──►  main
 Work items run in isolated worktrees spawned via `spawn_task`. Only
 `version/*`, `dev`, and `main` are named, protected integration branches.
 
-## Researcher/assistant posture
-
-Claude's role in Weiss is to inform and execute — not to lead.
-
-- Surface the dependency graph; ask the user to choose the grouping.
-- Flag token-estimate uncertainty; ask the user to confirm the model.
-- Summarise each diff; ask before merging.
-- List conflicts; resolve with user guidance.
-- Propose each push; wait for instruction.
-
-**Decision log:** maintain a brief running log of user decisions during the
-session (scope resolutions, model overrides, sequencing choices). Reference
-it when questions recur so you don't re-ask what the user already decided.
-
-## Delegating to subagents
-
-Spawn `Agent` subagents for mechanical / read-only work when it helps you
-gather information faster for the user. Present the subagent's findings; do
-not act on them without user direction.
-
-## Workflow-based orchestration
-
-Use `Workflow` only when the user explicitly requests multi-agent
-orchestration. Always describe what the workflow will do and ask for
-confirmation before running. Present results to the user before taking any
-file-writing or branch-creating next step.
-
-**Write-capable workflows are Noir-only.** In Weiss the read-only convention
-is enforced; write-capable workflows (`meta.tier = 'write-capable'`) require
-the Noir paradigm and will fail closed if invoked here. See
-`docs/design/write-capable-workflow-design.md`.
+the Noir paradigm and will fail closed if invoked here. The full design is a
+framework-internal design — see the upstream Grimoire repository for that
+rationale.
 
 ## Dead-worktree cleanup
 
@@ -106,14 +78,15 @@ under a PM, also lane `version/{X.Y}/<lane>` -> `version/{X.Y}`):
    On `degraded` (no `gh` / remote), fall back to the local merge and log it.
 3. **Dispatch a Reviewer in PR mode** (if `review.auto-dispatch`): it reads the
    PR diff, runs `code-review`, and posts findings per `review.post-comments`
-   (`off` / `comment` / `request-changes`). See the `grm-reviewer` skill §2.5.
+   (`off` / `comment` / `request-changes`). See the `grm-agent-reviewer` skill §2.5.
 4. **Merge via the PR**: `github_pr.py merge --pr N --method <merge-method>` —
    **skip the local `--no-ff` merge at this boundary**. Do not merge while
    `reviewDecision == CHANGES_REQUESTED`. Boundaries not in `boundary` merge
    locally as today.
 
 `grm-github-pr` does **not** imply autonomous push — open/merge stay governed by the
-existing push gate. Full design: `docs/design/github-pr-integration-design.md`.
+existing push gate. The full design is a framework-internal design — see the
+upstream Grimoire repository for that rationale.
 
 ## Pushing to origin
 
@@ -129,8 +102,9 @@ human run them if genuinely needed.
 
 ## Lane model & multiple marked lane worktrees (v3.1)
 
-When a **Project Manager** owns a multi-feature release (see
-`docs/design/project-manager-role-design.md` and
+When a **Project Manager** owns a multi-feature release (the PM role is a
+framework-internal design — see the upstream Grimoire repository for that
+rationale — and
 `.claude/skills/grm-project-manager/SKILL.md`), the single `version/{X.Y}` staging
 line is split into **parallel lanes**, each implemented by its own integration
 master:
@@ -174,9 +148,19 @@ back to serial, in-place lane execution.
 ## Enforcement (guard hooks)
 
 Same hooks as Supervised: `protected-branch-guard.sh`, `push-guard.sh`,
-`release-plan-guard.sh`, `worktree-guard.sh`. The Weiss posture adds
-user-confirmation requirements on top of the mechanical guards; it does not
-relax any hook.
+`release-plan-guard.sh`, `worktree-guard.sh`, `bundled-sync-guard.sh`. The
+Weiss posture adds user-confirmation requirements on top of the mechanical
+guards; it does not relax any hook.
+
+**Bundled-sync-commit guard (v3.67, #126 criterion 3).** `bundled-sync-guard.sh`
+denies (`exit 2`) a `git commit` whose staged changes span BOTH
+`grm-sync-from-upstream`'s typical touch-set (`.claude/`, `CLAUDE.md`,
+`AGENTS.md`, `docs/grimoire/`, the `.github/` Copilot mirror) and
+`grm-design-language-adapt`'s typical touch-set (`docs/design/ux/`,
+`vendor/aura/`, `static/aura/`, `templates/base.html`) at once — the mechanical
+enforcement of BMI-3 Rule 3c (previously a reference.md reminder only),
+closing the exact `24c73dd` "660-file framework + Aura in one commit"
+anti-pattern from #126. Applies to every actor; no marker exemption.
 
 **Cross-worktree branch hijack rule (v1.7).** A spawned/work-item agent must
 git-operate **only on its own worktree**. An **unmarked** actor that redirects

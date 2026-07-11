@@ -16,7 +16,8 @@ the lanes, run the QA gate, and perform the official release.
 **Push to origin is human-gated.** Only the PM pushes, at the single
 post-release moment, on the user's go-ahead.
 
-Authority for the full design: `docs/design/project-manager-role-design.md`.
+The full design is a framework-internal design — see the upstream Grimoire
+repository for that rationale.
 
 ---
 
@@ -107,6 +108,10 @@ low confidence. Surface the degrade to the user.
 - **One IM per agreed lane.** Dispatch via `spawn_task` chips. Each IM runs on
   its lane branch and merges its task agents' work into it via
   `grm-release-phase-merge`.
+- **Lane-IM model = `orchestrate` band.** Resolve the active profile's
+  `orchestrate` band via the `grm-repo-reference` resolver (Sonnet in every
+  starter profile) and pass the `{model, effort}` pair on each lane-IM dispatch.
+  Each IM escalates judgment calls per its guide §Model & escalation.
 - **Lane ledger.** Track lane status in the plan (lane → features → IM status →
   integrated?) — the `grm-release-agent-tracker` view, one tier up.
 - **Lane integration.** As lanes complete, merge each lane branch into

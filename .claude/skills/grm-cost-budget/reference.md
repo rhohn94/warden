@@ -128,7 +128,7 @@ Net: verbosity is worth tuning alongside model tier and dispatch fan-out.
 |---|---|
 | `terse` | Minimal prose; bullet points preferred; no reasoning narration; tool-call descriptions at the required minimum (5–10 words); session-end summary is one paragraph or a tight table. |
 | `normal` | Concise by house style (default). Brief explanations when useful; no extended preamble or restated context; tool-call descriptions clear but not verbose. |
-| `verbose` | Full reasoning shown; context restated for auditability; longer summaries; tool-call descriptions may include rationale. Use only where correctness/auditability dominates cost (e.g. a `grm-reviewer` or `grm-researcher` that should show its work). |
+| `verbose` | Full reasoning shown; context restated for auditability; longer summaries; tool-call descriptions may include rationale. Use only where correctness/auditability dominates cost (e.g. a `grm-agent-reviewer` or `grm-agent-researcher` that should show its work). |
 
 ### Resolution order (highest priority first)
 

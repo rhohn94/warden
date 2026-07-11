@@ -323,10 +323,10 @@ is_excluded() {
     docs/grimoire/sync-flow-audit.md) return 0 ;;
     docs/grimoire/docs-organization-design.md) return 0 ;;    # now internal (DS-1 §6)
     docs/grimoire/maintaining-grimoire.md) return 0 ;;        # root-only internal home
+    docs/grimoire/authoring-grimoire-docs.md) return 0 ;;     # root-only internal doc-authoring guide (v3.46)
     # ── v3.41 "Clean-Room" CR-2 (clean-room-design.md §4): relocated operational
     #    docs + carve-outs. Mirror of build_distributables.py EXCLUDED_PATH_PREFIXES.
     docs/grimoire/integration-workflow.md) return 0 ;;        # framework-process doc
-    docs/grimoire/version-design.md) return 0 ;;              # framework versioning scheme
     docs/grimoire/qa-ledger.md) return 0 ;;                   # framework retrospective-QA ledger
     docs/grimoire/execution-profile-spike-s1.md) return 0 ;;  # framework-dev spike artifact
     docs/grimoire/token-efficiency-*) return 0 ;;             # token-efficiency-* study artifacts
@@ -417,6 +417,121 @@ content_has_conflict_markers() {
   grep -qE '^(<<<<<<< |=======$|>>>>>>> )' 2>/dev/null
 }
 
+# --------------------------------------------------------------------------
+# Additive-only diff3 conflict resolution (#198).
+#
+# Failure mode: `git merge-file` (diff3) conflicts whenever LOCAL's hunk and
+# UPSTREAM's hunk touch overlapping lines relative to BASE — even when the two
+# hunks are semantically compatible. The recurring, safe-to-automate case:
+# LOCAL predates a section that BASE already carries (LOCAL never had it — a
+# pure deletion relative to base, not a deliberate edit), and UPSTREAM still
+# carries that section (whether or not upstream has ALSO changed further
+# nearby). diff3 renders this as a hunk whose LOCAL side is EMPTY and whose
+# UPSTREAM side is non-empty:
+#     <<<<<<< local
+#     =======
+#     <upstream content>
+#     >>>>>>> upstream
+# An empty LOCAL side means local made no conflicting edit of its own in this
+# region — there is nothing of local's to preserve, so "take upstream" is
+# always safe. A hunk with ANY local content is left untouched (a genuine
+# collision — both sides made a real, potentially conflicting edit) so this
+# never silently discards a real customization.
+#
+# Pure over stdin so the self-test can drive it with canned merge-file output.
+# Only ever COLLAPSES empty-local hunks; every other line (including any
+# non-empty-local conflict hunk, markers and all) passes through unchanged.
+#
+# STATE-CONDITIONED PARSING (data-loss fix, reviewer-caught, post-#198):
+# The original implementation matched the three marker patterns against EVERY
+# line unconditionally, regardless of parser state. That is wrong: a hunk's
+# genuine LOCAL or UPSTREAM content can itself contain a line that is BYTE-
+# IDENTICAL to one of the marker patterns — not hypothetical, this very
+# script's own self-test fixtures below contain literal `<<<<<<< local` /
+# `=======` / `>>>>>>> upstream` lines, so any future upstream sync touching
+# this file is a live occurrence. Matching those unconditionally caused the
+# parser to misinterpret real hunk CONTENT as a structural boundary,
+# discarding whatever was already buffered (including genuine non-empty local
+# edits) with zero trace, and could silently misclassify a hunk with real
+# local content as "empty" — collapsing it to MERGED with no conflict markers
+# left to warn the operator. A second failure mode: a hunk missing its closing
+# `>>>>>>> upstream` (malformed/truncated input) caused the parser to buffer
+# forever with no flush, silently dropping all trailing content.
+#
+# The fix: an explicit three-state machine (OUTSIDE / LOCAL / UPSTREAM) where
+# each marker pattern is only a valid transition in the ONE state that expects
+# it; in every other state the "marker-shaped" line is ordinary content to be
+# passed through or buffered verbatim. An unterminated hunk (LOCAL or UPSTREAM
+# still open at end-of-input) is a hard failure for that file: flush the
+# buffered markers/content back out (so the caller's content_has_conflict_markers
+# check still sees markers and keeps the file classified CONFLICT, never
+# MERGED) and log a clear error to stderr. Nothing is ever silently swallowed.
+# --------------------------------------------------------------------------
+resolve_additive_only_conflicts() {
+  # MERGE-FILE OUTPUT (with conflict markers) on stdin; resolved content on
+  # stdout. Idempotent: content with no conflict markers passes through as-is.
+  awk '
+    BEGIN { state = "OUTSIDE"; local_buf = ""; upstream_buf = ""; local_has_content = 0 }
+
+    # OUTSIDE: only a genuine "<<<<<<< local" line opens a hunk. A line that
+    # merely looks like "=======" or ">>>>>>> upstream" is not a valid
+    # transition here (those only mean anything inside an open hunk) — it is
+    # ordinary already-resolved content.
+    state == "OUTSIDE" && /^<<<<<<< local$/ {
+      state = "LOCAL"; local_buf = ""; upstream_buf = ""; local_has_content = 0; next
+    }
+    state == "OUTSIDE" { print; next }
+
+    # LOCAL: only "=======" closes the local side. Any other line — including
+    # one that happens to look like "<<<<<<< local" or ">>>>>>> upstream" — is
+    # buffered as literal local-side content; the only valid next transition
+    # from LOCAL is the separator.
+    state == "LOCAL" && /^=======$/ { state = "UPSTREAM"; next }
+    state == "LOCAL" {
+      local_buf = local_buf $0 "\n"
+      if (length($0) > 0) local_has_content = 1
+      next
+    }
+
+    # UPSTREAM: only ">>>>>>> upstream" closes the hunk. Any other line —
+    # including a marker-shaped one — is buffered as literal upstream-side
+    # content, not a transition.
+    state == "UPSTREAM" && /^>>>>>>> upstream$/ {
+      state = "OUTSIDE"
+      if (local_has_content) {
+        # Genuine collision — reproduce the original hunk verbatim.
+        printf "%s", "<<<<<<< local\n"
+        printf "%s", local_buf
+        printf "%s", "=======\n"
+        printf "%s", upstream_buf
+        printf "%s", ">>>>>>> upstream\n"
+      } else {
+        # Empty-local hunk — additive-only; take upstream, drop the markers.
+        printf "%s", upstream_buf
+      }
+      next
+    }
+    state == "UPSTREAM" { upstream_buf = upstream_buf $0 "\n"; next }
+
+    END {
+      # Unterminated hunk at end-of-input: malformed/unexpected input. Do NOT
+      # silently swallow it — flush the markers/content buffered so far (this
+      # guarantees content_has_conflict_markers still finds a marker line, so
+      # the caller keeps the file classified CONFLICT, never MERGED) and log a
+      # clear, loud error so the operator knows this file needs a human look.
+      if (state == "LOCAL" || state == "UPSTREAM") {
+        print "resolve_additive_only_conflicts: ERROR — unterminated diff3 hunk (missing closing marker); forcing CONFLICT, no content dropped" > "/dev/stderr"
+        printf "%s", "<<<<<<< local\n"
+        printf "%s", local_buf
+        if (state == "UPSTREAM") {
+          printf "%s", "=======\n"
+          printf "%s", upstream_buf
+        }
+      }
+    }
+  '
+}
+
 # --self-test: exercise transport resolution with no network/git, then exit.
 if printf '%s\n' "$@" | grep -qx -- '--self-test'; then
   fails=0
@@ -474,7 +589,7 @@ if printf '%s\n' "$@" | grep -qx -- '--self-test'; then
   assert_eq "grimoire README NOT excl"    "$(excl_rc docs/grimoire/README.md)"            1
   # v3.41 CR-2 relocated operational docs + carve-outs.
   assert_eq "cr2 integration-workflow excl" "$(excl_rc docs/grimoire/integration-workflow.md)"    0
-  assert_eq "cr2 version-design excl"       "$(excl_rc docs/grimoire/version-design.md)"          0
+  assert_eq "version-design NOT excl"       "$(excl_rc docs/grimoire/version-design.md)"          1
   assert_eq "cr2 qa-ledger excl"            "$(excl_rc docs/grimoire/qa-ledger.md)"               0
   assert_eq "cr2 token-efficiency excl"     "$(excl_rc docs/grimoire/token-efficiency-audit.md)"  0
   assert_eq "cr2 relocated rel-plan excl"   "$(excl_rc docs/grimoire/release-planning-v1.0.md)"   0
@@ -539,6 +654,106 @@ if printf '%s\n' "$@" | grep -qx -- '--self-test'; then
 x")" 0
   assert_eq "has ======= marker => 0" "$(marker_rc "=======")" 0
   assert_eq "clean text => 1"     "$(marker_rc "just resolved content")" 1
+
+  # Additive-only diff3 conflict resolution (#198) — empty-local hunks collapse
+  # to upstream; any hunk with real local content is left as a genuine conflict.
+  _add_only="$(printf 'line1\n<<<<<<< local\n=======\n# additive upstream section\ncheck_boundary() {\n  echo hi\n}\n>>>>>>> upstream\nline2\n' | resolve_additive_only_conflicts)"
+  assert_eq "additive-only hunk collapses to upstream" "$_add_only" "line1
+# additive upstream section
+check_boundary() {
+  echo hi
+}
+line2"
+  if printf '%s' "$_add_only" | content_has_conflict_markers; then
+    echo "FAIL: additive-only resolution left conflict markers" >&2; fails=$((fails+1))
+  fi
+
+  _genuine_conflict="$(printf 'line1\n<<<<<<< local\nlocal edit\n=======\nupstream edit\n>>>>>>> upstream\nline2\n' | resolve_additive_only_conflicts)"
+  assert_eq "genuine conflict (non-empty local) left untouched" "$_genuine_conflict" "line1
+<<<<<<< local
+local edit
+=======
+upstream edit
+>>>>>>> upstream
+line2"
+
+  _mixed="$(printf 'line1\n<<<<<<< local\n=======\nadditive\n>>>>>>> upstream\nline2\n<<<<<<< local\nreal edit\n=======\nother edit\n>>>>>>> upstream\nline3\n' | resolve_additive_only_conflicts)"
+  assert_eq "mixed file: additive hunk resolved, genuine hunk kept" "$_mixed" "line1
+additive
+line2
+<<<<<<< local
+real edit
+=======
+other edit
+>>>>>>> upstream
+line3"
+
+  _no_markers="$(printf 'plain content\nno markers here\n' | resolve_additive_only_conflicts)"
+  assert_eq "no conflict markers passes through unchanged" "$_no_markers" "plain content
+no markers here"
+
+  # Reviewer-caught data-loss regressions (post-#198): marker-shaped lines
+  # embedded in genuine hunk CONTENT must never be misread as structural
+  # transitions — they are only valid in the ONE state that expects them.
+  #
+  # (a) A hunk with a genuine non-empty LOCAL edit whose UPSTREAM content
+  # contains a line that is itself byte-identical to "<<<<<<< local" (e.g.
+  # this very script's own self-test fixtures further up this file). The old
+  # unconditional-match parser treated that embedded line as a NEW hunk
+  # boundary, discarding the enclosing hunk's real local edit with zero trace.
+  # Because local_has_content is genuinely true, this is NOT additive-only —
+  # the fixed parser must keep it a genuine conflict, markers and all, with
+  # the real local edit intact.
+  _embedded_marker_conflict="$(printf 'line1\n<<<<<<< local\nreal local customization\n=======\nupstream context before\n<<<<<<< local\nupstream context after (fake, just upstream content)\n>>>>>>> upstream\nline2\n' | resolve_additive_only_conflicts)"
+  assert_eq "embedded marker-shaped upstream content does not discard real local edit" "$_embedded_marker_conflict" "line1
+<<<<<<< local
+real local customization
+=======
+upstream context before
+<<<<<<< local
+upstream context after (fake, just upstream content)
+>>>>>>> upstream
+line2"
+  if ! printf '%s' "$_embedded_marker_conflict" | content_has_conflict_markers; then
+    echo "FAIL: embedded-marker hunk with real local content must still report as CONFLICT" >&2; fails=$((fails+1))
+  fi
+
+  # (a2) Same embedded-marker hazard, but the outer hunk's LOCAL side is
+  # genuinely empty — this must still correctly collapse (additive-only),
+  # taking the upstream content (embedded marker-shaped lines and all)
+  # verbatim, proving the fix does not over-correct into treating every
+  # marker-shaped content line as a forced conflict.
+  _embedded_marker_additive="$(printf 'line1\n<<<<<<< local\n=======\nfixture example:\n<<<<<<< local\n=======\n>>>>>>> upstream\nmore upstream code\n>>>>>>> upstream\nline2\n' | resolve_additive_only_conflicts)"
+  assert_eq "embedded marker-shaped upstream content still collapses when local truly empty" "$_embedded_marker_additive" "line1
+fixture example:
+<<<<<<< local
+=======
+more upstream code
+>>>>>>> upstream
+line2"
+
+  # (b) Unterminated hunk (missing closing ">>>>>>> upstream", e.g. malformed
+  # or truncated diff3 output). The old parser buffered forever with no
+  # flush, silently dropping all trailing content (including the real local
+  # edit and everything after it). The fix must flush every buffered line
+  # back out (nothing vanishes) and leave conflict markers in the output so
+  # the caller's content_has_conflict_markers check forces this file to
+  # remain classified CONFLICT rather than silently becoming MERGED.
+  _unterminated="$(printf 'line1\n<<<<<<< local\nreal local edit\n=======\nupstream content that never closes\nline2 that must not vanish\n' | resolve_additive_only_conflicts 2>/dev/null)"
+  assert_eq "unterminated hunk flushes all content, drops nothing" "$_unterminated" "line1
+<<<<<<< local
+real local edit
+=======
+upstream content that never closes
+line2 that must not vanish"
+  if ! printf '%s' "$_unterminated" | content_has_conflict_markers; then
+    echo "FAIL: unterminated hunk must leave conflict markers so caller forces CONFLICT" >&2; fails=$((fails+1))
+  fi
+  _unterminated_stderr="$(printf 'line1\n<<<<<<< local\nreal local edit\n=======\nupstream content that never closes\nline2 that must not vanish\n' | resolve_additive_only_conflicts 2>&1 >/dev/null)"
+  case "$_unterminated_stderr" in
+    *"unterminated diff3 hunk"*) : ;;
+    *) echo "FAIL: unterminated hunk must log a clear error to stderr" >&2; fails=$((fails+1)) ;;
+  esac
 
   if [ "$fails" -eq 0 ]; then echo "sync-from-upstream self-test: all checks passed."; exit 0; fi
   echo "$fails self-test failure(s)." >&2; exit 1
@@ -893,6 +1108,23 @@ while IFS= read -r rel; do
     warn_dropped_definitions "$U" "$merged" "$rel"
     if [ "$APPLY" -eq 1 ]; then backup "$L" "$rel"; cp "$merged" "$L"; set_base "$U" "$B"; fi
   else
+    # #198: diff3 can conflict on a hunk that is actually additive-only — LOCAL
+    # predates a section BASE+UPSTREAM both carry, so LOCAL's side of the hunk
+    # is empty. Collapse only those empty-local hunks (take upstream); any hunk
+    # where LOCAL has real content is left as a genuine conflict, untouched.
+    resolved="$(mktemp)"
+    resolve_additive_only_conflicts < "$merged" > "$resolved"
+    if ! content_has_conflict_markers < "$resolved"; then
+      mv "$resolved" "$merged"
+      printf "  %-10s %s  (diff3 additive-only conflict auto-resolved to upstream, #198)\n" "MERGED" "$rel"
+      n_merged=$((n_merged+1))
+      warn_dropped_definitions "$U" "$merged" "$rel"
+      if [ "$APPLY" -eq 1 ]; then backup "$L" "$rel"; cp "$merged" "$L"; set_base "$U" "$B"; fi
+      [ "$SHOW_DIFF" -eq 1 ] && diff -u "$L" "$merged" 2>/dev/null | sed 's/^/      /' || true
+      rm -f "$resolved"
+      continue
+    fi
+    rm -f "$resolved"
     # #181: if LOCAL has no conflict markers, the prior round's conflict was
     # already resolved by hand but its base was never advanced — so we are about
     # to overwrite that manual resolution with fresh markers. Warn loudly and
@@ -923,6 +1155,22 @@ echo
 echo "----------------------------------------------------------------"
 if [ "$ADOPT_BASE" -eq 1 ]; then
   echo "Base recorded in .scaffold-base/ from upstream. Local files untouched."
+  # #199: --adopt-base's own output (the untracked .scaffold-base/ it just wrote)
+  # must never look like a reason --apply would refuse. Tell the operator the
+  # correct next step explicitly instead of letting them discover --force by
+  # trial and error. The dirty-tree guard already ignores untracked-only state
+  # (porcelain_has_tracked_changes, #143) — --force is only load-bearing when
+  # tracked files are ALSO dirty, so the hint reflects the tree's real state.
+  if git -C "$PROJECT_ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    _ADOPT_PORCELAIN="$(git -C "$PROJECT_ROOT" status --porcelain)"
+    if porcelain_has_tracked_changes "$_ADOPT_PORCELAIN"; then
+      echo "Next step: tracked files are also uncommitted — re-run with"
+      echo "  --apply --force (or commit/stash the tracked changes first)."
+    else
+      echo "Next step: re-run with --apply now — the only uncommitted state is"
+      echo "  the untracked .scaffold-base/ just recorded, which never blocks --apply."
+    fi
+  fi
   exit 0
 fi
 echo "Summary: NEW=$n_new UPDATE=$n_update MERGED=$n_merged CONFLICT=$n_conflict REVIEW=$n_review local-only-edits=$n_local in-sync=$n_insync"

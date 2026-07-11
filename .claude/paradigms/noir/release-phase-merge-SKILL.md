@@ -1,6 +1,6 @@
 ---
-name: release-phase-merge
-description: Merge completed subagent branches into version/{X.Y} autonomously — no per-merge confirmation. Runs tests after each merge, ticks §5, and drives the final version/{X.Y}→dev merge unsupervised. Stops only on conflict, test failure, or push trigger. Use when the user says "merge agent X", "merge branch foo", "phase N is done, merge it", "all agents done", or "workflow returned branches". Handles both isolated-worktree subagent work-item branches and write-capable workflow agent branches. Push to origin remains human-gated.
+name: grm-release-phase-merge
+description: Merge completed subagent branches into version/{X.Y} autonomously — no per-merge confirmation. Runs tests after each merge, ticks §5, and drives the final version/{X.Y}→dev merge unsupervised. Stops only on conflict, test failure, or push trigger. Handles both isolated-worktree work-item branches and write-capable workflow agent branches. Push to origin remains human-gated. Use when the user says "merge agent X" or "phase N is done".
 ---
 
 # Release phase merge (Noir)
@@ -21,8 +21,9 @@ Handles **two branch sources**:
   structured `branches` output. See §Write-capable workflow agent branches in
   `reference.md` for the additional pre-merge steps specific to this source.
 
-When `release-phase-model == Auto` (Noir only — see
-`docs/design/release-phase-model-design.md`), `grm-release-phase` dispatches the
+When `release-phase-model == Auto` (Noir only — that dial is a
+framework-internal design; see the upstream Grimoire repository for that
+rationale), `grm-release-phase` dispatches the
 phase via a write-capable Workflow, so the returned branches arrive through the
 **second** source above; merge them in `mergeAfter` order per §Write-capable
 workflow agent branches. `Auto` adds no new merge machinery — it routes to that
@@ -43,8 +44,9 @@ already-documented path. The push gate is unchanged under both dial values
 > A `head_ok:false` is the HEAD-drift signal (do not merge — investigate per the
 > stranded-branch recovery below). **CLI fallback** (no MCP / disabled): `python3
 > .claude/skills/grm-release-agent-tracker/release_plan.py merge-preflight --staging
-> version/{X.Y}`. The numbered steps below are the fallback procedure. Design:
-> `docs/design/grimoire-release-server-design.md`.
+> version/{X.Y}`. The numbered steps below are the fallback procedure. Design
+> rationale lives in the upstream Grimoire repository (framework-internal — not
+> shipped).
 
 1. **HEAD-verification gate (MANDATORY — #35).** Assert HEAD is exactly the
    intended staging branch before *every* merge:
@@ -125,7 +127,8 @@ If there are conflicts:
 - If intent is ambiguous: **stop and surface to the user** — describe the
   conflict and ask for direction.
 - **Tiered conflict resolution (v1.30, #62):** before stopping, classify the
-  conflict per `docs/design/autonomy-hardening-design.md`. Auto-resolvable
+  conflict per design rationale that lives in the upstream Grimoire repository
+  (framework-internal — not shipped). Auto-resolvable
   (additive/disjoint hunks, lockfiles, generated artifacts) → resolve, log to
   §5 follow-ups, continue. Semantic/ambiguous → stop and surface. Full
   classification table in `reference.md` §Tiered conflict resolution.
@@ -148,8 +151,8 @@ If tests fail:
 
 Read the `code-quality` block from `.claude/grimoire-config.json` **live**.
 Absent block ⇒ defaults (`audit-gate: warn`, `auto-reviewer: noir`,
-`coverage-threshold: null`, `typecheck: build`). Design:
-`docs/design/merge-gate-quality-design.md`.
+`coverage-threshold: null`, `typecheck: build`). Design rationale lives in the
+upstream Grimoire repository (framework-internal — not shipped).
 
 Run in order; first failing **blocking** check stops the merge:
 1. **Type-check / build** (`typecheck: build` → type errors are build failures).
@@ -168,7 +171,17 @@ Run in order; first failing **blocking** check stops the merge:
      network "unpublished-release" check degrades gracefully (reported, never a
      hard fail). A future release flips it to **block** via the same dial with
      no schema change. Design: `dependency-channel-design.md` §5.
-4. **Auto-Reviewer** (`auto-reviewer: noir` → spawn `grm-reviewer`; blocking
+   - **3a′. Vendor provenance integrity** (`sync_deps.py --verify`, #315; same
+     trigger as 3a — vendor.toml/vendor.lock/vendor/ diffs). Fully offline,
+     zero network. Findings normalized to
+     `{check,dep,severity,detail,locked,observed}`; `LOCAL-FORK` (vendored
+     bytes drifted from the `vendor.lock` pin), `DEAD-VENDOR` (empty/
+     uninitialized dest), and `VERSION-CONTRADICTION` (embedded version
+     disagrees with the pin) count as violations; `STUB-VENDOR-MANIFEST` is a
+     WARN-only heuristic that never elevates the exit code alone. Same
+     `warn`-under-`audit-gate` posture as 3a: file via `grm-feedback-to-issue`
+     and proceed.
+4. **Auto-Reviewer** (`auto-reviewer: noir` → spawn `grm-agent-reviewer`; blocking
    findings stop, non-blocking become §5 follow-ups).
 
 **On any blocking stop:** `git reset --hard ORIG_HEAD` — undo the merge, leave

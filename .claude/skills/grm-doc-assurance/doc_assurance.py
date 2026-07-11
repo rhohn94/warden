@@ -2,13 +2,35 @@
 """doc-assurance — deterministic checks over a Grimoire repo's own docs.
 
 Checks: flavor-parity, design-layout, links, docs-map, release-consistency,
-        skill-budget, relative-links, hierarchy, lean-index, monolith-cap,
-        description-cap, anti-patterns.
-Read-only except --write-map. Report-only unless --strict (non-zero on findings).
+        mirrored-script-parity, ported-pair-presence, skill-budget,
+        relative-links, hierarchy, lean-index, monolith-cap, description-cap,
+        anti-patterns, portal-stale, design-index-stale,
+        product-readme-present, version-claim-freshness.
+Read-only except --write-map / --write-portal / --write-design-index.
+Report-only unless --strict (non-zero on findings).
 
 Usage:
-  doc_assurance.py [check ...] [--strict] [--write-map] [--root PATH]
+  doc_assurance.py [check ...] [--strict] [--write-map] [--write-portal]
+                   [--write-design-index] [--root PATH]
   (no checks named ⇒ run all)
+
+design-doc index generation (docs/design/README.md, docs/grimoire/design/README.md)
+------------------------------------------------------------------------------------
+`--write-design-index` regenerates a `<!-- design-index:begin -->` /
+`<!-- design-index:end -->` marker-delimited "| Document | Area |" table in
+each tier's README.md — see maintenance-automation-design.md §1. `design-
+index-stale` (check 15, default warn) flags when a README's generated region
+is out of date, or when a design doc is missing the house layout (title +
+Motivation) needed to index it.
+
+documentation portal (docs/documentation.html)
+------------------------------------------------
+`--write-portal` generates a single self-contained `docs/documentation.html`
+(inline CSS + vanilla JS, no CDN) — a wiki-like nav sidebar + client-side
+search over the same reachability graph `check_hierarchy` builds. Generated,
+never hand-edited; see docs-portal-design.md. `portal-stale` (check 14,
+default warn) flags when the committed file no longer matches what
+`--write-portal` would regenerate.
 
 design-layout check (check 2)
 ------------------------------
@@ -45,6 +67,18 @@ Extended in WH-7 to cover root ↔ claude-code ↔ copilot three-flavor
 structural parity for docs file-name sets.  Known-intentional gaps are
 pre-populated in DOCS_PARITY_ALLOW so the check never floods for them.
 
+mirrored-script-parity check
+------------------------------------
+Systemic sibling of flavor-parity's hand-picked must-match file list: every
+*.py/*.sh script that ships in both the root tree and a flavor tree at an
+equivalent path is enumerated automatically (root ↔ claude-code by identical
+relative path under .claude/skills or .claude/hooks; root ↔ copilot/codex by
+basename against those flavors' flat scripts/ dir) and content-compared.
+A differing pair fails unless (flavor, name) is in MIRRORED_SCRIPT_ALLOW —
+documented intentional deltas (copilot/codex comment rewording for the
+docs/grimoire/ Bulkhead, legitimate flat-layout path adaptations, or tracked
+pre-existing drift filed as a follow-up rather than fixed on sight).
+
 lean-index check (check 9)
 ---------------------------
 Index pages (README.md files under docs/) must be ≤ 6 KB and contain ≥ 3
@@ -77,18 +111,38 @@ larger than ANTI_PATTERNS_CAP (1,500 bytes) is flagged with the hint to keep
 it to ~5 bullets / move the catalogue to reference.md. Warn-level; sorted by
 skill. Reference-stub bullets (`- `Anti-patterns` — see `reference.md``) are
 not headings and are never measured.
+
+product-readme-present check
+------------------------------------------
+Root README.md must exist AND must not be the unmodified generic scaffold
+README ("Claude Code Scaffold" title + "## What's included" section — the
+golden-seed fingerprint). Deterministic; fails only the --strict gate like
+every other check here.
+
+version-claim-freshness check
+--------------------------------------------
+Scans README.md / CHANGELOG.md / docs/changelog.md for version strings
+matching the project's own vX.Y(.Z) pattern and flags any found >= 1 minor
+behind the current framework-version in grimoire-config.json. Remediation:
+remove the hardcoded version claim from prose and link
+docs/version-history.md instead (the one place versions never rot). No
+manifest version readable -> no-op. Deterministic; fails only the --strict gate.
 """
+from __future__ import annotations
+
 import os, re, sys, json, glob
 
 CHECKS = [
     "flavor-parity", "design-layout", "links", "docs-map",
     "release-consistency", "manifest-detect-hygiene", "shipped-pointers",
+    "mirrored-script-parity", "ported-pair-presence",
     "skill-budget", "relative-links", "hierarchy", "lean-index",
-    "monolith-cap", "description-cap", "anti-patterns",
+    "monolith-cap", "description-cap", "anti-patterns", "portal-stale",
+    "design-index-stale", "product-readme-present", "version-claim-freshness",
 ]
 
 # Mirror of build_distributables.py EXCLUDED_PATH_PREFIXES + sync-from-upstream.sh
-# is_excluded() — the v3.39 "Bulkhead" framework-internal doc carve-out. A path
+# is_excluded() — the "Bulkhead" framework-internal doc carve-out. A path
 # under any of these prefixes is NEVER delivered to a consumer (excluded from both
 # the sync walk and the distributable), so a feature-manifest DETECT predicate may
 # not depend on one — it could never pass on a consumer. Keep in sync with those two.
@@ -102,17 +156,16 @@ MANIFEST_EXCLUDED_PREFIXES = (
     "docs/grimoire/maintaining-grimoire.md",
     "docs/grimoire/authoring-grimoire-docs.md",
     "docs/grimoire/integration-workflow.md",
-    "docs/grimoire/version-design.md",
     "docs/grimoire/qa-ledger.md",
     "docs/grimoire/execution-profile-spike-s1.md",
     "docs/grimoire/token-efficiency-",
     "docs/grimoire/release-planning-",
-    # v3.45: release-planning docs relocated to a dedicated tier (active at dir
+    # release-planning docs relocated to a dedicated tier (active at dir
     # root, archive under archived/). Old prefixes kept for backward-compat.
     "docs/release-planning/",
 )
 
-# v1.29 context-efficiency budgets (bytes).
+# Context-efficiency budgets (bytes).
 SKILL_BUDGET = 12_000
 CLAUDE_BUDGET = 10_000
 
@@ -144,6 +197,23 @@ _HIERARCHY_EXEMPT_GLOBS = [
 #     forgotten sync). Grep for the design doc in both flavors before adding.
 #   - Never add entries for skill-set gaps (those are caught by the skill
 #     presence check above, not this docs check).
+# Root dogfood flattens architecture/, data-persistence/, and distribution/ to
+# docs/design/{topic}-design.md; shipped flavors (claude-code/codex/copilot)
+# intentionally keep the subtree form — it is the seeded template scaffold
+# new/synced consumer projects receive, not root's own dogfood content.
+# Computed rather than hand-enumerated: adding a fourth flavor or topic needs
+# one entry here, not eight hand-written tuples.
+_V380_FLATTEN_TOPICS = ("architecture", "data-persistence", "distribution")
+_V380_SUBTREE_FLAVORS = ("claude-code", "copilot", "codex")
+_V380_FLATTEN_ALLOW = frozenset(
+    {("root", flavor, f"docs/design/{topic}-design.md")
+     for topic in _V380_FLATTEN_TOPICS for flavor in _V380_SUBTREE_FLAVORS}
+    | {(flavor, "root", f"docs/design/{topic}/README.md")
+       for topic in _V380_FLATTEN_TOPICS for flavor in _V380_SUBTREE_FLAVORS}
+    | {(flavor, "root", f"docs/design/{topic}/{topic}-design.md")
+       for topic in _V380_FLATTEN_TOPICS for flavor in _V380_SUBTREE_FLAVORS}
+)
+
 DOCS_PARITY_ALLOW = frozenset({
     # ── docs/design.md charter (main design document) ──────────────────
     # Grimoire's own top-level charter currently carries framework-specific
@@ -182,13 +252,15 @@ DOCS_PARITY_ALLOW = frozenset({
     # project needs to bootstrap. (docs/grimoire/ internal files are auto-allowed
     # by _is_internal_grimoire_doc() and need no entry.)
     ("root", "claude-code", "docs/version-history.md"),
+    ("root", "claude-code", "docs/changelog.md"),
     ("root", "claude-code", "docs/web-app-aura-adoption-guide.md"),
     ("root", "claude-code", "docs/web-app-deployment-protocol.md"),
     ("root", "copilot", "docs/version-history.md"),
+    ("root", "copilot", "docs/changelog.md"),
     ("root", "copilot", "docs/web-app-aura-adoption-guide.md"),
     ("root", "copilot", "docs/web-app-deployment-protocol.md"),
 
-    # ── docs/release-planning/ tier — root-only (v3.45 relocation) ─────
+    # ── docs/release-planning/ tier — root-only ────────────────────────
     # The plan docs themselves are auto-exempt via _RELEASE_PLAN_RE; the tier
     # index READMEs are root-only dogfood (the shipped flavors carry no plans).
     ("root", "claude-code", "docs/release-planning/README.md"),
@@ -209,7 +281,7 @@ DOCS_PARITY_ALLOW = frozenset({
     ("claude-code", "copilot", "docs/README.md"),
     ("root", "copilot", "docs/README.md"),
 
-    # ── codex flavor (v3.55) ───────────────────────────────────────────
+    # ── codex flavor ────────────────────────────────────────────────────
     # codex was ported from claude-code; its docs/ tree mirrors copilot's
     # file-set EXACTLY plus one added design doc (docs/design/codex-flavor-
     # design.md). So every gap copilot has versus root / claude-code, codex
@@ -229,19 +301,35 @@ DOCS_PARITY_ALLOW = frozenset({
     ("root", "codex", "docs/release-planning/README.md"),
     ("root", "codex", "docs/release-planning/archived/README.md"),
     ("root", "codex", "docs/version-history.md"),
+    ("root", "codex", "docs/changelog.md"),
     ("root", "codex", "docs/web-app-aura-adoption-guide.md"),
     ("root", "codex", "docs/web-app-deployment-protocol.md"),
     # claude-code ships ux components/theme that codex (like copilot) lacks:
     ("claude-code", "codex", "docs/design/ux/components.md"),
     ("claude-code", "codex", "docs/design/ux/theme.md"),
-})
+
+    # ── Intentional post-fix gaps ────────────────────────────────────────
+    # copilot-grm-namespacing-design.md was misplaced under
+    # claude-code/docs/design/ (it describes copilot-flavor internals); the
+    # correct copy lives at copilot/docs/design/ (and root, which authors it).
+    # claude-code intentionally has no copy after the fix.
+    ("root", "claude-code", "docs/design/copilot-grm-namespacing-design.md"),
+    ("copilot", "claude-code", "docs/design/copilot-grm-namespacing-design.md"),
+    ("codex", "claude-code", "docs/design/copilot-grm-namespacing-design.md"),
+    # justfile-standard-design.md was orphaned in codex/docs/design/
+    # (zero references anywhere in codex/) and removed. root/claude-code/
+    # copilot all still carry it for their own justfile-standard skills.
+    ("root", "codex", "docs/design/justfile-standard-design.md"),
+    ("claude-code", "codex", "docs/design/justfile-standard-design.md"),
+    ("copilot", "codex", "docs/design/justfile-standard-design.md"),
+}) | _V380_FLATTEN_ALLOW
 
 # Release-planning archive pattern: root-only, auto-matched by regex.
-# v3.45 "Release-planning relocation" moved all plans into a dedicated
+# The "Release-planning relocation" moved all plans into a dedicated
 # docs/release-planning/ tier (active at dir root, archive under archived/).
-# The pattern matches the new tier AND the two pre-v3.45 locations (top-level
-# docs/ active + docs/grimoire/ archive) for backward-compat, so a synced-but-
-# not-yet-migrated consumer never flags a parity / monolith gap.
+# The pattern matches the new tier AND the two pre-relocation locations
+# (top-level docs/ active + docs/grimoire/ archive) for backward-compat, so a
+# synced-but-not-yet-migrated consumer never flags a parity / monolith gap.
 _RELEASE_PLAN_RE = re.compile(r"^docs/(release-planning/(archived/)?|grimoire/)?release-planning-v[\d.]+\.md$")
 
 # ── lean-index (check 9) constants ─────────────────────────────────────
@@ -252,7 +340,7 @@ LEAN_INDEX_MIN_LINKS = 3       # minimum markdown links in an index page
 LEAN_INDEX_SIZE_EXEMPT = frozenset({
     "docs/README.md",           # repo-root doc map (many tiers)
     "docs/design/README.md",    # design-doc catalog (all design docs)
-    # v3.39 "Bulkhead": framework design-spec catalog. Root indexes the full
+    # "Bulkhead": framework design-spec catalog. Root indexes the full
     # ~68-doc framework corpus here (vs ~25-29 in the shipped flavors), so its
     # index legitimately exceeds the 6 KB lean cap. Root-only exemption: the
     # shipped flavors' grimoire/design indexes stay under the cap.
@@ -272,7 +360,7 @@ MONOLITH_CAP_EXEMPT = frozenset({
     "docs/grimoire/integration-workflow.md",
     # Existing large design docs (pre-WH-8 corpus; exempt so this check is
     # forward-looking rather than retroactively flagging the whole corpus).
-    # v3.39 "Bulkhead": these framework specs relocated docs/design/ →
+    # "Bulkhead": these framework specs relocated docs/design/ →
     # docs/grimoire/design/ (DS-2 for claude-code; root/copilot in DS-4/DS-3).
     # Paths are the NEW location so the exemption keeps matching post-move.
     "docs/grimoire/design/agent-roles-design.md",
@@ -291,7 +379,7 @@ MONOLITH_CAP_EXEMPT = frozenset({
     "docs/grimoire/design/write-capable-workflow-design.md",
     "docs/grimoire/docs-organization-design.md",
     "docs/grimoire/integration-workflow.md",
-    # v3.54: comprehensive framework docs exempted (legitimate large docs;
+    # Comprehensive framework docs exempted (legitimate large docs;
     # add new entries here rather than raising the cap threshold).
     "docs/grimoire/design/clean-room-design.md",
     "docs/grimoire/design/dependency-channel-design.md",
@@ -316,7 +404,7 @@ def _docs_filenames(root, flavor_root):
     return result
 
 
-def find_root(start):
+def find_root(start: str) -> tuple:
     """Locate the repo root containing CLAUDE.md.
 
     Framework monorepo: root must also contain a claude-code/ flavor directory.
@@ -338,7 +426,7 @@ def find_root(start):
     raise SystemExit("repo root not found (need CLAUDE.md)")
 
 
-def rel(root, p):
+def rel(root: str, p: str) -> str:
     return os.path.relpath(p, root)
 
 
@@ -372,7 +460,7 @@ def _is_docs_gap_allowed(flavor_a, flavor_b, doc_path, allow_set):
 
 
 # ── Check 1: flavor parity ──────────────────────────────────────────────
-def check_flavor_parity(root, _allow_set=None):
+def check_flavor_parity(root: str, _allow_set: set | None = None) -> list:
     """Three-flavor structural parity: root ↔ claude-code ↔ copilot.
 
     Checks:
@@ -428,11 +516,11 @@ def check_flavor_parity(root, _allow_set=None):
         ("root",        rt_docs, "copilot",     cp_docs),
     ]
 
-    # ── codex flavor (v3.55): ported from claude-code, docs mirror copilot's
+    # ── codex flavor: ported from claude-code, docs mirror copilot's
     # set plus docs/design/codex-flavor-design.md. Guarded by codex/ presence
-    # (a consumer or a pre-v3.55 monorepo has no codex/ dir — skip then, like
-    # the copilot_root guard above). When present, compare codex against every
-    # other flavor so four-flavor docs parity is enforced.
+    # (a consumer or a monorepo predating the codex flavor has no codex/ dir —
+    # skip then, like the copilot_root guard above). When present, compare
+    # codex against every other flavor so four-flavor docs parity is enforced.
     codex_root = os.path.join(root, "codex")
     if os.path.isdir(codex_root):
         cx_docs = _docs_filenames(root, codex_root)
@@ -471,8 +559,8 @@ def _has_section(low, pattern):
 def _layout_ok(low, section_list):
     return all(_has_section(low, s) for s in section_list)
 
-def check_design_layout(root):
-    # v3.39 "Bulkhead": design docs live at BOTH a consumer's project-own tier
+def check_design_layout(root: str) -> list:
+    # "Bulkhead": design docs live at BOTH a consumer's project-own tier
     # (docs/design/*-design.md) AND the framework-internal tier
     # (docs/grimoire/design/*-design.md, where the relocated framework specs now
     # live). Both are house-section-checked; the house-section rules are
@@ -505,7 +593,7 @@ def _strip_code(text):
     # Links inside fenced or inline code are examples, not real references.
     text = FENCE_RE.sub("", text)
     return INLINE_CODE_RE.sub("", text)
-def check_links(root):
+def check_links(root: str) -> list:
     findings = []
     md = [p for p in glob.glob(f"{root}/**/*.md", recursive=True)
           if "/.git/" not in p and "/.scaffold-base/" not in p]
@@ -524,15 +612,16 @@ def check_links(root):
     return findings
 
 
-# ── Check: shipped-pointers (v3.41 "Clean-Room" CR-2) ───────────────────
-# Pointer-integrity rule (clean-room-design.md §4, extending v3.39's CRITICAL
-# invariant): "No shipped doc may contain a relative link to an excluded or
-# relocated doc." A shipped doc linking a target that never ships would dangle
-# in a consumer install. We reuse the build gate's EXCLUDED_PATH_PREFIXES as the
-# single exclusion source — no second hardcoded copy (clean-room-design §4).
+# ── Check: shipped-pointers ("Clean-Room") ──────────────────────────────
+# Pointer-integrity rule (clean-room-design.md §4, extending the "Bulkhead"'s
+# CRITICAL invariant): "No shipped doc may contain a relative link to an
+# excluded or relocated doc." A shipped doc linking a target that never ships
+# would dangle in a consumer install. We reuse the build gate's
+# EXCLUDED_PATH_PREFIXES as the single exclusion source — no second hardcoded
+# copy (clean-room-design §4).
 _SHIPPED_FLAVORS = ("", "claude-code", "codex", "copilot")  # "" == repo-root (the dogfood flavor)
 
-# Exclude-and-seed targets (clean-room-design §4 / v3.39 §2): excluded at the
+# Exclude-and-seed targets (clean-room-design §4): excluded at the
 # ship gates (Grimoire's own copy never ships) BUT a consumer receives an empty
 # *seeded* copy at the same path. A relative link to one of these therefore
 # resolves fine on a consumer install — it is NOT a dangling pointer, so it is
@@ -565,7 +654,7 @@ def _load_excluded_prefixes():
     return ()
 
 
-def check_shipped_pointers(root):
+def check_shipped_pointers(root: str) -> list:
     """Assert no shipped doc links a target under an EXCLUDED_PATH_PREFIXES entry.
 
     Shipped surface (per clean-room-design §4): each flavor's docs/ tree MINUS
@@ -586,7 +675,7 @@ def check_shipped_pointers(root):
             continue
         for p in glob.glob(f"{docs_dir}/**/*.md", recursive=True):
             # Source surface excludes never-ships subtrees: docs/grimoire/** and
-            # (v3.45) the relocated docs/release-planning/** tier. Links *from*
+            # the relocated docs/release-planning/** tier. Links *from*
             # inside an excluded doc are never consumer-visible, so they cannot
             # dangle in a consumer install.
             src_rel = os.path.relpath(p, flavor_root).replace(os.sep, "/")
@@ -614,7 +703,7 @@ def check_shipped_pointers(root):
 
 
 # ── Check 4: docs map ───────────────────────────────────────────────────
-def docs_md_files(root):
+def docs_md_files(root: str) -> list:
     return sorted(rel(root, p) for p in glob.glob(f"{root}/docs/**/*.md", recursive=True)
                   if os.path.basename(p) != "README.md")
 
@@ -655,7 +744,7 @@ def _build_nested_map(root):
     return lines
 
 
-def build_map(root):
+def build_map(root: str) -> str:
     """Build the full docs/README.md content with marker-delimited map section.
 
     If docs/README.md exists and contains markers, rewrites only between markers.
@@ -710,7 +799,7 @@ def build_map(root):
         return "\n".join(lines)
 
 
-def check_docs_map(root, write=False):
+def check_docs_map(root: str, write: bool = False) -> list:
     mp = f"{root}/docs/README.md"
     if write:
         new_content = build_map(root)
@@ -720,6 +809,17 @@ def check_docs_map(root, write=False):
     if not os.path.exists(mp):
         return ["docs/README.md (documentation map) missing — run with --write-map"]
     content = open(mp).read()
+    begin_marker = "<!-- docs-map:begin -->"
+    end_marker = "<!-- docs-map:end -->"
+    if begin_marker in content and end_marker in content:
+        # Only the generated region is diffed against docs_md_files(); hand-curated
+        # prose outside the markers (e.g. a "## Tiers" section linking child
+        # README.md index pages) is intentionally not part of the generated map's
+        # completeness contract. check_links still verifies every link in
+        # that curated prose resolves to a real file, so this narrowing does not
+        # drop any actual dead-link coverage.
+        _, rest = content.split(begin_marker, 1)
+        content = rest.split(end_marker, 1)[0]
     listed = set(re.findall(r"\]\(([^)]+\.md)\)", content))
     listed = {os.path.normpath(os.path.join("docs", x)) for x in listed}
     actual = set(docs_md_files(root))
@@ -730,14 +830,241 @@ def check_docs_map(root, write=False):
     return findings
 
 
+# ── Design-doc index generation (maintenance-automation-design.md §1) ──
+# Two curated tiers each carry a hand-maintained index:
+#   docs/design/README.md            — a consumer project's own design docs
+#   docs/grimoire/design/README.md   — Grimoire's framework-internal specs
+# `--write-design-index` regenerates a `<!-- design-index:begin -->` /
+# `<!-- design-index:end -->` marker-delimited table region in each, scanning
+# the tier's *-design.md-and-friends (docs/design/*.md / docs/grimoire/design/*.md,
+# excluding README.md) for the house-layout title (first "# " heading) and the
+# first line of prose under an exact "## Motivation" heading (the one-line
+# "Area" description). A doc missing either is reported as a finding, never
+# silently skipped or given an empty row.
+#
+# docs/grimoire/design/README.md already carries a rich, hand-curated set of
+# "##"-grouped sections (Charter deliverables, Agent roles & autonomy, …) that
+# encode editorial judgement a script cannot replicate — those sections are
+# left untouched. The generated region is appended as a single "All design
+# docs (generated)" table at the bottom of each README, guaranteeing no doc is
+# ever silently missing from the index (the bug this closes) without fighting
+# the existing curation. docs/design/README.md's existing "## Index" table has
+# no such curation (it is a placeholder), so the same generated table simply
+# becomes that tier's actual index.
+DESIGN_INDEX_BEGIN = "<!-- design-index:begin -->"
+DESIGN_INDEX_END = "<!-- design-index:end -->"
+
+# (subdir-relative-to-root, heading printed above the generated table)
+DESIGN_INDEX_TIERS = (
+    ("docs/design", "All design docs (generated)"),
+    ("docs/grimoire/design", "All design docs (generated)"),
+)
+
+_DESIGN_TITLE_RE = re.compile(r"^#\s+(.+?)\s*$", re.M)
+# Accepts the plain house-layout "## Motivation" as well as the numbered/
+# section-marker variants some existing docs use ("## 1. Motivation", "## §1
+# — Motivation, overview and goals") — same tolerance check_design_layout's
+# _has_section already applies for the design-layout pass/fail gate, reused
+# here so a doc that already passes that gate isn't spuriously reported as
+# house-layout-missing just for numbering its heading.
+_DESIGN_MOTIVATION_RE = re.compile(r"^##\s+(?:[\w§.]+\s*[-—.]*\s*)?Motivation\b.*$", re.M | re.I)
+
+
+def _design_index_files(root, tier_subdir):
+    """*.md files directly under tier_subdir, excluding README.md, sorted by filename."""
+    tier_dir = os.path.join(root, tier_subdir)
+    files = [p for p in glob.glob(f"{tier_dir}/*.md")
+             if os.path.basename(p) != "README.md"]
+    return sorted(files, key=lambda p: os.path.basename(p).lower())
+
+
+_DESIGN_AREA_MAX_LEN = 160  # chars — safety cap so one runaway sentence can't blow up a table row
+_SENTENCE_END_RE = re.compile(r"(?<!\b[A-Z])[.!?](?:\s|$)")  # crude but deterministic first-sentence split
+
+
+def _first_sentence(paragraph):
+    """Return the first sentence of a soft-wrapped markdown paragraph.
+
+    Markdown paragraphs commonly soft-wrap across several physical lines
+    (~76-80 cols in this repo); joining consecutive non-blank lines before
+    splitting avoids handing back a line fragment cut mid-word. Falls back to
+    the whole (capped) paragraph when no sentence-ending punctuation is found.
+    """
+    text = " ".join(paragraph)
+    m = _SENTENCE_END_RE.search(text)
+    sentence = text[:m.end()].strip() if m else text
+    if len(sentence) > _DESIGN_AREA_MAX_LEN:
+        sentence = sentence[:_DESIGN_AREA_MAX_LEN].rstrip() + "…"
+    return sentence
+
+
+def _parse_design_doc(path):
+    """Extract (title, area) from a house-layout design doc.
+
+    title — the first "# " heading (house-layout feature title).
+    area  — the first sentence of prose immediately under a "## Motivation"
+            heading (tolerant of numbered/§-prefixed variants — see
+            _DESIGN_MOTIVATION_RE — since this is author-facing table content,
+            not the design-layout pass/fail gate). Consecutive non-blank
+            physical lines are joined into one paragraph first so a markdown
+            soft-wrap doesn't get truncated mid-word.
+
+    Returns (title, area, error) — error is None when both are found, else a
+    short string naming what's missing (the doc is still reported, never
+    silently skipped).
+    """
+    try:
+        content = open(path, encoding="utf-8").read()
+    except Exception as e:
+        return None, None, f"unreadable ({e})"
+
+    title_m = _DESIGN_TITLE_RE.search(content)
+    title = title_m.group(1).strip() if title_m else None
+
+    area = None
+    mot_m = _DESIGN_MOTIVATION_RE.search(content)
+    if mot_m:
+        paragraph = []
+        for line in content[mot_m.end():].splitlines():
+            if line.strip():
+                paragraph.append(line.strip())
+            elif paragraph:
+                break  # end of the first paragraph under Motivation
+        if paragraph:
+            area = _first_sentence(paragraph)
+
+    missing = []
+    if not title:
+        missing.append("no '# ' title")
+    if not mot_m or not area:
+        missing.append("no '## Motivation' section (or it has no prose)")
+    error = ", ".join(missing) if missing else None
+    return title, area, error
+
+
+def _design_index_table_cell(text):
+    """Escape a value for safe embedding in a GFM table cell."""
+    return text.replace("|", "\\|") if text else ""
+
+
+def build_design_index_table(root: str, tier_subdir: str) -> tuple:
+    """Return (table_markdown_lines, findings) for one design-doc tier.
+
+    table_markdown_lines is the full '| Document | Area |' table (header +
+    separator + one row per parseable doc), sorted deterministically by
+    filename. Docs missing the house layout are excluded from the table but
+    reported in findings (never silently skipped, never given an empty row).
+    """
+    findings = []
+    rows = []
+    for p in _design_index_files(root, tier_subdir):
+        fname = os.path.basename(p)
+        title, area, error = _parse_design_doc(p)
+        if error:
+            findings.append(f"{tier_subdir}/{fname}: missing house layout ({error}) — excluded from generated index")
+            continue
+        rows.append((fname, title, area))
+
+    lines = ["| Document | Area |", "|---|---|"]
+    for fname, title, area in rows:
+        link = f"[{fname}]({fname})"
+        cell = f"**{_design_index_table_cell(title)}** — {_design_index_table_cell(area)}"
+        lines.append(f"| {link} | {cell} |")
+    if not rows:
+        lines.append("| *(no design docs found)* | |")
+    return lines, findings
+
+
+def _render_design_index_region(root, tier_subdir, section_heading):
+    """Render the full marker-delimited region (heading + table) for one tier."""
+    table_lines, findings = build_design_index_table(root, tier_subdir)
+    region_lines = [f"### {section_heading}", ""] + table_lines
+    return "\n".join(region_lines), findings
+
+
+def _apply_marker_region(existing, begin_marker, end_marker, region_content):
+    """Replace (or append) a marker-delimited region in existing file content.
+
+    Shared mechanics with build_map: if both markers are present, only the
+    content between them is replaced (curated prose outside survives
+    untouched); if absent, the markers + region are appended at the end.
+    """
+    if begin_marker in existing and end_marker in existing:
+        before, rest = existing.split(begin_marker, 1)
+        _, after = rest.split(end_marker, 1)
+        return before + begin_marker + "\n" + region_content + "\n" + end_marker + after
+    sep = "\n" if existing.endswith("\n") else "\n\n"
+    return existing.rstrip("\n") + "\n\n" + begin_marker + "\n" + region_content + "\n" + end_marker + "\n"
+
+
+def build_design_index_readme(root: str, tier_subdir: str, section_heading: str) -> tuple:
+    """Build the full regenerated content for one tier's README.md.
+
+    Returns (new_content, findings). If the README doesn't exist yet, a
+    minimal one is created (mirrors build_map's no-file-yet branch).
+    """
+    readme_path = os.path.join(root, tier_subdir, "README.md")
+    region_content, findings = _render_design_index_region(root, tier_subdir, section_heading)
+    if os.path.exists(readme_path):
+        existing = open(readme_path, encoding="utf-8").read()
+        new_content = _apply_marker_region(existing, DESIGN_INDEX_BEGIN, DESIGN_INDEX_END, region_content)
+    else:
+        lines = [
+            f"# {os.path.basename(tier_subdir)} design docs",
+            "",
+            DESIGN_INDEX_BEGIN,
+            region_content,
+            DESIGN_INDEX_END,
+            "",
+        ]
+        new_content = "\n".join(lines)
+    return new_content, findings
+
+
+def build_design_indexes(root: str) -> dict:
+    """Regenerate both tier READMEs. Returns dict: tier_subdir -> (content, findings)."""
+    return {
+        tier_subdir: build_design_index_readme(root, tier_subdir, heading)
+        for tier_subdir, heading in DESIGN_INDEX_TIERS
+    }
+
+
+def check_design_index_stale(root: str, write: bool = False) -> list:
+    """Check (default) or --write-design-index (write=True) for both tiers.
+
+    Findings cover two independent things, both surfaced (never silently
+    skipped): (a) a README whose generated region is stale/missing relative
+    to what --write-design-index would produce, and (b) any doc missing the
+    house layout (excluded from the table but always reported).
+    """
+    findings = []
+    for tier_subdir, heading in DESIGN_INDEX_TIERS:
+        new_content, parse_findings = build_design_index_readme(root, tier_subdir, heading)
+        readme_path = os.path.join(root, tier_subdir, "README.md")
+        if write:
+            open(readme_path, "w", encoding="utf-8").write(new_content)
+        else:
+            if not os.path.exists(readme_path):
+                findings.append(f"{tier_subdir}/README.md missing — run with --write-design-index")
+            else:
+                current = open(readme_path, encoding="utf-8").read()
+                if current != new_content:
+                    findings.append(
+                        f"{tier_subdir}/README.md design-index region is stale — "
+                        f"run with --write-design-index to regenerate"
+                    )
+            findings.extend(parse_findings)
+    return findings
+
+
 # ── Check 5: release consistency ────────────────────────────────────────
 VER_RE = re.compile(r"^##\s+v(\d+\.\d+)", re.M)
-def check_release_consistency(root):
+def check_release_consistency(root: str) -> list:
     findings = []
     # The release-consistency surface (version-history, roadmap, feature-manifest,
     # config) is framework-owned and seeded by bootstrap.  A downstream project
     # that has not adopted one of these files should report it as a finding, not
-    # crash with an unhandled FileNotFoundError (#183 consumer-mode robustness).
+    # crash with an unhandled FileNotFoundError (consumer-mode robustness).
     vh_path = f"{root}/docs/version-history.md"
     rm_path = f"{root}/docs/roadmap.md"
     if not os.path.exists(vh_path):
@@ -778,11 +1105,11 @@ def check_release_consistency(root):
     return findings
 
 
-# ── Check 5b: feature-manifest detect-predicate hygiene (#135) ──────────
-def check_manifest_detect_hygiene(root):
+# ── Check 5b: feature-manifest detect-predicate hygiene ─────────────────
+def check_manifest_detect_hygiene(root: str) -> list:
     """A feature-manifest DETECT predicate must reference only artifacts that
     are actually distributed to a consumer (skills, scripts, config). It must
-    not depend on a sync/build-excluded framework-internal doc (the v3.39
+    not depend on a sync/build-excluded framework-internal doc (the
     Bulkhead) — that path is never delivered, so the detect can never pass on a
     consumer and the adoption is silently skipped every sync. Only the detect
     column is scanned; summary/adopt prose may cite an internal design doc."""
@@ -806,8 +1133,265 @@ def check_manifest_detect_hygiene(root):
     return findings
 
 
-# ── Check 6: skill / always-loaded size budget (v1.29, #55/#56) ─────────
-def check_skill_budget(root):
+# ── Check 5c: mirrored-script parity ─────────────────────────────────────
+# Root ↔ claude-code mirrors are matched by identical relative path under
+# `.claude/skills/` and `.claude/hooks/` (both flavors use that same layout).
+# Root ↔ copilot / root ↔ codex mirrors are matched by basename against those
+# flavors' flat `scripts/` directory (their shipped layout has no per-skill
+# subdirectories). Only *.py and *.sh are in scope — the same script-file
+# universe an earlier flavor-parity hotfix's evidence section covers.
+_MIRRORED_SCRIPT_EXTS = (".py", ".sh")
+
+# Each entry: (flavor, relative-or-basename) pairs already known to differ
+# intentionally, or tracked pre-existing drift not yet reconciled. An entry
+# here does NOT mean "never fix" — it means "content differs for a documented
+# reason" (see the comment above each group). Add new entries only after
+# verifying the delta by reading the diff; never as a blanket bypass.
+MIRRORED_SCRIPT_ALLOW = frozenset({
+    # ── copilot/codex comment-only rewording (systemic, established convention) ──
+    # copilot/ and codex/ ship without docs/grimoire/ (framework-internal tier,
+    # the Bulkhead) so a script's comments/docstrings that reference a
+    # root-only docs/grimoire/design/*.md path are reworded there to "lives in
+    # the upstream Grimoire repository (framework-internal)" instead of a
+    # dangling relative path. Pre-existing across many scripts; tracked here
+    # rather than fixed en masse across the repo (out of this check's own named
+    # scope of doc_assurance.py / release_plan.py / build_distributables.py).
+    ("copilot", "release_plan.py"),
+    ("copilot", "issue_tracker.py"),
+    ("copilot", "github_pr.py"),
+    ("copilot", "env_probe.py"),
+    ("copilot", "component_registry.py"),
+    ("codex", "issue_tracker.py"),
+    ("claude-code", "hard_reset.py"),
+    ("claude-code", "verify_isolation.py"),
+    ("claude-code", "issue_tracker.py"),
+    ("claude-code", "issue_tracker_switch.py"),
+    ("claude-code", "github_pr.py"),
+    ("claude-code", "env_probe.py"),
+    ("claude-code", "qa_select.py"),
+    ("claude-code", "install_doctor.py"),
+    ("claude-code", "component_registry.py"),
+    ("claude-code", "sync-from-source.sh"),
+    ("claude-code", "autonomy-allow.sh"),
+    ("claude-code", "bundled-sync-guard.sh"),
+    ("claude-code", "protected-branch-guard.sh"),
+    ("claude-code", "stealth-guard.sh"),
+    ("claude-code", "worktree-guard.sh"),
+
+    # ── copilot-only flat scripts/ tree: comment-rewording + legitimate
+    # layout-adaptation deltas (copilot ships flat scripts/, not nested
+    # per-skill dirs, so a script's own path-construction differs correctly).
+    # No functional gap beyond the rewording/layout-adaptation itself.
+    ("copilot", "sync_deps.py"),
+    ("copilot", "vendor_verify.py"),
+    ("copilot", "run_metadata.py"),
+    ("copilot", "telemetry_entry.py"),         # + correct flat-layout path adaptation (#345/#346)
+    ("copilot", "cost_budget.py"),
+    ("copilot", "vendor_migrate.py"),          # + correct flat-layout sys.path adaptation
+    ("copilot", "sync_deps_engine.py"),
+    ("copilot", "dependency_channel_conformance.py"),
+    ("copilot", "project_status.py"),
+    ("copilot", "grm_namespacing.py"),         # deliberately distinct copilot-specific engine
+    ("copilot", "pm_overlap.py"),
+    ("copilot", "noir_loop_state.py"),
+    ("copilot", "migrate_roadmap_issues.py"),  # correct flat-layout path adaptation
+    ("codex", "config_validate.py"),           # different tool entirely (codex-native config surfaces)
+
+    # ── copilot: confirmed REAL functional drift, out of this check's named
+    # scope (doc_assurance.py / release_plan.py / build_distributables.py only).
+    # Classified as tracked drift; filed as follow-up, not fixed here:
+    #   - issue_tracker_switch.py: points at a stale recovery command
+    #     (`workflow-bootstrap --restore` vs copilot's `/install-doctor --repair`).
+    #   - qa_select.py: ledger/release-planning path inconsistency
+    #     (docs/grimoire/... vs docs/...) not matching copilot's real tree.
+    #   - recipe.py: copilot is one INTERFACE_VERSION behind (v4 vs v5) and
+    #     lacks the `release` target root has.
+    #   - sync-from-upstream.sh: copilot lacks root's additive-only-conflict
+    #     auto-resolution and several exclusion-list entries.
+    ("copilot", "issue_tracker_switch.py"),
+    ("copilot", "qa_select.py"),
+    ("copilot", "recipe.py"),
+    ("copilot", "sync-from-upstream.sh"),
+
+    # ── #363 (grm-cost-budget path-name fix + #351 cross-skill __all__
+    # marking): scoped to root/claude-code only. copilot/scripts/cost_budget.py
+    # has a flat layout with no sys.path insert (unaffected by the directory-
+    # name bug) and was explicitly out of scope for this item; its
+    # parse_usage.py sibling was left without the new __all__ marking rather
+    # than touching an unrelated file.
+    ("copilot", "parse_usage.py"),
+})
+
+
+def _enumerate_skill_scripts(flavor_root):
+    """{relative-path-under-.claude/skills-or-.claude/hooks-or-.claude/mcp-servers:
+    abs-path} for a flavor root. mcp-servers/** was added after root's
+    grimoire-status/grimoire-release servers had drifted onto stale bare-name
+    skill paths and this enumeration never caught it since it only walked
+    skills/ and hooks/."""
+    out = {}
+    for sub in ("skills", "hooks", "mcp-servers"):
+        base = os.path.join(flavor_root, ".claude", sub)
+        if not os.path.isdir(base):
+            continue
+        for ext in _MIRRORED_SCRIPT_EXTS:
+            for p in glob.glob(f"{base}/**/*{ext}", recursive=True):
+                out[os.path.join(sub, os.path.relpath(p, base))] = p
+    return out
+
+
+def _enumerate_flat_scripts(scripts_dir):
+    """{basename: abs-path} for a flavor's flat scripts/ directory (copilot/codex)."""
+    out = {}
+    if not os.path.isdir(scripts_dir):
+        return out
+    for ext in _MIRRORED_SCRIPT_EXTS:
+        for p in glob.glob(f"{scripts_dir}/*{ext}"):
+            out[os.path.basename(p)] = p
+    return out
+
+
+def check_mirrored_script_parity(root: str, _allow_set: set | None = None) -> list:
+    """Enumerate every script (*.py, *.sh) that ships in both the root tree
+    and a flavor tree at an equivalent path, and fail on undocumented content
+    drift (the systemic sibling of the one-off flavor-parity must-match
+    list). Two matching strategies, depending on how a flavor lays out its
+    scripts:
+
+      - root ↔ claude-code: matched by IDENTICAL relative path under
+        `.claude/skills/**` or `.claude/hooks/**` (claude-code mirrors root's
+        per-skill directory layout exactly).
+      - root ↔ copilot / root ↔ codex: matched by BASENAME against that
+        flavor's flat `scripts/` directory (copilot/codex ship scripts
+        flattened, not nested per-skill).
+
+    A pair that differs is a finding UNLESS (flavor, key) is in the allow-list
+    (`MIRRORED_SCRIPT_ALLOW`) — the same intentional-delta pattern
+    `check_flavor_parity` uses for docs. No hand-picked file list drives the
+    enumeration itself; only the pass/fail exemption is declarative.
+
+    Dead-allowlist-entry detection: every (flavor, key) in
+    `_allow_set` that matches NO enumerated pair this run (the basename/relp
+    was renamed, removed, or never existed in the target flavor) is itself a
+    finding — an allow-list can't silently accumulate stale entries once a
+    script is deleted or renamed on the side it names.
+    """
+    if _allow_set is None:
+        _allow_set = MIRRORED_SCRIPT_ALLOW
+    findings = []
+    consulted = set()  # (flavor, key) allow-list entries matched to a real enumerated pair
+
+    root_skill_scripts = _enumerate_skill_scripts(root)
+
+    # ── root ↔ claude-code (identical relative path) ────────────────────
+    cc_root = os.path.join(root, "claude-code")
+    if os.path.isdir(cc_root):
+        cc_scripts = _enumerate_skill_scripts(cc_root)
+        for relp, root_path in sorted(root_skill_scripts.items()):
+            if relp not in cc_scripts:
+                continue  # presence gaps are flavor-parity's concern, not this check's
+            bn_key = ("claude-code", os.path.basename(relp))
+            relp_key = ("claude-code", relp)
+            if bn_key in _allow_set:
+                consulted.add(bn_key)
+            if relp_key in _allow_set:
+                consulted.add(relp_key)
+            if bn_key in _allow_set or relp_key in _allow_set:
+                continue
+            if open(root_path, errors="ignore").read() != open(cc_scripts[relp], errors="ignore").read():
+                findings.append(
+                    f"script differs root vs claude-code (undocumented drift): {relp}")
+
+    # ── root ↔ copilot / root ↔ codex (basename match against flat scripts/) ──
+    for flavor, scripts_dir in (("copilot", os.path.join(root, "copilot", "scripts")),
+                                 ("codex", os.path.join(root, "codex", "scripts"))):
+        flavor_scripts = _enumerate_flat_scripts(scripts_dir)
+        if not flavor_scripts:
+            continue
+        for bn, flavor_path in sorted(flavor_scripts.items()):
+            match = None
+            for relp, root_path in root_skill_scripts.items():
+                if os.path.basename(relp) == bn:
+                    match = root_path
+                    break
+            if match is None:
+                continue  # no root skill script of this name — not a mirror pair
+            key = (flavor, bn)
+            if key in _allow_set:
+                consulted.add(key)
+                continue
+            if open(match, errors="ignore").read() != open(flavor_path, errors="ignore").read():
+                findings.append(
+                    f"script differs root vs {flavor} (undocumented drift): {bn}")
+
+    # ── dead-allowlist-entry detection ───────────────────────────────────
+    # Only meaningful when at least one flavor tree is present this run —
+    # a bare root checkout (no claude-code/copilot/codex dirs) would trivially
+    # flag every entry as "unmatched" for a reason unrelated to staleness.
+    any_flavor_present = os.path.isdir(cc_root) or any(
+        os.path.isdir(os.path.join(root, f, "scripts")) for f in ("copilot", "codex"))
+    if any_flavor_present:
+        for flavor, key in sorted(_allow_set - consulted):
+            findings.append(
+                f"dead allowlist entry: ({flavor!r}, {key!r}) matches no "
+                f"enumerated mirrored-script pair — prune it or verify the "
+                f"target file's real name/location")
+
+    return findings
+
+
+# ── Check 5d: ported-pair presence ───────────────────────────────────────
+# codex has no PreToolUse-hook system like Claude Code, so the workflow's
+# guard rules are deliberately REIMPLEMENTED (not mirrored byte-for-byte) as
+# `codex/.codex/hooks/*.py` — a different language, a different runtime
+# shape. Content drift between a root .sh guard and its codex .py port is
+# NOT machine-checkable (see doc-assurance-design.md §Mirrored-script parity
+# limitation); this check only verifies each documented PORTED_PAIR's codex
+# side still exists — a *presence* regression (a root hook whose codex port
+# existed and then vanished) would mean the guard silently stopped being
+# enforced in that flavor.
+#
+# Each tuple is (root .claude/hooks/ basename, codex .codex/hooks/ basename).
+# NOT every root hook has (or is meant to have) a codex port — worktree-guard,
+# stealth-guard, autonomy-allow, and bundled-sync-guard are documented,
+# intentional non-ports (codex/git-hooks/README.md §Not enforced here); they
+# are deliberately absent from this table so their absence is never a finding.
+PORTED_PAIRS = (
+    ("protected-branch-guard.sh", "protected-branch-guard.py"),
+    ("push-guard.sh", "push-guard.py"),
+    ("release-plan-guard.sh", "release-plan-guard.py"),
+    ("worktree-brief.sh", "session-start.py"),
+)
+
+
+def check_ported_pair_presence(root: str) -> list:
+    """For each documented (root-hook, codex-port) pair in PORTED_PAIRS,
+    verify both sides still exist. A root hook whose codex port has
+    disappeared (or vice versa) is a presence-regression finding — content
+    drift itself is out of scope (see module docstring)."""
+    findings = []
+    root_hooks_dir = os.path.join(root, ".claude", "hooks")
+    codex_hooks_dir = os.path.join(root, "codex", ".codex", "hooks")
+    if not os.path.isdir(codex_hooks_dir):
+        return findings  # no codex flavor present (consumer-mode or non-monorepo)
+    for root_name, codex_name in PORTED_PAIRS:
+        root_path = os.path.join(root_hooks_dir, root_name)
+        codex_path = os.path.join(codex_hooks_dir, codex_name)
+        root_exists = os.path.isfile(root_path)
+        codex_exists = os.path.isfile(codex_path)
+        if root_exists and not codex_exists:
+            findings.append(
+                f"ported-pair regression: .claude/hooks/{root_name} has no "
+                f"codex/.codex/hooks/{codex_name} port (previously tracked)")
+        elif codex_exists and not root_exists:
+            findings.append(
+                f"ported-pair regression: codex/.codex/hooks/{codex_name} "
+                f"has no .claude/hooks/{root_name} counterpart (previously tracked)")
+    return findings
+
+
+# ── Check 6: skill / always-loaded size budget ───────────────────────────
+def check_skill_budget(root: str) -> list:
     findings = []
     for p in sorted(glob.glob(f"{root}/.claude/skills/*/SKILL.md")):
         n = os.path.getsize(p)
@@ -847,7 +1431,7 @@ def _extract_headings(content):
     return slugs
 
 
-def check_relative_links(docs_dir, repo_root):
+def check_relative_links(docs_dir: str, repo_root: str) -> list:
     """Check 7: relative-links enforcement (repo-wide + docs-scoped).
 
     A. Absolute internal path rejection (repo-wide): any markdown link whose
@@ -945,7 +1529,61 @@ def _is_hierarchy_exempt(basename):
     return False
 
 
-def check_hierarchy(docs_dir):
+def _build_doc_graph(docs_dir):
+    """Walk docs/**/*.md and build the reachability link graph.
+
+    Shared by check_hierarchy and the documentation-portal generator (the
+    portal-design.md rule: "reuse check_hierarchy's graph — don't re-parse
+    from scratch"). Returns (all_docs, reachable, edges):
+      all_docs  — normalized absolute paths of every docs/**/*.md file.
+      reachable — the subset reachable via relative .md links, BFS from
+                  docs/README.md (root always included, even if absent).
+      edges     — dict: doc path -> sorted list of resolved target doc paths
+                  it links to (only targets that exist on disk).
+    """
+    root_readme = os.path.normpath(os.path.join(docs_dir, "README.md"))
+
+    all_docs = set()
+    for p in glob.glob(f"{docs_dir}/**/*.md", recursive=True):
+        if "/.git/" not in p:
+            all_docs.add(os.path.normpath(p))
+
+    edges = {}
+    reachable = set()
+    queue = [root_readme]
+    reachable.add(root_readme)
+    visited_for_edges = set()
+    while queue:
+        current = queue.pop()
+        if current in visited_for_edges:
+            continue
+        visited_for_edges.add(current)
+        try:
+            content = open(current).read()
+        except Exception:
+            continue
+        stripped = _strip_code(content)
+        base = os.path.dirname(current)
+        targets = []
+        for m in _LINK_TARGET_RE.finditer(stripped):
+            t = m.group(1).strip()
+            if t.startswith(("http://", "https://", "#", "mailto:")):
+                continue
+            path_part = t.split("#", 1)[0].split("?", 1)[0]
+            if not path_part or not path_part.endswith(".md"):
+                continue
+            target = os.path.normpath(os.path.join(base, path_part))
+            if os.path.exists(target):
+                targets.append(target)
+                if target not in reachable:
+                    reachable.add(target)
+                    queue.append(target)
+        edges[current] = sorted(set(targets))
+
+    return all_docs, reachable, edges
+
+
+def check_hierarchy(docs_dir: str) -> list:
     """Check 8: hierarchy reachability, breadcrumb presence, per-tier index.
 
     1. Reachability from docs/README.md root via relative links.
@@ -965,35 +1603,8 @@ def check_hierarchy(docs_dir):
         findings.append("run --write-map to generate docs root map")
         # Continue anyway — hierarchy can still be checked
 
-    # Collect all docs/**/*.md files
-    all_docs = set()
-    for p in glob.glob(f"{docs_dir}/**/*.md", recursive=True):
-        if "/.git/" not in p:
-            all_docs.add(os.path.normpath(p))
-
-    # 1. Reachability: BFS/DFS from docs/README.md following relative .md links
-    reachable = set()
-    queue = [os.path.normpath(root_readme)]
-    reachable.add(os.path.normpath(root_readme))
-    while queue:
-        current = queue.pop()
-        try:
-            content = open(current).read()
-        except Exception:
-            continue
-        stripped = _strip_code(content)
-        base = os.path.dirname(current)
-        for m in _LINK_TARGET_RE.finditer(stripped):
-            t = m.group(1).strip()
-            if t.startswith(("http://", "https://", "#", "mailto:")):
-                continue
-            path_part = t.split("#", 1)[0].split("?", 1)[0]
-            if not path_part or not path_part.endswith(".md"):
-                continue
-            target = os.path.normpath(os.path.join(base, path_part))
-            if os.path.exists(target) and target not in reachable:
-                reachable.add(target)
-                queue.append(target)
+    # Collect all docs/**/*.md files + reachability graph (shared helper).
+    all_docs, reachable, _edges = _build_doc_graph(docs_dir)
 
     # Emit orphan findings for unreachable non-exempt docs
     for p in sorted(all_docs - reachable):
@@ -1049,10 +1660,497 @@ def check_hierarchy(docs_dir):
     return findings
 
 
+# ── Documentation portal (docs/documentation.html) ──────────────────────
+# Generated, never hand-edited — see docs-portal-design.md. Reuses
+# _build_doc_graph (the same reachability graph check_hierarchy builds) so
+# the portal is derived from a single parse pass, not a second traversal.
+
+PORTAL_REL_PATH = "docs/documentation.html"
+
+# Portal-generation constants.
+_PORTAL_EXCERPT_WORDS = 40   # search-index excerpt length (first-N-words)
+_PORTAL_HEADING_RE = re.compile(r"^(#{1,6})[ \t]+(.*)$")
+_PORTAL_UL_RE = re.compile(r"^[ \t]*[-*][ \t]+(.*)$")
+_PORTAL_OL_RE = re.compile(r"^[ \t]*\d+\.[ \t]+(.*)$")
+_PORTAL_TABLE_SEP_RE = re.compile(r"^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)+\|?\s*$")
+_PORTAL_FENCE_RE = re.compile(r"^```")
+_PORTAL_INLINE_CODE_RE = re.compile(r"`([^`]+)`")
+_PORTAL_LINK_RE = re.compile(r"\[([^\]]+)\]\(([^)]+)\)")
+_PORTAL_BOLD_RE = re.compile(r"\*\*([^*]+)\*\*")
+_PORTAL_ITALIC_RE = re.compile(r"(?<!\*)\*([^*]+)\*(?!\*)")
+
+
+def _portal_slug(docs_dir, path):
+    """Stable per-page anchor id derived from the doc's docs/-relative path."""
+    rp = os.path.relpath(path, docs_dir).replace(os.sep, "/")
+    return "doc-" + re.sub(r"[^a-zA-Z0-9]+", "-", rp).strip("-").lower()
+
+
+def _portal_title(path, content):
+    """First heading in the doc, else the basename, as the page/nav title."""
+    for line in content.splitlines():
+        m = _PORTAL_HEADING_RE.match(line.strip())
+        if m:
+            return _html_escape(m.group(2).strip())
+    return _html_escape(os.path.basename(path))
+
+
+def _html_escape(text):
+    return (text.replace("&", "&amp;").replace("<", "&lt;")
+                .replace(">", "&gt;").replace('"', "&quot;"))
+
+
+def _portal_plain_excerpt(content, n_words=_PORTAL_EXCERPT_WORDS):
+    """Plain-text excerpt (first N words) for the search index, headings/markup stripped."""
+    body = _strip_code(content)
+    body = re.sub(r"^#{1,6}\s+", "", body, flags=re.M)
+    body = re.sub(r"[>*_`#|-]", " ", body)
+    body = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", body)
+    words = body.split()
+    return " ".join(words[:n_words])
+
+
+def _portal_inline_md(text, link_resolver):
+    """Render inline markdown spans: links, bold, italic, inline code. Escapes HTML first."""
+    text = _html_escape(text)
+
+    def _link_sub(m):
+        label, target = m.group(1), m.group(2).strip()
+        href = link_resolver(target)
+        return f'<a href="{_html_escape(href)}">{label}</a>'
+
+    text = _PORTAL_LINK_RE.sub(_link_sub, text)
+    text = _PORTAL_INLINE_CODE_RE.sub(r"<code>\1</code>", text)
+    text = _PORTAL_BOLD_RE.sub(r"<strong>\1</strong>", text)
+    text = _PORTAL_ITALIC_RE.sub(r"<em>\1</em>", text)
+    return text
+
+
+def _md_to_html(content, link_resolver):
+    """Minimal stdlib markdown→HTML converter: headers, lists, tables, code
+    fences, links, bold/italic/inline-code. Covers the subset Grimoire docs
+    actually use (per docs-portal-design.md — no exotic markdown extensions).
+
+    link_resolver(target) -> href is called for every markdown link target so
+    the caller can rewrite doc-relative .md links into in-page anchors.
+    """
+    out = []
+    lines = content.splitlines()
+    i, n = 0, len(lines)
+    in_ul = in_ol = in_table = in_p = False
+
+    def _close_all():
+        nonlocal in_ul, in_ol, in_table, in_p
+        if in_ul:
+            out.append("</ul>")
+            in_ul = False
+        if in_ol:
+            out.append("</ol>")
+            in_ol = False
+        if in_table:
+            out.append("</table>")
+            in_table = False
+        if in_p:
+            out.append("</p>")
+            in_p = False
+
+    while i < n:
+        line = lines[i]
+
+        # Fenced code block: copy verbatim (escaped) until closing fence.
+        if _PORTAL_FENCE_RE.match(line.strip()):
+            _close_all()
+            out.append("<pre><code>")
+            i += 1
+            while i < n and not _PORTAL_FENCE_RE.match(lines[i].strip()):
+                out.append(_html_escape(lines[i]))
+                i += 1
+            out.append("</code></pre>")
+            i += 1  # skip closing fence
+            continue
+
+        stripped = line.strip()
+
+        if not stripped:
+            _close_all()
+            i += 1
+            continue
+
+        m = _PORTAL_HEADING_RE.match(stripped)
+        if m:
+            _close_all()
+            level = len(m.group(1))
+            out.append(f"<h{level}>{_portal_inline_md(m.group(2).strip(), link_resolver)}</h{level}>")
+            i += 1
+            continue
+
+        # Table: a header row followed by a separator row (|---|---|).
+        if (not in_table and "|" in stripped and i + 1 < n
+                and _PORTAL_TABLE_SEP_RE.match(lines[i + 1].strip())):
+            _close_all()
+            headers = [c.strip() for c in stripped.strip("|").split("|")]
+            out.append("<table><thead><tr>")
+            out.extend(f"<th>{_portal_inline_md(h, link_resolver)}</th>" for h in headers)
+            out.append("</tr></thead><tbody>")
+            i += 2  # header + separator
+            while i < n and lines[i].strip().startswith("|"):
+                cells = [c.strip() for c in lines[i].strip().strip("|").split("|")]
+                out.append("<tr>" + "".join(
+                    f"<td>{_portal_inline_md(c, link_resolver)}</td>" for c in cells) + "</tr>")
+                i += 1
+            out.append("</tbody></table>")
+            continue
+
+        m = _PORTAL_UL_RE.match(line)
+        if m:
+            if not in_ul:
+                _close_all()
+                out.append("<ul>")
+                in_ul = True
+            out.append(f"<li>{_portal_inline_md(m.group(1), link_resolver)}</li>")
+            i += 1
+            continue
+
+        m = _PORTAL_OL_RE.match(line)
+        if m:
+            if not in_ol:
+                _close_all()
+                out.append("<ol>")
+                in_ol = True
+            out.append(f"<li>{_portal_inline_md(m.group(1), link_resolver)}</li>")
+            i += 1
+            continue
+
+        if stripped.startswith(">"):
+            _close_all()
+            quote = stripped.lstrip(">").strip()
+            out.append(f"<blockquote>{_portal_inline_md(quote, link_resolver)}</blockquote>")
+            i += 1
+            continue
+
+        # Plain paragraph text (accumulate consecutive lines).
+        if not in_p:
+            _close_all()
+            out.append("<p>")
+            in_p = True
+        else:
+            out.append("<br>")
+        out.append(_portal_inline_md(stripped, link_resolver))
+        i += 1
+
+    _close_all()
+    return "\n".join(out)
+
+
+def _build_portal_nav_tree(docs_dir, all_docs):
+    """Group docs/**/*.md paths by tier (immediate subdir under docs/), like
+    _build_nested_map, so the portal nav mirrors the docs-map grouping."""
+    top_level = []
+    groups = {}
+    for p in sorted(all_docs):
+        rp = os.path.relpath(p, docs_dir).replace(os.sep, "/")
+        if "/" not in rp:
+            top_level.append(p)
+        else:
+            subdir = rp.split("/")[0]
+            groups.setdefault(subdir, []).append(p)
+    return top_level, groups
+
+
+def build_portal(root: str) -> str:
+    """Generate the full docs/documentation.html content (string).
+
+    Deterministic: sorted iteration only, no timestamps or other
+    nondeterministic content — same input docs ⇒ byte-identical output.
+    """
+    docs_dir = os.path.join(root, "docs")
+    all_docs, _reachable, _edges = _build_doc_graph(docs_dir)
+
+    # Pre-read every doc once; derive title/slug/href from that single read.
+    docs_info = {}  # path -> {content, title, slug, rel}
+    for p in sorted(all_docs):
+        try:
+            content = open(p, encoding="utf-8").read()
+        except Exception:
+            content = ""
+        rp = os.path.relpath(p, docs_dir).replace(os.sep, "/")
+        docs_info[p] = {
+            "content": content,
+            "title": _portal_title(p, content),
+            "slug": _portal_slug(docs_dir, p),
+            "rel": rp,
+        }
+
+    def _make_link_resolver(current_path):
+        base = os.path.dirname(current_path)
+
+        def _resolve(target):
+            if target.startswith(("http://", "https://", "mailto:")):
+                return target
+            if target.startswith("#"):
+                return target
+            path_part, _, anchor = target.partition("#")
+            if not path_part:
+                return "#" + (anchor or "")
+            # Every doc is inlined as one flat page at docs/documentation.html,
+            # so any relative target must be re-based from the *portal's*
+            # location (docs_dir), not from current_path's original directory
+            # — otherwise a link like docs/design/README.md's "../../.claude/…"
+            # (correct relative to docs/design/) would resolve one level too
+            # far up once inlined at docs/documentation.html.
+            abs_target = os.path.normpath(os.path.join(base, path_part))
+            if path_part.endswith(".md") and abs_target in docs_info:
+                return "#" + docs_info[abs_target]["slug"]
+            if os.path.exists(abs_target):
+                rebased = os.path.relpath(abs_target, docs_dir).replace(os.sep, "/")
+                return rebased + (("#" + anchor) if anchor else "")
+            return target  # unresolved — leave original (dead-link check catches it)
+
+        return _resolve
+
+    # ── Nav tree (sorted, mirrors _build_nested_map's grouping) ──────────
+    top_level, groups = _build_portal_nav_tree(docs_dir, all_docs)
+    nav_parts = ['<nav id="portal-nav">', '<ul class="portal-tree">']
+    if top_level:
+        nav_parts.append('<li class="portal-tier"><span class="portal-tier-label">docs/</span><ul>')
+        for p in sorted(top_level, key=lambda p: docs_info[p]["rel"]):
+            info = docs_info[p]
+            nav_parts.append(f'<li><a href="#{info["slug"]}">{info["title"]}</a></li>')
+        nav_parts.append("</ul></li>")
+    for subdir in sorted(groups.keys()):
+        nav_parts.append(f'<li class="portal-tier"><span class="portal-tier-label">{_html_escape(subdir)}/</span><ul>')
+        for p in sorted(groups[subdir], key=lambda p: docs_info[p]["rel"]):
+            info = docs_info[p]
+            nav_parts.append(f'<li><a href="#{info["slug"]}">{info["title"]}</a></li>')
+        nav_parts.append("</ul></li>")
+    nav_parts.append("</ul></nav>")
+    nav_html = "\n".join(nav_parts)
+
+    # ── Content (every doc rendered inline, sorted by relative path) ─────
+    content_parts = ['<main id="portal-content">']
+    search_index = []
+    for p in sorted(all_docs, key=lambda p: docs_info[p]["rel"]):
+        info = docs_info[p]
+        resolver = _make_link_resolver(p)
+        body_html = _md_to_html(info["content"], resolver)
+        content_parts.append(
+            f'<article id="{info["slug"]}" class="portal-doc" data-path="{_html_escape(info["rel"])}">'
+            f'<h1 class="portal-doc-title">{info["title"]}</h1>\n{body_html}\n</article>'
+        )
+        search_index.append({
+            "title": info["title"],
+            "path": info["rel"],
+            "slug": info["slug"],
+            "excerpt": _portal_plain_excerpt(info["content"]),
+        })
+    content_parts.append("</main>")
+    content_html = "\n".join(content_parts)
+
+    search_index_json = json.dumps(search_index, sort_keys=True, separators=(",", ":"))
+
+    return _PORTAL_TEMPLATE.format(
+        nav=nav_html,
+        content=content_html,
+        search_index=search_index_json,
+    )
+
+
+# Single-file template: inline CSS + vanilla JS, no CDN, no build step, works
+# opened directly via file:// (offline). The leading HTML comment marks the
+# file as generated (docs-portal-design.md: "generated, never hand-edited").
+_PORTAL_TEMPLATE = """<!-- GENERATED FILE — do not hand-edit. Regenerate with:
+     python3 .claude/skills/grm-doc-assurance/doc_assurance.py --write-portal
+     Source of truth is the markdown under docs/; this HTML is a derived view. -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Grimoire documentation portal</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root {{
+    --portal-border: #d0d7de;
+    --portal-bg: #ffffff;
+    --portal-fg: #1f2328;
+    --portal-muted: #57606a;
+    --portal-accent: #0969da;
+    --portal-nav-bg: #f6f8fa;
+  }}
+  * {{ box-sizing: border-box; }}
+  body {{
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    color: var(--portal-fg);
+    background: var(--portal-bg);
+    display: flex;
+    min-height: 100vh;
+  }}
+  #portal-sidebar {{
+    width: 320px;
+    flex: 0 0 320px;
+    border-right: 1px solid var(--portal-border);
+    background: var(--portal-nav-bg);
+    padding: 1rem;
+    overflow-y: auto;
+    height: 100vh;
+    position: sticky;
+    top: 0;
+  }}
+  #portal-search {{
+    width: 100%;
+    padding: 0.5rem;
+    margin-bottom: 1rem;
+    border: 1px solid var(--portal-border);
+    border-radius: 6px;
+    font-size: 0.9rem;
+  }}
+  #portal-search-results {{
+    margin-bottom: 1rem;
+  }}
+  #portal-search-results a {{
+    display: block;
+    padding: 0.25rem 0;
+    font-size: 0.85rem;
+  }}
+  .portal-tree, .portal-tree ul {{
+    list-style: none;
+    margin: 0;
+    padding-left: 0.75rem;
+  }}
+  .portal-tree {{ padding-left: 0; }}
+  .portal-tier-label {{
+    font-weight: 600;
+    color: var(--portal-muted);
+    font-size: 0.8rem;
+    text-transform: uppercase;
+    letter-spacing: 0.02em;
+  }}
+  .portal-tree a {{
+    color: var(--portal-accent);
+    text-decoration: none;
+    font-size: 0.9rem;
+    line-height: 1.6;
+  }}
+  .portal-tree a:hover {{ text-decoration: underline; }}
+  #portal-main-wrap {{
+    flex: 1;
+    padding: 2rem 3rem;
+    max-width: 900px;
+  }}
+  .portal-doc {{
+    border-bottom: 1px solid var(--portal-border);
+    padding-bottom: 2rem;
+    margin-bottom: 2rem;
+  }}
+  .portal-doc-title {{ margin-top: 0; }}
+  .portal-doc.portal-hidden {{ display: none; }}
+  pre {{
+    background: var(--portal-nav-bg);
+    padding: 0.75rem;
+    overflow-x: auto;
+    border-radius: 6px;
+  }}
+  code {{
+    background: var(--portal-nav-bg);
+    padding: 0.1rem 0.3rem;
+    border-radius: 4px;
+  }}
+  pre code {{ background: none; padding: 0; }}
+  table {{ border-collapse: collapse; width: 100%; margin: 1rem 0; }}
+  th, td {{ border: 1px solid var(--portal-border); padding: 0.4rem 0.6rem; text-align: left; }}
+  blockquote {{
+    border-left: 3px solid var(--portal-border);
+    margin-left: 0;
+    padding-left: 1rem;
+    color: var(--portal-muted);
+  }}
+</style>
+</head>
+<body>
+<div id="portal-sidebar">
+  <input id="portal-search" type="text" placeholder="Search docs..." autocomplete="off">
+  <div id="portal-search-results"></div>
+  {nav}
+</div>
+<div id="portal-main-wrap">
+{content}
+</div>
+<script id="portal-search-index" type="application/json">{search_index}</script>
+<script>
+(function () {{
+  var indexEl = document.getElementById('portal-search-index');
+  var searchIndex = JSON.parse(indexEl.textContent || '[]');
+  var input = document.getElementById('portal-search');
+  var resultsEl = document.getElementById('portal-search-results');
+  var navEl = document.getElementById('portal-nav');
+  var docs = Array.prototype.slice.call(document.querySelectorAll('.portal-doc'));
+
+  function tokenize(s) {{
+    return (s || '').toLowerCase().split(/\\s+/).filter(Boolean);
+  }}
+
+  function matches(entry, query) {{
+    var haystack = (entry.title + ' ' + entry.path + ' ' + entry.excerpt).toLowerCase();
+    return query.every(function (tok) {{ return haystack.indexOf(tok) !== -1; }});
+  }}
+
+  function render(query) {{
+    if (!query.length) {{
+      resultsEl.innerHTML = '';
+      navEl.style.display = '';
+      docs.forEach(function (d) {{ d.classList.remove('portal-hidden'); }});
+      return;
+    }}
+    navEl.style.display = 'none';
+    var hits = searchIndex.filter(function (e) {{ return matches(e, query); }});
+    resultsEl.innerHTML = hits.map(function (e) {{
+      return '<a href="#' + e.slug + '">' + e.title + '</a>';
+    }}).join('');
+    var hitSlugs = {{}};
+    hits.forEach(function (e) {{ hitSlugs[e.slug] = true; }});
+    docs.forEach(function (d) {{
+      if (hitSlugs[d.id]) {{
+        d.classList.remove('portal-hidden');
+      }} else {{
+        d.classList.add('portal-hidden');
+      }}
+    }});
+  }}
+
+  input.addEventListener('input', function () {{
+    render(tokenize(input.value));
+  }});
+}})();
+</script>
+</body>
+</html>
+"""
+
+
+def check_portal_stale(root: str) -> list:
+    """Warn-only: docs/documentation.html is out of date vs. --write-portal output.
+
+    Regenerates the portal content in-memory and compares byte-for-byte against
+    what's on disk. Never auto-fixes (only --write-portal writes). Missing file
+    is itself a staleness finding (nothing generated yet).
+    """
+    portal_path = os.path.join(root, PORTAL_REL_PATH)
+    if not os.path.exists(portal_path):
+        return [f"{PORTAL_REL_PATH} missing — run with --write-portal"]
+    try:
+        current = open(portal_path, encoding="utf-8").read()
+    except Exception:
+        return [f"{PORTAL_REL_PATH} unreadable — run with --write-portal"]
+    fresh = build_portal(root)
+    if current != fresh:
+        return [f"{PORTAL_REL_PATH} is stale relative to docs/**/*.md — run with --write-portal to regenerate"]
+    return []
+
+
 # ── Check 9: lean-index ─────────────────────────────────────────────────
 _MD_LINK_RE = re.compile(r"\[[^\]]+\]\([^)]+\)")
 
-def check_lean_index(root):
+def check_lean_index(root: str) -> list:
     """Index pages (README.md under docs/) must be ≤ 6 KB and link-dense (≥ 3 links).
 
     Size-cap exempt: aggregating root indexes listed in LEAN_INDEX_SIZE_EXEMPT.
@@ -1079,7 +2177,7 @@ def check_lean_index(root):
 
 
 # ── Check 10: monolith-cap ───────────────────────────────────────────────
-def check_monolith_cap(root):
+def check_monolith_cap(root: str) -> list:
     """Warn when a leaf doc (non-README.md under docs/) exceeds 20 KB.
 
     Warn-only — never a hard gate.  Files in MONOLITH_CAP_EXEMPT and
@@ -1130,7 +2228,7 @@ def _skill_description(path):
     return dm.group(1).strip()
 
 
-def check_description_cap(root):
+def check_description_cap(root: str) -> list:
     """Warn when a SKILL.md frontmatter description exceeds DESCRIPTION_CAP chars.
 
     Warn-only (like skill-budget): reported and counted under --strict so the
@@ -1179,7 +2277,7 @@ def _anti_patterns_section_bytes(path):
     return len(txt[m.start():end].encode("utf-8"))
 
 
-def check_anti_patterns(root):
+def check_anti_patterns(root: str) -> list:
     """Warn when a SKILL.md ## Anti-patterns section exceeds ANTI_PATTERNS_CAP bytes.
 
     Warn-only (like skill-budget): reported and counted under --strict.
@@ -1196,6 +2294,132 @@ def check_anti_patterns(root):
                 f"(cap ~5 bullets / move to reference.md)"
             )
     return findings
+
+
+# ── Check 16: product-readme-present ──────────────────────────────────────
+# Fingerprint of the unmodified golden-seed scaffold README
+# (claude-code/README.md) — a fresh, never-customized project's root README
+# still carries this exact title + section, describing the framework instead
+# of the product. Hardcoded like other check fingerprints in this file (e.g.
+# DOCS_PARITY_ALLOW) rather than read from claude-code/README.md at runtime,
+# so the check works standalone in a consumer project that has no claude-code/
+# flavor directory at all.
+SCAFFOLD_README_TITLE = "# Claude Code Scaffold"
+SCAFFOLD_README_SECTION = "## What's included"
+
+
+def _is_scaffold_readme(content):
+    """True when *content* is the unmodified generic scaffold README.
+
+    Matches on the golden-seed title line (exact, ignoring surrounding
+    whitespace) AND the distinguishing section heading — both must be present
+    so a product README that merely mentions "Claude Code" in prose is never
+    misflagged.
+    """
+    has_title = bool(re.search(rf"^{re.escape(SCAFFOLD_README_TITLE)}\s*$", content, re.M))
+    has_section = SCAFFOLD_README_SECTION in content
+    return has_title and has_section
+
+
+def check_product_readme_present(root: str) -> list:
+    """Root README.md must exist AND not be the unmodified scaffold README.
+
+    Deterministic, report-only by default (fails only the --strict gate, like
+    every other check in this file). A missing README fails a Grimoire project
+    at the front door just as hard as the unmodified scaffold copy — both mean
+    a visitor lands on framework boilerplate (or nothing) instead of product
+    content.
+    """
+    findings = []
+    readme_path = os.path.join(root, "README.md")
+    if not os.path.exists(readme_path):
+        findings.append(
+            "README.md missing at project root — every product needs a "
+            "front-door README describing what it does"
+        )
+        return findings
+    content = open(readme_path, encoding="utf-8").read()
+    if _is_scaffold_readme(content):
+        findings.append(
+            'README.md is the unmodified generic scaffold README ("Claude Code '
+            'Scaffold") — replace it with product-specific content describing '
+            "what this project is and does"
+        )
+    return findings
+
+
+# ── Check 17: version-claim-freshness ─────────────────────────────────────
+# README/CHANGELOG-class docs commonly quote the project's own version in
+# prose ("at v3.14", headline banners, feature lists dated by version) and
+# that prose rots the moment a release ships without touching those files —
+# unlike docs/version-history.md, which the release gate refuses to let rot.
+# This check flags any such version claim that is >= 1 minor behind the
+# manifest's current version; remediation is to *remove* the claim from prose
+# in favor of a link to docs/version-history.md (the one place versions never
+# go stale), not to chase every claim on every release.
+VERSION_CLAIM_CLASS_FILES = ("README.md", "CHANGELOG.md", "docs/changelog.md")
+_VERSION_CLAIM_RE = re.compile(r"\bv(\d+)\.(\d+)(?:\.\d+)?\b")
+
+
+def _read_manifest_version(root):
+    """Read the project's own version (framework-version) as an (major, minor) tuple.
+
+    Returns None if grimoire-config.json is absent/unreadable/has no usable
+    version — the check then no-ops rather than guessing.
+    """
+    cfg_path = os.path.join(root, ".claude", "grimoire-config.json")
+    if not os.path.exists(cfg_path):
+        return None
+    try:
+        cfg = json.load(open(cfg_path))
+        fw = cfg.get("framework-version", "").lstrip("v")
+        parts = fw.split(".")
+        return (int(parts[0]), int(parts[1]))
+    except (ValueError, AttributeError, IndexError, TypeError):
+        return None
+
+
+def check_version_claim_freshness(root: str) -> list:
+    """Flag a README/CHANGELOG-class doc whose NEWEST version-string claim is
+    >= 1 minor behind the manifest's current version.
+
+    Scans a fixed, deterministic file set (VERSION_CLAIM_CLASS_FILES) for
+    version strings matching the project's own vX.Y(.Z) pattern and takes the
+    highest one found in each file. A changelog legitimately lists many old
+    version headers (that is its job), so per-mention flagging would fire on
+    every historical entry; what actually indicates rot — an example like
+    "CHANGELOG.md ~26 versions behind" — is the newest entry in the doc
+    lagging the manifest. One finding per stale file.
+    No manifest version readable -> no findings (the check degrades to a
+    no-op rather than guessing at a pattern).
+    """
+    findings = []
+    current = _read_manifest_version(root)
+    if current is None:
+        return findings
+    cur_major, cur_minor = current
+    for relpath in VERSION_CLAIM_CLASS_FILES:
+        p = os.path.join(root, relpath)
+        if not os.path.exists(p):
+            continue
+        content = _strip_code(open(p, encoding="utf-8").read())
+        found_versions = [(int(m.group(1)), int(m.group(2)))
+                           for m in _VERSION_CLAIM_RE.finditer(content)]
+        if not found_versions:
+            continue
+        newest = max(found_versions)
+        if newest >= current:
+            continue
+        if newest[0] == cur_major:
+            gap = f"{cur_minor - newest[1]} minor(s)"
+        else:
+            gap = "a major version"
+        findings.append(
+            f"{relpath}: newest version claim v{newest[0]}.{newest[1]} is {gap} "
+            f"behind current v{cur_major}.{cur_minor} — remove hardcoded version "
+            f"claims from prose and link docs/version-history.md instead"
+        )
+    return sorted(findings)
 
 
 # ── Dial: read doc-hierarchy enforcer value from grimoire-config.json ────
@@ -1217,7 +2441,7 @@ def _read_hierarchy_dial(root):
 
 
 # ── Self-test ────────────────────────────────────────────────────────────
-def self_test():
+def self_test() -> tuple:
     """In-memory unit tests for check_design_layout, check_relative_links,
     check_hierarchy, and check_flavor_parity (WH-7 three-flavor docs parity).
 
@@ -1230,6 +2454,10 @@ def self_test():
     description-cap: over-cap description flagged, under-cap clean.
     anti-patterns: oversized section flagged, small clean, reference-stub
     bullet never measured.
+    design-index generation: house-layout parsing (title + Motivation opener),
+    house-layout-missing docs reported not silently skipped, curated "##"
+    sections in docs/grimoire/design/README.md survive generation, idempotent
+    re-run is byte-identical, staleness detection on missing/new docs.
     Returns (passed, failed, lines).
     """
     import tempfile, os as _os, shutil
@@ -1666,7 +2894,7 @@ def self_test():
         _sh26.rmtree(t26, ignore_errors=True)
     cases.append(("anti-patterns reference-stub bullet is never measured", len(f26) == 0))
 
-    # ── Consumer-mode regression tests (#149/#155/#164/#167) ─────────────
+    # ── Consumer-mode regression tests ────────────────────────────────────
     # 27. find_root on a no-flavor root (CLAUDE.md only, no claude-code/ or copilot/)
     #     must return consumer_mode=True and not raise SystemExit.
     tmp_consumer = _tmpmod.mkdtemp()
@@ -1693,7 +2921,7 @@ def self_test():
     finally:
         shutil.rmtree(tmp_fw, ignore_errors=True)
 
-    # ── Noir paradigm strict-gate detect regression (#171) ────────────────
+    # ── Noir paradigm strict-gate detect regression ───────────────────────
     # 29. Simulate a Noir paradigm install: the installed grm-release-phase-merge
     #     SKILL.md (sourced from .claude/paradigms/noir/release-phase-merge-SKILL.md)
     #     must contain the strict-gate text so the doc-assurance-strict-gate
@@ -1723,7 +2951,7 @@ def self_test():
 
     # 30. check_release_consistency on a downstream project missing the
     #     framework release-surface docs must report a finding, not raise
-    #     FileNotFoundError (#183 consumer-mode robustness).
+    #     FileNotFoundError (consumer-mode robustness).
     tmp_dl = _tmpmod.mkdtemp()
     try:
         _os.makedirs(_os.path.join(tmp_dl, "docs"), exist_ok=True)
@@ -1737,6 +2965,477 @@ def self_test():
     finally:
         shutil.rmtree(tmp_dl, ignore_errors=True)
 
+    # ── Documentation portal self-tests (docs-portal-design.md) ─────────
+    # Small fixture tree: docs/README.md root + docs/design/foo-design.md,
+    # a two-doc corpus exercising nav grouping, link rewriting, and search.
+    def _portal_fixture():
+        d = _tmpmod.mkdtemp()
+        docs = _os.path.join(d, "docs")
+        design = _os.path.join(docs, "design")
+        _os.makedirs(design, exist_ok=True)
+        open(_os.path.join(docs, "README.md"), "w").write(
+            "# Docs Root\n\n"
+            "- [Foo design](design/foo-design.md)\n\n"
+            "<!-- docs-map:begin -->\n<!-- docs-map:end -->\n"
+        )
+        open(_os.path.join(design, "foo-design.md"), "w").write(
+            "> **Up:** [↑ Design index](../README.md)\n\n"
+            "# Foo widget design\n\n"
+            "## Motivation\n\nBecause widgets need a home for the sprocket logic.\n\n"
+            "## Scope\n\n- alpha\n- beta\n\n"
+            "## Design\n\nSee the [root](../README.md) for context.\n"
+        )
+        return d
+
+    # 31. --write-portal generation from a small fixture tree: every doc is
+    #     rendered as an <article>, and the root's own link to foo-design.md
+    #     is rewritten to an in-page anchor (not left as a relative .md href).
+    tmp_p31 = _portal_fixture()
+    try:
+        html31 = build_portal(tmp_p31)
+        has_articles = html31.count("<article") == 2
+        foo_slug = _portal_slug(_os.path.join(tmp_p31, "docs"),
+                                 _os.path.join(tmp_p31, "docs", "design", "foo-design.md"))
+        rewritten = f'href="#{foo_slug}"' in html31
+        cases.append(("--write-portal fixture: both docs rendered as articles", has_articles))
+        cases.append(("--write-portal fixture: intra-docs .md link rewritten to in-page anchor",
+                       rewritten))
+    finally:
+        shutil.rmtree(tmp_p31, ignore_errors=True)
+
+    # 32. Idempotency: regenerating from the same fixture twice is byte-identical.
+    tmp_p32 = _portal_fixture()
+    try:
+        h1 = build_portal(tmp_p32)
+        h2 = build_portal(tmp_p32)
+        cases.append(("--write-portal fixture regeneration is byte-identical", h1 == h2))
+    finally:
+        shutil.rmtree(tmp_p32, ignore_errors=True)
+
+    # 33. Staleness detection: missing portal file is flagged; writing the
+    #     current generated content makes check_portal_stale silent.
+    tmp_p33 = _portal_fixture()
+    try:
+        f33_missing = check_portal_stale(tmp_p33)
+        cases.append(("check_portal_stale fires when docs/documentation.html is missing",
+                       len(f33_missing) == 1 and "missing" in f33_missing[0]))
+
+        portal_path = _os.path.join(tmp_p33, PORTAL_REL_PATH)
+        open(portal_path, "w", encoding="utf-8").write(build_portal(tmp_p33))
+        f33_fresh = check_portal_stale(tmp_p33)
+        cases.append(("check_portal_stale is silent when the portal is current",
+                       len(f33_fresh) == 0))
+
+        # Touch a doc after the portal was generated — now stale.
+        open(_os.path.join(tmp_p33, "docs", "design", "foo-design.md"), "a").write(
+            "\n## Acceptance\n\n- [ ] done\n"
+        )
+        f33_stale = check_portal_stale(tmp_p33)
+        cases.append(("check_portal_stale fires once a doc changes after generation",
+                       len(f33_stale) == 1 and "stale" in f33_stale[0]))
+    finally:
+        shutil.rmtree(tmp_p33, ignore_errors=True)
+
+    # 34. Search-index lookup: the generated JSON index contains an entry for
+    #     the fixture's foo-design.md with the expected title and path.
+    tmp_p34 = _portal_fixture()
+    try:
+        html34 = build_portal(tmp_p34)
+        m = re.search(
+            r'<script id="portal-search-index" type="application/json">(.*?)</script>',
+            html34, re.S)
+        index = json.loads(m.group(1)) if m else []
+        hit = next((e for e in index if e.get("path") == "design/foo-design.md"), None)
+        cases.append(("search index contains an entry for design/foo-design.md",
+                       hit is not None))
+        cases.append(("search index entry title matches the doc's first heading",
+                       hit is not None and hit.get("title") == "Foo widget design"))
+    finally:
+        shutil.rmtree(tmp_p34, ignore_errors=True)
+
+    # ── Design-doc index generation self-tests (maintenance-automation-design.md §1) ──
+    def _design_index_fixture():
+        """Fixture repo root with docs/design/ (one good doc, one house-layout-
+        missing doc) and docs/grimoire/design/ (one good doc), plus a pre-
+        existing docs/grimoire/design/README.md carrying curated prose the
+        generated region must not disturb."""
+        d = _tmpmod.mkdtemp()
+        design = _os.path.join(d, "docs", "design")
+        gdesign = _os.path.join(d, "docs", "grimoire", "design")
+        _os.makedirs(design, exist_ok=True)
+        _os.makedirs(gdesign, exist_ok=True)
+        open(_os.path.join(design, "alpha-design.md"), "w").write(
+            "# Alpha widget\n\n"
+            "> **Up:** [↑ Design index](README.md)\n\n"
+            "## Motivation\n\n"
+            "Alpha needs a home for the sprocket logic.\n\n"
+            "## Scope\n\nStuff.\n"
+        )
+        open(_os.path.join(design, "broken-design.md"), "w").write(
+            "No title heading here.\n\n## Scope\n\nStuff, but no Motivation.\n"
+        )
+        open(_os.path.join(gdesign, "beta-design.md"), "w").write(
+            "# Beta gadget\n\n"
+            "## Motivation\n\n"
+            "Beta closes the loop on gadget provisioning.\n\n"
+            "## Scope\n\nStuff.\n"
+        )
+        open(_os.path.join(gdesign, "README.md"), "w").write(
+            "# Grimoire design docs\n\n"
+            "## Charter deliverables\n\n"
+            "- [beta-design.md](beta-design.md) — hand-curated entry.\n\n"
+            "## See also\n\n- [Grimoire index](../README.md)\n"
+        )
+        return d
+
+    # 35. build_design_index_table: the well-formed doc gets a row; the
+    #     house-layout-missing doc is excluded from the table AND reported.
+    tmp_d35 = _design_index_fixture()
+    try:
+        table_lines, findings35 = build_design_index_table(tmp_d35, "docs/design")
+        table_text = "\n".join(table_lines)
+        cases.append(("well-formed doc gets a table row", "alpha-design.md" in table_text
+                      and "Alpha widget" in table_text
+                      and "sprocket logic" in table_text))
+        cases.append(("house-layout-missing doc excluded from table", "broken-design.md" not in table_text))
+        cases.append(("house-layout-missing doc reported as a finding, not silently skipped",
+                      any("broken-design.md" in x and "missing house layout" in x for x in findings35)))
+    finally:
+        shutil.rmtree(tmp_d35, ignore_errors=True)
+
+    # 36. check_design_index_stale(write=True) preserves docs/grimoire/design/
+    #     README.md's hand-curated "## Charter deliverables" / "## See also"
+    #     prose outside the generated marker region.
+    tmp_d36 = _design_index_fixture()
+    try:
+        check_design_index_stale(tmp_d36, write=True)
+        g_readme = open(_os.path.join(tmp_d36, "docs", "grimoire", "design", "README.md")).read()
+        cases.append(("generated region markers present after --write-design-index",
+                      DESIGN_INDEX_BEGIN in g_readme and DESIGN_INDEX_END in g_readme))
+        cases.append(("hand-curated '## Charter deliverables' section survives generation",
+                      "## Charter deliverables" in g_readme))
+        cases.append(("hand-curated '## See also' section survives generation",
+                      "## See also" in g_readme))
+        cases.append(("generated table includes beta-design.md inside the markers",
+                      "beta-design.md" in g_readme.split(DESIGN_INDEX_BEGIN, 1)[1]))
+
+        d_readme = open(_os.path.join(tmp_d36, "docs", "design", "README.md")).read()
+        cases.append(("docs/design/README.md generated with alpha-design.md row",
+                      "alpha-design.md" in d_readme))
+    finally:
+        shutil.rmtree(tmp_d36, ignore_errors=True)
+
+    # 37. Idempotency: a second --write-design-index run is byte-identical
+    #     (re-running with no new docs is a no-op).
+    tmp_d37 = _design_index_fixture()
+    try:
+        check_design_index_stale(tmp_d37, write=True)
+        g_path = _os.path.join(tmp_d37, "docs", "grimoire", "design", "README.md")
+        d_path = _os.path.join(tmp_d37, "docs", "design", "README.md")
+        g1, d1 = open(g_path).read(), open(d_path).read()
+        check_design_index_stale(tmp_d37, write=True)
+        g2, d2 = open(g_path).read(), open(d_path).read()
+        cases.append(("re-running --write-design-index with no new docs is byte-identical (grimoire tier)", g1 == g2))
+        cases.append(("re-running --write-design-index with no new docs is byte-identical (design tier)", d1 == d2))
+    finally:
+        shutil.rmtree(tmp_d37, ignore_errors=True)
+
+    # 38. Staleness detection: freshly written README is clean; touching a
+    #     doc afterward (without re-running --write-design-index) goes stale;
+    #     adding a new doc also surfaces as staleness before the next write.
+    tmp_d38 = _design_index_fixture()
+    try:
+        f38_before_write = check_design_index_stale(tmp_d38, write=False)
+        cases.append(("design-index-stale fires before any README is generated",
+                      any("missing" in x for x in f38_before_write)))
+
+        check_design_index_stale(tmp_d38, write=True)
+        f38_fresh = check_design_index_stale(tmp_d38, write=False)
+        # The broken-design.md house-layout finding always surfaces (by design,
+        # never silenced); staleness findings about the README itself should not.
+        cases.append(("design-index-stale is silent on README staleness once freshly generated",
+                      not any("stale" in x for x in f38_fresh)))
+        cases.append(("design-index-stale still reports the house-layout-missing doc after a fresh write",
+                      any("broken-design.md" in x for x in f38_fresh)))
+
+        # Add a brand-new doc after generation — now stale until re-run.
+        open(_os.path.join(tmp_d38, "docs", "design", "gamma-design.md"), "w").write(
+            "# Gamma gizmo\n\n## Motivation\n\nGamma rounds out the set.\n"
+        )
+        f38_stale = check_design_index_stale(tmp_d38, write=False)
+        cases.append(("design-index-stale fires once a new doc is added", any("stale" in x for x in f38_stale)))
+    finally:
+        shutil.rmtree(tmp_d38, ignore_errors=True)
+
+    # 39. check_docs_map: a hand-curated "## Tiers" section linking child
+    #     README.md index pages (outside the <!-- docs-map:begin/end --> markers)
+    #     must NOT false-positive as a stale entry — docs_md_files() deliberately
+    #     excludes README.md from "actual" by design, so a curated link to one is
+    #     not staleness. A genuinely missing generated-region entry must still fire.
+    d, docs = _setup_tmpdir()
+    try:
+        _os.makedirs(_os.path.join(docs, "design"), exist_ok=True)
+        open(_os.path.join(docs, "design", "README.md"), "w").write("# Design tier\n")
+        foo = _os.path.join(docs, "foo.md")
+        open(foo, "w").write("# Foo\n")
+        readme = _os.path.join(docs, "README.md")
+        open(readme, "w").write(
+            "# Docs Root\n\n## Tiers\n\n- [design/](design/README.md)\n\n"
+            "<!-- docs-map:begin -->\n- [`foo.md`](foo.md)\n<!-- docs-map:end -->\n"
+        )
+        f39 = check_docs_map(d)
+        cases.append(("docs-map: curated README.md tier link is not flagged stale",
+                      not any("design/README.md" in x for x in f39)))
+
+        # Control: a genuinely missing generated-region entry still fires.
+        open(_os.path.join(docs, "bar.md"), "w").write("# Bar\n")
+        f39_missing = check_docs_map(d)
+        cases.append(("docs-map: genuinely missing generated entry still fires",
+                      any("missing entry: docs/bar.md" in x for x in f39_missing)))
+    finally:
+        shutil.rmtree(d)
+
+    # 40. mirrored-script-parity: identical root vs claude-code pair passes.
+    def _setup_mirror_tmpdir(root_scripts, cc_scripts=None, cp_scripts=None,
+                              root_mcp=None, cc_mcp=None):
+        """Write a synthetic root with .claude/skills/<sub>/<file> scripts, an
+        optional claude-code/.claude/skills mirror, and an optional copilot/scripts/
+        flat mirror. Each *_scripts arg maps 'subdir/file.py' (or 'file.py' for
+        cp_scripts) -> file content. *_mcp args map
+        '<server>/server.py' -> content under .claude/mcp-servers/. Returns the
+        temp root path."""
+        tmproot = _tmpmod.mkdtemp()
+        for relp, content in root_scripts.items():
+            fpath = _os.path.join(tmproot, ".claude", "skills", relp)
+            _os.makedirs(_os.path.dirname(fpath), exist_ok=True)
+            open(fpath, "w").write(content)
+        if cc_scripts is not None:
+            for relp, content in cc_scripts.items():
+                fpath = _os.path.join(tmproot, "claude-code", ".claude", "skills", relp)
+                _os.makedirs(_os.path.dirname(fpath), exist_ok=True)
+                open(fpath, "w").write(content)
+        if cp_scripts is not None:
+            cp_dir = _os.path.join(tmproot, "copilot", "scripts")
+            _os.makedirs(cp_dir, exist_ok=True)
+            for bn, content in cp_scripts.items():
+                open(_os.path.join(cp_dir, bn), "w").write(content)
+        if root_mcp is not None:
+            for relp, content in root_mcp.items():
+                fpath = _os.path.join(tmproot, ".claude", "mcp-servers", relp)
+                _os.makedirs(_os.path.dirname(fpath), exist_ok=True)
+                open(fpath, "w").write(content)
+        if cc_mcp is not None:
+            for relp, content in cc_mcp.items():
+                fpath = _os.path.join(tmproot, "claude-code", ".claude", "mcp-servers", relp)
+                _os.makedirs(_os.path.dirname(fpath), exist_ok=True)
+                open(fpath, "w").write(content)
+        return tmproot
+
+    tmp_m40 = _setup_mirror_tmpdir(
+        {"grm-foo/foo.py": "print('hi')\n"},
+        {"grm-foo/foo.py": "print('hi')\n"},
+    )
+    try:
+        f40 = check_mirrored_script_parity(tmp_m40, _allow_set=frozenset())
+        cases.append(("mirrored-script-parity: identical root/claude-code pair passes",
+                      len(f40) == 0))
+    finally:
+        shutil.rmtree(tmp_m40, ignore_errors=True)
+
+    # 41. Drifted (non-allow-listed) pair fails.
+    tmp_m41 = _setup_mirror_tmpdir(
+        {"grm-foo/foo.py": "print('hi')\n"},
+        {"grm-foo/foo.py": "print('bye')\n"},
+    )
+    try:
+        f41 = check_mirrored_script_parity(tmp_m41, _allow_set=frozenset())
+        cases.append(("mirrored-script-parity: drifted pair (not allow-listed) fails",
+                      any("foo.py" in x and "claude-code" in x for x in f41)))
+    finally:
+        shutil.rmtree(tmp_m41, ignore_errors=True)
+
+    # 42. Same drift, now allow-listed → passes.
+    tmp_m42 = _setup_mirror_tmpdir(
+        {"grm-foo/foo.py": "print('hi')\n"},
+        {"grm-foo/foo.py": "print('bye')\n"},
+    )
+    try:
+        f42 = check_mirrored_script_parity(tmp_m42, _allow_set=frozenset({("claude-code", "foo.py")}))
+        cases.append(("mirrored-script-parity: allow-listed drifted pair passes",
+                      len(f42) == 0))
+    finally:
+        shutil.rmtree(tmp_m42, ignore_errors=True)
+
+    # 43. Basename-matched root ↔ copilot flat scripts/ pair: drift detected.
+    tmp_m43 = _setup_mirror_tmpdir(
+        {"grm-bar/bar.py": "X = 1\n"},
+        cp_scripts={"bar.py": "X = 2\n"},
+    )
+    try:
+        f43 = check_mirrored_script_parity(tmp_m43, _allow_set=frozenset())
+        cases.append(("mirrored-script-parity: drifted root/copilot basename-matched pair fails",
+                      any("bar.py" in x and "copilot" in x for x in f43)))
+    finally:
+        shutil.rmtree(tmp_m43, ignore_errors=True)
+
+    # 44. mcp-servers/** pair drift: identical relative path under
+    # .claude/mcp-servers/ is enumerated and compared root vs claude-code, same
+    # as skills/hooks.
+    tmp_m44 = _setup_mirror_tmpdir(
+        {}, root_mcp={"grimoire-status/server.py": "PATH = 'stale'\n"},
+        cc_mcp={"grimoire-status/server.py": "PATH = 'grm-agent-status-broker'\n"},
+    )
+    try:
+        f44 = check_mirrored_script_parity(tmp_m44, _allow_set=frozenset())
+        cases.append(("mirrored-script-parity: mcp-servers root/claude-code drift detected",
+                      any("server.py" in x and "claude-code" in x for x in f44)))
+    finally:
+        shutil.rmtree(tmp_m44, ignore_errors=True)
+
+    # 44b. dead-allowlist-entry detection: an allow-list entry
+    # naming a file that doesn't exist on the claude-code side is itself
+    # flagged, even though the (identical) real pair passes.
+    tmp_m44b = _setup_mirror_tmpdir(
+        {"grm-foo/foo.py": "print('hi')\n"},
+        {"grm-foo/foo.py": "print('hi')\n"},
+    )
+    try:
+        f44b = check_mirrored_script_parity(
+            tmp_m44b, _allow_set=frozenset({("claude-code", "nonexistent_ghost.py")}))
+        cases.append(("mirrored-script-parity: dead allowlist entry detected",
+                      any("nonexistent_ghost.py" in x and "dead allowlist" in x
+                          for x in f44b)))
+    finally:
+        shutil.rmtree(tmp_m44b, ignore_errors=True)
+
+    # 45. ported-pair-presence: complete pair set passes.
+    def _setup_ported_pair_tmpdir(root_hooks, codex_hooks):
+        tmproot = _tmpmod.mkdtemp()
+        rh_dir = _os.path.join(tmproot, ".claude", "hooks")
+        _os.makedirs(rh_dir, exist_ok=True)
+        for bn in root_hooks:
+            open(_os.path.join(rh_dir, bn), "w").write("#!/bin/sh\n")
+        ch_dir = _os.path.join(tmproot, "codex", ".codex", "hooks")
+        _os.makedirs(ch_dir, exist_ok=True)
+        for bn in codex_hooks:
+            open(_os.path.join(ch_dir, bn), "w").write("#!/usr/bin/env python3\n")
+        return tmproot
+
+    tmp_p45 = _setup_ported_pair_tmpdir(
+        ["protected-branch-guard.sh", "push-guard.sh", "release-plan-guard.sh",
+         "worktree-brief.sh"],
+        ["protected-branch-guard.py", "push-guard.py", "release-plan-guard.py",
+         "session-start.py"],
+    )
+    try:
+        f45 = check_ported_pair_presence(tmp_p45)
+        cases.append(("ported-pair-presence: complete pair set passes", len(f45) == 0))
+    finally:
+        shutil.rmtree(tmp_p45, ignore_errors=True)
+
+    # 46. ported-pair-presence: codex port missing for a tracked pair fails.
+    tmp_p46 = _setup_ported_pair_tmpdir(
+        ["protected-branch-guard.sh", "push-guard.sh", "release-plan-guard.sh",
+         "worktree-brief.sh"],
+        ["protected-branch-guard.py", "push-guard.py", "release-plan-guard.py"],
+        # session-start.py (worktree-brief.sh's port) omitted → regression
+    )
+    try:
+        f46 = check_ported_pair_presence(tmp_p46)
+        cases.append(("ported-pair-presence: missing codex port detected",
+                      any("session-start.py" in x for x in f46)))
+    finally:
+        shutil.rmtree(tmp_p46, ignore_errors=True)
+
+    # 47. ported-pair-presence: no codex flavor dir at all → no findings
+    # (framework-only check skipped outside the monorepo, same as
+    # mirrored-script-parity's consumer-mode gate).
+    tmp_p47 = _tmpmod.mkdtemp()
+    _os.makedirs(_os.path.join(tmp_p47, ".claude", "hooks"), exist_ok=True)
+    try:
+        f47 = check_ported_pair_presence(tmp_p47)
+        cases.append(("ported-pair-presence: no codex dir yields zero findings",
+                      len(f47) == 0))
+    finally:
+        shutil.rmtree(tmp_p47, ignore_errors=True)
+
+    # 48. product-readme-present: no README.md at all -> finding.
+    tmp_r48 = _tmpmod.mkdtemp()
+    try:
+        f48 = check_product_readme_present(tmp_r48)
+        cases.append(("product-readme-present: missing README flagged",
+                      any("missing" in x for x in f48)))
+    finally:
+        shutil.rmtree(tmp_r48, ignore_errors=True)
+
+    # 49. product-readme-present: unmodified scaffold README -> finding.
+    tmp_r49 = _tmpmod.mkdtemp()
+    try:
+        open(_os.path.join(tmp_r49, "README.md"), "w").write(
+            "# Claude Code Scaffold\n\nA starter kit.\n\n## What's included\n\nStuff.\n"
+        )
+        f49 = check_product_readme_present(tmp_r49)
+        cases.append(("product-readme-present: scaffold README flagged",
+                      any("scaffold README" in x for x in f49)))
+    finally:
+        shutil.rmtree(tmp_r49, ignore_errors=True)
+
+    # 50. product-readme-present: real product README -> no findings.
+    tmp_r50 = _tmpmod.mkdtemp()
+    try:
+        open(_os.path.join(tmp_r50, "README.md"), "w").write(
+            "# Goon Cave\n\nA dungeon-crawler roguelike.\n"
+        )
+        f50 = check_product_readme_present(tmp_r50)
+        cases.append(("product-readme-present: real product README passes",
+                      len(f50) == 0))
+    finally:
+        shutil.rmtree(tmp_r50, ignore_errors=True)
+
+    # 51. version-claim-freshness: stale version claim in README flagged.
+    tmp_v51 = _tmpmod.mkdtemp()
+    try:
+        _os.makedirs(_os.path.join(tmp_v51, ".claude"), exist_ok=True)
+        _json_mod = __import__("json")
+        with open(_os.path.join(tmp_v51, ".claude", "grimoire-config.json"), "w") as fh:
+            _json_mod.dump({"framework-version": "v3.79"}, fh)
+        open(_os.path.join(tmp_v51, "README.md"), "w").write(
+            "# Familiar\n\nAt v1.87 this app does X.\n"
+        )
+        f51 = check_version_claim_freshness(tmp_v51)
+        cases.append(("version-claim-freshness: stale claim flagged",
+                      any("v1.87" in x and "v3.79" in x for x in f51)))
+    finally:
+        shutil.rmtree(tmp_v51, ignore_errors=True)
+
+    # 52. version-claim-freshness: current version claim -> no findings.
+    tmp_v52 = _tmpmod.mkdtemp()
+    try:
+        _os.makedirs(_os.path.join(tmp_v52, ".claude"), exist_ok=True)
+        with open(_os.path.join(tmp_v52, ".claude", "grimoire-config.json"), "w") as fh:
+            _json_mod.dump({"framework-version": "v3.79"}, fh)
+        open(_os.path.join(tmp_v52, "README.md"), "w").write(
+            "# Familiar\n\nCurrently at v3.79.\n"
+        )
+        f52 = check_version_claim_freshness(tmp_v52)
+        cases.append(("version-claim-freshness: current claim passes", len(f52) == 0))
+    finally:
+        shutil.rmtree(tmp_v52, ignore_errors=True)
+
+    # 53. version-claim-freshness: code-fenced version example is not flagged.
+    tmp_v53 = _tmpmod.mkdtemp()
+    try:
+        _os.makedirs(_os.path.join(tmp_v53, ".claude"), exist_ok=True)
+        with open(_os.path.join(tmp_v53, ".claude", "grimoire-config.json"), "w") as fh:
+            _json_mod.dump({"framework-version": "v3.79"}, fh)
+        open(_os.path.join(tmp_v53, "README.md"), "w").write(
+            "# Familiar\n\n```\nexample: v0.1\n```\n"
+        )
+        f53 = check_version_claim_freshness(tmp_v53)
+        cases.append(("version-claim-freshness: fenced example not flagged", len(f53) == 0))
+    finally:
+        shutil.rmtree(tmp_v53, ignore_errors=True)
+
     lines, passed, failed = [], 0, 0
     for label, ok in cases:
         lines.append(f"  {'PASS' if ok else 'FAIL'}: {label}")
@@ -1747,7 +3446,7 @@ def self_test():
     return passed, failed, lines
 
 
-def main():
+def main() -> None:
     args = sys.argv[1:]
     if "--self-test" in args:
         passed, failed, lines = self_test()
@@ -1757,6 +3456,8 @@ def main():
         sys.exit(1 if failed else 0)
     strict = "--strict" in args
     write = "--write-map" in args
+    write_portal = "--write-portal" in args
+    write_design_index = "--write-design-index" in args
     if "--root" in args:
         idx = args.index("--root")
         root = os.path.abspath(args[idx + 1])
@@ -1767,7 +3468,8 @@ def main():
         root, consumer_mode = find_root(".")
     if consumer_mode:
         print("doc-assurance: consumer-mode (no flavor dirs detected) — "
-              "flavor-parity, manifest-detect-hygiene, shipped-pointers skipped.")
+              "flavor-parity, manifest-detect-hygiene, shipped-pointers, "
+              "mirrored-script-parity, ported-pair-presence skipped.")
 
     # Determine dial value for check 7 + 8 (relative-links and hierarchy).
     # --strict escalates warn->block, but an explicit 'off' stays off — a project
@@ -1778,7 +3480,9 @@ def main():
 
     # Checks that require the framework monorepo layout (claude-code/ or copilot/
     # flavor dirs present).  Skipped with a notice in consumer-mode.
-    _FRAMEWORK_ONLY_CHECKS = frozenset({"flavor-parity", "manifest-detect-hygiene", "shipped-pointers"})
+    _FRAMEWORK_ONLY_CHECKS = frozenset({"flavor-parity", "manifest-detect-hygiene",
+                                         "shipped-pointers", "mirrored-script-parity",
+                                         "ported-pair-presence"})
 
     named = [a for a in args if a in CHECKS] or CHECKS
     total = 0
@@ -1794,11 +3498,24 @@ def main():
         elif c == "release-consistency": f = check_release_consistency(root)
         elif c == "manifest-detect-hygiene": f = check_manifest_detect_hygiene(root)
         elif c == "shipped-pointers":    f = check_shipped_pointers(root)
+        elif c == "mirrored-script-parity": f = check_mirrored_script_parity(root)
+        elif c == "ported-pair-presence": f = check_ported_pair_presence(root)
         elif c == "skill-budget":        f = check_skill_budget(root)
         elif c == "lean-index":          f = check_lean_index(root)
         elif c == "monolith-cap":        f = check_monolith_cap(root)
         elif c == "description-cap":     f = check_description_cap(root)
         elif c == "anti-patterns":       f = check_anti_patterns(root)
+        elif c == "product-readme-present": f = check_product_readme_present(root)
+        elif c == "version-claim-freshness": f = check_version_claim_freshness(root)
+        elif c == "portal-stale":
+            if write_portal:
+                portal_path = os.path.join(root, PORTAL_REL_PATH)
+                open(portal_path, "w", encoding="utf-8").write(build_portal(root))
+                f = []
+            else:
+                f = check_portal_stale(root)
+        elif c == "design-index-stale":
+            f = check_design_index_stale(root, write=write_design_index)
         elif c == "relative-links":
             if dial == "off":
                 print(f"[{c}] skipped (dial=off)")

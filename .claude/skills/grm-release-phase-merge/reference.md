@@ -1,10 +1,12 @@
 # release-phase-merge — reference
 
-Companion to `SKILL.md` (Supervised flavor). Contains the feature-manifest
+Companion to `SKILL.md` (shared across paradigms — `SKILL.md` itself is
+paradigm-swapped by `grm-work-paradigm-switch`). Contains the feature-manifest
 authoring step, Reporter spawn template, full telemetry invocation, and the
 tiered conflict classification for reference. The operational head (merge
-protocol, ledger tick, anti-patterns) lives in `SKILL.md`. Design authority:
-`docs/design/grimoire-release-server-design.md` (preflight engine).
+protocol, ledger tick, anti-patterns) lives in `SKILL.md`. Design rationale for
+the preflight engine lives in the upstream Grimoire repository
+(framework-internal — not shipped).
 
 ---
 
@@ -65,12 +67,111 @@ auto-fill from `grimoire-config.json` via `--config`. Graceful by contract:
 absent inputs degrade to null/zero, a missing transcript yields all-zero
 tokens, and the `|| echo` swallows any non-zero exit.
 
+**Abort path (`outcome=fail`, #345/#346).** If the loop halts before reaching
+`version/{X.Y}` → `dev` (a test failure or an unresolved conflict), use the
+sibling `telemetry_entry.py` CLI emit mode instead — it writes the same
+`run_metadata` artifact plus a small context sibling (argv/note/exit code):
+
+```bash
+python3 .claude/skills/grm-token-measure/telemetry_entry.py --emit \
+  --outcome fail --release {X.Y} --config .claude/grimoire-config.json \
+  --exit-code 1 --note "<which branch/step aborted>" \
+  || echo "telemetry_entry: emit skipped (telemetry is best-effort)"
+```
+
+This is `docs/coding-standards.md`'s `telemetry-errors` rule applied at this
+release boundary — see that doc's §Telemetry for the boundary-vs-standalone
+distinction (`telemetry_entry.py` is the same one-line opt-in a standalone
+skill script would use).
+
+---
+
+## Quality gate detail — dependency-channel conformance (3a)
+
+When a merging branch's diff touches `vendor.toml` / `vendor.lock` /
+`vendor/`, run `python3
+.claude/skills/grm-dependency-audit/dependency_channel_conformance.py --root .
+--json` (the `vendor-check` verb's implementation). It reads the same live
+`audit-gate` dial as the rest of the quality gate. Each finding is the
+normalized shape `{check,dep,channel,severity,detail,locked_sha,observed_sha}`.
+
+Under `warn` (this release's setting): file each finding via
+`grm-feedback-to-issue` (audience `internal`, labels `security` +
+`dependency-channel`, dedupe key `{channel}:{dep}:{check}`) and **proceed** —
+it never blocks a merge/release this release. The network
+"unpublished-release" check degrades gracefully (reported, never a hard
+fail). A future release can flip this sub-step to **block** via the same dial
+with no schema change.
+
+Same trigger, a second pass — `sync_deps.py --verify` (#315, vendor provenance
+integrity): run `python3 .claude/skills/grm-sync-deps/sync_deps.py --verify
+--root . --json`. Fully offline — zero network. Findings normalized to
+`{check,dep,severity,detail,locked,observed}`; three classes count as
+violations — `LOCAL-FORK` (vendored bytes drifted from the `vendor.lock` pin),
+`DEAD-VENDOR` (a declared dest or git submodule is empty/uninitialized),
+`VERSION-CONTRADICTION` (an embedded version string disagrees with the pin) —
+plus one WARN-only heuristic, `STUB-VENDOR-MANIFEST`, that never elevates the
+exit code alone. Same `warn`-under-`audit-gate` posture as 3a: file via
+`grm-feedback-to-issue` (labels `security` + `dependency-channel`) and proceed.
+
+---
+
+## Write-capable workflow agent branches (full procedure)
+
+A write-capable Workflow's structured output matches the shape shown in
+`.claude/workflows/write-capable-example.js`:
+
+```
+{
+  variant:  string,            // which execution-strategy variant ran
+  branches: [
+    { branch: string, mergeAfter: string[], status: 'completed'|'failed', result: any },
+    …
+  ]
+}
+```
+
+**Pre-merge triage:**
+1. Surface any `status: 'failed'` entries first — report the full failed list
+   to the user before starting the merge run. Do not silently skip them.
+2. Treat the remaining `completed` entries as the merge queue; there is no
+   `grm-release-agent-tracker` ledger for this source — the workflow output
+   *is* the authoritative list.
+
+**Topological merge order:** `mergeAfter` is a dependency DAG over branch
+slugs, not a flat sequence:
+- Branches with an empty `mergeAfter` are eligible first (no dependencies).
+- A branch listing `mergeAfter: ['a', 'b']` merges only after both `a` and `b`
+  have themselves been successfully merged into the staging ref.
+- Compute a topological sort over the DAG before merging; do not merge in
+  array order if it violates a dependency.
+
+**Per-branch steps:** identical to the §Per-branch merge procedure above
+(diff review, `git merge --no-ff`, tests, quality gate, §5 tick) — the only
+difference from the isolated-worktree source is where the branch list and
+merge order come from.
+
+**Conflict-map gating:** on a merge conflict, apply the same tiered
+classification (auto-resolvable vs. semantic/ambiguous) as any other branch.
+
+**Post-merge:** once every entry in the DAG is merged (or a failed entry's
+follow-up is filed), proceed to the phase-completion check exactly as with
+isolated-worktree branches.
+
+**Safety invariants:**
+
+| Invariant | Why |
+|---|---|
+| Never merge a branch before its `mergeAfter` deps are merged | breaks the dependency the agent assumed was already integrated |
+| Never silently drop a `failed` entry | the master must decide whether to re-dispatch or descope it |
+| Push stays human-gated | write-capable workflows run entirely local; nothing here changes the push contract |
+
 ---
 
 ## Tiered conflict resolution (v1.30, #62)
 
-Before stopping on a merge conflict, classify it (authority:
-`docs/grimoire/design/autonomy-hardening-design.md`):
+Before stopping on a merge conflict, classify it (design rationale in the
+upstream Grimoire repository, framework-internal):
 
 - **Auto-resolvable** — additive/disjoint hunks, or a known-generated artifact
   (lockfiles, `docs/README.md` map, `.claude/cache/*` baselines). Resolve

@@ -11,6 +11,38 @@ Loaded on demand by `SKILL.md`.
 Do **not** use it to push *from* a project into the scaffolding — that's
 `grm-sync-from-source`. Do not run it inside the scaffolding repo itself.
 
+### Pre-v3.42 projects: use bare skill names until the sync completes (#200)
+
+Every skill name in this document and in `feature-manifest.md` is written with
+its current `grm-` prefix (added by the `skill-namespacing` feature, v3.42).
+**If the project being upgraded has `framework-version` below `"v3.42"` (or no
+`framework-version` field at all), its `.claude/skills/` directory still holds
+the OLD bare names** — `sync-from-upstream`, `config-validate`,
+`install-doctor`, `structure-migrate`, `architecture-audit`, etc. The `grm-`
+prefix does not exist on disk until a sync lands the rename, so invoking a
+`grm-`-prefixed name at that point fails: the directory simply isn't there yet.
+
+Resolve the chicken-and-egg this way:
+
+- **This skill itself, and Steps 0–4 below** (locating/invoking the sync, the
+  dry-run, `--apply`, conflict resolution) — invoke it as
+  **`sync-from-upstream`** (path `.claude/skills/sync-from-upstream/
+  sync-from-upstream.sh`), not `grm-sync-from-upstream`. It is the one skill
+  that must always be reachable by its actual on-disk name — prefixed or not —
+  because it is the thing that performs the rename.
+- **Step 4.5 onward** (feature-manifest adoption loop) — any skill the
+  manifest's `adopt`/`detect` prose names (`config-validate`,
+  `install-doctor`, `structure-migrate`, `architecture-audit`, …) is invoked by
+  its **bare** name too, for the same reason, until the `skill-namespacing`
+  entry's own `adopt` step (`grm_namespacing.py --apply`) has actually run.
+  Once that step completes, `.claude/skills/` holds only `grm-`-prefixed dirs,
+  and every subsequent invocation (the rest of this sync, and all future ones)
+  uses the `grm-*` name exactly as written everywhere else in this document.
+- A quick on-disk check settles which regime a project is in:
+  `ls .claude/skills/ | grep -vE '^(grm-|README|_)' || echo "(none — already namespaced)"`.
+  Any bare survivor listed ⇒ use bare names for not-yet-adopted steps; empty
+  output ⇒ use `grm-*` names throughout, as written.
+
 ---
 
 ## Anti-patterns
@@ -203,7 +235,12 @@ single integration line and off a divergent tree. `--apply` enforces:
   `main` holding work the integration line would lose — is always refused.
 - **Rule 3c — separate commits.** Commit the framework-sync output as its OWN
   commit before running `grm-design-language-adapt` (Aura vendoring); never
-  bundle both, so the collision surface stays small.
+  bundle both, so the collision surface stays small. **Mechanically enforced**
+  (v3.67, #126 criterion 3) by `.claude/hooks/bundled-sync-guard.sh` — a
+  PreToolUse(Bash) hook on `git commit` that denies a commit whose staged
+  changes span both this skill's touch-set and `grm-design-language-adapt`'s
+  touch-set at once. This reminder is the operator-facing half; the hook is
+  the mechanical backstop that fires even if the reminder is ignored.
 
 **The `--allow-ahead` escape hatch (consumer-sync catch-22, #144/#146/#162/#173).**
 After any sync, the integration line carries the prior sync's own

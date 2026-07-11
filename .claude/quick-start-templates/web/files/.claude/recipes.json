@@ -1,0 +1,80 @@
+{
+  "interface-version": 6,
+  "stack": "web",
+  "targets": {
+    "build": {
+      "command": "just build ${env}",
+      "implemented": false,
+      "params": {"env": {"default": "dev"}}
+    },
+    "stop": {
+      "command": "just stop ${port}",
+      "implemented": true,
+      "params": {"port": {"default": ""}}
+    },
+    "server": {
+      "command": "just run ${env} ${port}",
+      "implemented": false,
+      "params": {"port": {"default": "3000"}, "env": {"default": "dev"}}
+    },
+    "test": {
+      "command": "just test ${filter}",
+      "implemented": false,
+      "params": {"filter": {"default": ""}, "watch": {"default": ""}}
+    },
+    "seed": {"command": null, "implemented": false},
+    "migrate": {"command": null, "implemented": false},
+    "lint": {"command": null, "implemented": false},
+    "clean": {"command": null, "implemented": false},
+    "package": {
+      "command": "just package ${version} ${target}",
+      "implemented": true,
+      "params": {"version": {"default": ""}, "target": {"default": ""}}
+    },
+    "deploy": {
+      "command": "just deploy ${env}",
+      "implemented": true,
+      "params": {"env": {"default": "production"}}
+    },
+    "sync-deps": {
+      "command": "just sync-deps ${mode}",
+      "implemented": true,
+      "params": {"mode": {"default": ""}}
+    },
+    "vendor-check": {
+      "command": "just vendor-check ${full}",
+      "implemented": true,
+      "params": {"full": {"default": ""}}
+    },
+    "smoke": {
+      "command": "just smoke ${port}",
+      "implemented": true,
+      "params": {"port": {"default": "3000"}}
+    },
+    "release": {
+      "command": "just release",
+      "implemented": true,
+      "params": {}
+    }
+  },
+  "extras": {
+    "_comment": "Project-specific recipes documented here for agent discoverability, but NOT part of recipe.py's INTERFACE — not universal across stacks, so never dispatched by recipe.py (which only resolves 'targets'). Invoke via `just <recipe>` directly. See docs/grimoire/design/typed-api-boundary-design.md.",
+    "api-types": {
+      "command": "just api-types",
+      "implemented": true,
+      "params": {}
+    },
+    "api-types-check": {
+      "command": "just api-types-check",
+      "implemented": true,
+      "params": {}
+    },
+    "smoke-visual": {
+      "desc": "Scripted-screenshot pixel-diff smoke gate (#289, RSS-9): captures configured routes via a headless browser, diffs against tests/smoke-baselines/, hard-fails on a missing baseline. NOT a build-recipe INTERFACE target (no INTERFACE_VERSION bump) — recipe.py does not dispatch it; call `just smoke-visual` directly.",
+      "command": "just smoke-visual port=${port} update_baselines=${update_baselines}",
+      "implemented": true,
+      "params": {"port": {"default": "3000"}, "update_baselines": {"default": "false"}}
+
+    }
+  }
+}

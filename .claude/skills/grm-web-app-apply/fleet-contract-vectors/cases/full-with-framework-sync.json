@@ -1,0 +1,26 @@
+{
+  "schema_version": "1",
+  "app": "familiar",
+  "framework_version": "v3.79",
+  "last_synced": "2026-07-05T09:00:00Z",
+  "instance": {"id": "550e8400-e29b-41d4-a716-446655440000", "name": "prod-01", "env": "production"},
+  "build": {"version": "1.20.0", "git_sha": "abc123def456", "built_at": "2026-06-01T12:00:00Z"},
+  "runtime": {"status": "up", "bind": "127.0.0.1:3000", "started_at": "2026-06-10T08:30:00Z"},
+  "dependencies": [
+    {"name": "tokio", "kind": "build", "version": "1.37.0"},
+    {
+      "name": "ollama",
+      "kind": "runtime",
+      "endpoint": "http://127.0.0.1:11434",
+      "reachable": true,
+      "version": "0.3.12"
+    }
+  ],
+  "update": {
+    "channel": "stable",
+    "verdict": "UpToDate",
+    "current": "1.20.0",
+    "available": null,
+    "last_checked": "2026-06-10T06:00:00Z"
+  }
+}

@@ -79,7 +79,8 @@ applied by the Triager to drive model and effort selection:
   items sharing a `component:*` label are likely to touch overlapping file
   sets and should be serialized or explicitly de-conflicted before dispatch.
 
-Full label definitions and allowed values: `docs/grimoire/design/issue-label-taxonomy.md`.
+Full label definitions and allowed values are a framework-internal design —
+see the upstream Grimoire repository for that rationale.
 
 ---
 

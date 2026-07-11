@@ -46,214 +46,9 @@ worktree (spawned via `spawn_task`), commits on that worktree's branch rooted
 at `version/{X.Y}`, and the integration master merges the completed branch in.
 Only `version/*`, `dev`, and `main` are named, protected integration branches.
 
-## Distributing work with `spawn_task`
-
-Instead of handing the user copy-paste prompts, the integration master calls
-the **`spawn_task`** tool once per work item. Each call drops a chip the user
-clicks to open a new session in a fresh isolated worktree, pre-loaded with the
-item's self-contained prompt. `grm-release-phase` builds these calls; it sizes each
-item per the `grm-repo-reference` table and names the recommended model in the chip
-(`spawn_task` cannot set a session's model, so the user picks it when opening).
-
-**Supervised gate:** before calling `spawn_task`, list the batch and ask the
-user for confirmation. Do not spawn until the user approves.
-
-## Delegating to subagents
-
-The integration master may also spawn **`Agent`** subagents to work more
-efficiently — e.g. a `haiku` subagent for mechanical / read-only work (log
-extraction, diff summaries) or a `sonnet` subagent for mid-complexity edits and
-test runs. Match model/effort to the work per the `grm-repo-reference` table;
-reserve `opus`/high for review and integration judgement. These two mechanisms
-are distinct: `spawn_task` opens **new work-item sessions** in their own
-worktrees; `Agent` spawns **helper subagents inside** the integration master's
-own session.
-
-## Workflow-based orchestration (read-only analysis)
-
-A third mechanism, **`Workflow`**, runs a deterministic JavaScript script that
-fans subagents out (`parallel`/`pipeline`) and collects their structured
-results — autonomously, with no human-clicked chip and no per-agent worktree.
-It is the right tool for the **read-heavy, analysis** seams *around* the
-release pipeline; it is **not** a replacement for `spawn_task`, which exists
-precisely because work items are interactive, worktree-isolated, and mutate
-code on a branch.
-
-Use the right mechanism for the shape of the work:
-
-| Mechanism | Human in loop | Isolation | Mutates code | Best for |
-|---|---|---|---|---|
-| `spawn_task` | yes (chip) | worktree per item | yes (commits) | distributing work items (`grm-release-phase`) |
-| `Agent` | no | shared session | via tools | helper subagents inside the master's session |
-| `Workflow` | no | shared, read-mostly | no (by convention) | parallel read/verify/synthesis fan-out |
-
-**`Workflow` is opt-in and billed** — it can spawn many agents. Only the
-integration master runs one, and only when the user has asked for multi-agent
-orchestration (or invoked a skill/workflow that does). Workflow scripts are
-**read-only by convention here**: they write no files and create no branches,
-so they never collide with the worktree-isolation or protected-branch hooks.
-A workflow returns its result to the master, who reviews it and takes any
-file-writing / branch-creating next step through the normal skills.
-
-Saved workflows live in `.claude/workflows/<name>.js` (filename = the name you
-invoke). The first one shipped is **`grm-release-planning`** — a fan-out variant of
-the `grm-release-planning` skill.
-
-> **Flavor note.** `Workflow` is a Claude Code feature; the `copilot/` flavor
-> has no equivalent and does not mirror `.claude/workflows/`. Keep workflow
-> orchestration in the `claude-code/` (and root) flavors only.
-
-## Dead-worktree cleanup
-
-A work-item worktree is **dead** once its branch is merged in and its working
-tree is clean. The integration master may remove dead worktrees as
-housekeeping after the merge step — `grm-release-phase-merge` ticks §5; this
-removes the now-orphaned worktree directory and branch ref.
-
-**Verify dead-ness first:**
-
-1. **Branch is fully merged** — `git log <protected>..<branch>` returns
-   nothing (where `<protected>` is `version/{X.Y}`, `dev`, or `main` —
-   whichever the branch was meant to land on).
-2. **Working tree is clean** — `git -C <worktree-path> status --porcelain`
-   is empty.
-
-If (2) is false, **never silently force-remove**. Try to preserve first:
-
-- Tag a stash on the worktree:
-  `git -C <path> stash push -u -m "wip-rescue: <branch>"`, or
-- Save the diff aside to a gitignored location (outside the repo, or a path
-  you've added to `.gitignore`):
-
-  ```bash
-  git -C <path> diff > <rescue>/<branch>.patch
-  git -C <path> diff --cached >> <rescue>/<branch>.patch
-  ```
-
-Then **report what was preserved and where** before proceeding. If
-preservation isn't reliable — untracked binaries, files you can't classify —
-**stop and surface to the user** rather than guess.
-
-**Removal procedure** (only once dead-ness is verified):
-
-```bash
-git worktree remove <path>      # refuses if not clean — that's the safety net
-git branch -d <branch>          # safe-delete; refuses if not merged
-```
-
-Use `-D` (force-delete the branch) only with explicit user confirmation, per
-`CLAUDE.md` §Commits.
-
-The `worktree-guard.sh` hook honors the `integration-allow.local` marker
-symmetrically with `protected-branch-guard.sh`, so the blessed worktree may
-cross worktree boundaries for this housekeeping. A non-blessed worktree
-still fails closed.
-
-### Post-release cleanup step (named release-flow step)
-
-The cleanup above is also a **named, ordered step of the release flow**, run
-once per release after `grm-project-release` tags the version and the human-gated
-push completes (`grm-project-release` §Post-release cleanup drives it;
-`grm-release-phase-merge` cross-references it). The **marker-blessed integration
-master is the only actor** that may run it — per the cross-worktree branch
-hijack rule (§Enforcement), only the blessed worktree may touch sibling
-worktrees; a non-blessed agent fails closed.
-
-For **each** work-item branch/worktree of the just-shipped release, in order:
-
-1. **Verify dead-ness** using the two checks above — the branch is an ancestor
-   of the release tip (merged) AND the worktree is clean. Skip any branch that
-   is not both.
-2. **Preserve or report** any uncommitted work (stash/patch per above);
-   **never discard silently**.
-3. **Unlock** a locked worktree before removing it:
-   ```bash
-   git worktree unlock <path>      # only if locked
-   git worktree remove <path>      # refuses if not clean
-   ```
-   If the only thing keeping a tree "dirty" is disposable untracked artifacts
-   (e.g. `__pycache__`, build caches), `git worktree remove --force <path>` is
-   allowed **only with an explicit logged note** of exactly what is discarded —
-   never a silent `--force`.
-4. **Prune** stale administrative entries, then **safe-delete** the merged
-   feature branches and any leftover `worktree-*` placeholder branches with
-   `-d` (merge-safe; refuses unmerged):
-   ```bash
-   git worktree prune
-   git branch -d <feature-branch> <worktree-*placeholder>
-   ```
-   `-D` is reserved for the explicit-confirmation destructive path (§Commits in
-   `CLAUDE.md`).
-
-Report the final tally: worktrees removed, branches deleted, and any work
-preserved (with its rescue location) or skipped.
-
-## GitHub PR boundary flow (github-pr, v3.5)
-
-When `github-pr.enabled` is `true` (GitHub-hosted repo), the boundary merge is
-performed **via a pull request** instead of a local `git merge --no-ff`. Read the
-dial live: `github-pr.{enabled, boundary, merge-method, review.auto-dispatch,
-review.post-comments}`. Absent/`false` ⇒ today's local-merge flow, unchanged.
-**Suppressed under Stealth Mode** (a PR + branch push is a fingerprint).
-
-At the configured `boundary` (`version-to-dev` default / `dev-to-main` / `both`;
-under a PM, also lane `version/{X.Y}/<lane>` -> `version/{X.Y}`):
-
-1. **Push the head branch** — a push-class action: propose-and-wait (human-gated)
-   unless `autonomous-push.enabled`. `push-guard.sh` permits the `version/*` head
-   **only because** `github-pr.enabled`; marker + destructive-flag rules unchanged.
-2. **Open the PR** (idempotent): `grm-github-pr` skill /
-   `python3 .claude/skills/grm-github-pr/github_pr.py open --base <B> --head <H> --plan <plan>`.
-   On `degraded` (no `gh` / remote), fall back to the local merge and log it.
-3. **Dispatch a Reviewer in PR mode** (if `review.auto-dispatch`): it reads the
-   PR diff, runs `code-review`, and posts findings per `review.post-comments`
-   (`off` / `comment` / `request-changes`). See the `grm-reviewer` skill §2.5.
-4. **Merge via the PR**: `github_pr.py merge --pr N --method <merge-method>` —
-   **skip the local `--no-ff` merge at this boundary**. Do not merge while
-   `reviewDecision == CHANGES_REQUESTED`. Boundaries not in `boundary` merge
-   locally as today.
-
-`grm-github-pr` does **not** imply autonomous push — open/merge stay governed by the
-existing push gate. Full design: `docs/design/github-pr-integration-design.md`.
-
-## Pushing to origin
-
-Pushing is **integration-master-only** and restricted to whitelisted refs.
-`push-guard.sh` enforces both.
-
-**When.** A single trigger moment, once per release: after `grm-project-release`
-promotes `dev` → `main` and creates the release tag. At that one prompt the
-integration master pushes `dev`, `main`, and the version tag **together**.
-Outside that moment, don't push.
-
-The earlier `version/{X.Y}` → `dev` integration (end of `grm-release-phase-merge`)
-**no longer prompts a push** — `dev` stays local until release, and its commits
-ride to origin alongside `main` and the tag at the single post-release push.
-This consolidates a multi-phase release to exactly one push prompt.
-
-**Supervised gate:** always propose the push (`git push origin <ref>`) and
-wait for explicit user confirmation before running the command. The push
-remains human-gated and marker-gated — this change adjusts only how many
-times the push is prompted (once), not who authorises or runs it.
-
-**What.** Default allowlist: `main`, `dev`, and any version tag matching
-`v?\d+(\.\d+){0,3}(-...)?`. Project additions live in
-`.claude/push-allowlist` (tracked, one ref per line).
-
-**Always denied** (even with the marker):
-
-- Destructive flags: `--force`, `--force-with-lease`, `--all`, `--mirror`,
-  `--delete`, `--prune`.
-- Remote-ref deletion (`git push origin :branch`).
-- Refs not on the allowlist.
-
-If a denied push is genuinely needed, have the human run it from their
-terminal — the hook gates only the agent's tool calls.
-
-## UX design language
-
-A **project-init concern**, not a per-release concern. See
-`docs/design/ux-design-language-design.md` for the full spec.
+A **project-init concern**, not a per-release concern. The full spec is a
+framework-internal design — see the upstream Grimoire repository for that
+rationale.
 
 **`grm-design-language-adapt`** has two trigger moments:
 
@@ -275,8 +70,9 @@ both skills N/A in the manifest.
 
 ## Lane model & multiple marked lane worktrees (v3.1)
 
-When a **Project Manager** owns a multi-feature release (see
-`docs/design/project-manager-role-design.md` and
+When a **Project Manager** owns a multi-feature release (the PM role is a
+framework-internal design — see the upstream Grimoire repository for that
+rationale — and
 `.claude/skills/grm-project-manager/SKILL.md`), the single `version/{X.Y}` staging
 line is split into **parallel lanes**, each implemented by its own integration
 master:
@@ -320,7 +116,7 @@ back to serial, in-place lane execution.
 ## Enforcement (guard hooks)
 
 The integration master operates the single **marker-blessed worktree** —
-the one carrying an untracked `.claude/integration-allow.local` file. Four
+the one carrying an untracked `.claude/integration-allow.local` file. Five
 `PreToolUse` Bash hooks back the discipline so a stray agent commit, edit,
 or push cannot land on a protected branch:
 
@@ -345,6 +141,15 @@ or push cannot land on a protected branch:
   worktree, **unless** the worktree carries the `integration-allow.local`
   marker (the blessed worktree may cross boundaries for housekeeping — see
   §Dead-worktree cleanup). Symmetric with `protected-branch-guard.sh`.
+- `bundled-sync-guard.sh` — **(v3.67, #126 criterion 3)** denies a `git commit`
+  whose staged changes span BOTH `grm-sync-from-upstream`'s typical touch-set
+  (`.claude/`, `CLAUDE.md`, `AGENTS.md`, `docs/grimoire/`, the `.github/`
+  Copilot mirror) and `grm-design-language-adapt`'s typical touch-set
+  (`docs/design/ux/`, `vendor/aura/`, `static/aura/`, `templates/base.html`) at
+  once — the mechanical enforcement of BMI-3 Rule 3c (previously a
+  reference.md reminder only), closing the exact `24c73dd` "660-file
+  framework + Aura in one commit" anti-pattern from #126. Applies to every
+  actor; no marker exemption.
 
 **Cross-worktree branch hijack rule (v1.7).** A spawned/work-item agent must
 git-operate **only on its own worktree**. The v1.6 vet caught a spawned

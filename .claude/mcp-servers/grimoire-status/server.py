@@ -2,7 +2,7 @@
 """server.py — Grimoire grimoire-status MCP server (read-only project overview).
 
 Exposes the status-broker script
-(.claude/skills/grm-status-broker/project_status.py) as a single, token-cheap
+(.claude/skills/grm-agent-status-broker/project_status.py) as a single, token-cheap
 read-only MCP tool, built on the reusable stdlib runtime
 (.claude/mcp-servers/lib/mcp_runtime.py). No third-party dependencies (#75:
 Python 3 stdlib only).
@@ -32,6 +32,20 @@ import sys
 CONFIG_REL = ".claude/grimoire-config.json"
 
 
+# --- Intentional duplication (#341) -----------------------------------
+# _find_repo_root() and _bootstrap_imports()'s lib_candidates list below
+# are byte-identical across all 15 MCP server.py entry points (5 servers
+# x 3 flavors: claude-code, root, copilot). This is a genuine
+# chicken-and-egg: the bootstrap LOCATES and sys.path-inserts the shared
+# runtime lib, so it cannot import from that lib to de-duplicate itself.
+# Accepted as intentional copy-with-a-reason rather than factored out
+# (mirrors the #331 precedent for the hook-script equivalent). The
+# canonical reference copy is the claude-code flavor
+# (claude-code/.claude/mcp-servers/<server>/server.py); any edit to this
+# block must be replicated verbatim to all 15 sites.
+# ------------------------------------------------------------------------
+
+
 def _find_repo_root(start: pathlib.Path | None = None) -> pathlib.Path:
     """Walk up from this file (or start) to the repo root holding the config."""
     current = (start or pathlib.Path(__file__)).resolve()
@@ -55,7 +69,7 @@ def _bootstrap_imports(repo_root: pathlib.Path) -> None:
         repo_root / "mcp-servers" / "lib",
     ]
     status_candidates = [
-        repo_root / ".claude" / "skills" / "status-broker",
+        repo_root / ".claude" / "skills" / "grm-agent-status-broker",
         repo_root / "scripts",
     ]
     for candidates in (lib_candidates, status_candidates):
@@ -113,7 +127,9 @@ def _self_test() -> int:
 
     root = pathlib.Path(tempfile.mkdtemp())
     (root / ".claude").mkdir()
-    (root / ".claude" / "skills" / "sync-from-upstream").mkdir(parents=True)
+    # Use the grm--prefixed path that matches the real install (#142, #157);
+    # the legacy bare-name "sync-from-upstream" path is no longer valid.
+    (root / ".claude" / "skills" / "grm-sync-from-upstream").mkdir(parents=True)
     (root / "docs").mkdir()
     (root / ".claude" / "grimoire-config.json").write_text(
         json.dumps({
@@ -129,7 +145,7 @@ def _self_test() -> int:
     (root / "docs" / "roadmap.md").write_text(
         "# Roadmap\n\n## v3.29 — Future\n\nplanned\n\n"
         "## v3.28 — Ops surface\n\nShipped — see version-history.md.\n")
-    (root / ".claude" / "skills" / "sync-from-upstream" / "feature-manifest.md").write_text(
+    (root / ".claude" / "skills" / "grm-sync-from-upstream" / "feature-manifest.md").write_text(
         "manifest-version: 36\n\n# Feature manifest\n")
 
     srv = StatusServer(repo_root=root)

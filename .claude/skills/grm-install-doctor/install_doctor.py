@@ -47,14 +47,17 @@ positives:
 The newer-than-golden predicate is a reusable helper (`GoldenStaleness`) shared
 with `grm-regenerate-grimoire` so both tools agree on "ahead of golden".
 
-The Justfile contract check audits whether the three required Grimoire recipes
-(build, run, deploy) are present and not placeholder stubs. Each recipe is
-classified as OK (present, non-placeholder), PARTIAL (has # grimoire:placeholder
-body), or MISSING (recipe not found or no justfile). Any MISSING or PARTIAL
-causes exit 1. See docs/design/justfile-standard-design.md.
+The Justfile contract check audits the FULL build-recipe vocabulary (RSS-3, #321;
+`stop` added RSS-4, #322) in the repo's justfile —
+build/run/stop/test/seed/migrate/lint/clean/package/deploy/smoke/release/
+sync-deps/vendor-check — reporting MISSING/PARTIAL/OK per recipe.
+The core trio (build, run, deploy) plus any target `.claude/recipes.json` marks
+implemented-and-routed-to-`just <recipe>` is REQUIRED (MISSING/PARTIAL there
+causes exit 1); every other vocabulary recipe is ADVISORY (reported for coverage
+but never a health failure). See docs/design/justfile-standard-design.md.
 
-Authoritative design: docs/grimoire/design/agent-roles-design.md (install-doctor is a
-skill, not a role).
+The role taxonomy (install-doctor is a skill, not a role) is a framework-internal
+design -- see the upstream Grimoire repository for that rationale.
 
 CLI:  python3 install_doctor.py [audit] [--json] [--no-network]
       python3 install_doctor.py repair [--json] [--no-network]
@@ -73,6 +76,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -81,13 +85,23 @@ from dataclasses import dataclass, field, asdict
 from pathlib import Path
 from typing import Any
 
+# grm-issue-tracker is a fixed sibling skill directory (mirrors the
+# code_health.py -> architecture_fitness.py pattern). Load it by a
+# __file__-relative path so find_repo_root()/CONFIG_FILE have a single body
+# of truth (#335) instead of a fourth, divergent copy.
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                 "..", "grm-issue-tracker"))
+import issue_tracker  # noqa: E402  (sys.path set immediately above)
+
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
 
-CONFIG_FILE = ".claude/grimoire-config.json"
+CONFIG_FILE = issue_tracker.CONFIG_FILE
 UPSTREAM_CONF = ".scaffold-upstream.conf"
 BASE_ROOT = ".scaffold-base"
+ARCHITECTURE_RULES_FILE = ".claude/architecture-rules.json"
+ARCHITECTURE_RULES_EXAMPLE = ".claude/architecture-rules.example.json"
 # The golden baseline is a generated artifact (no longer a committed tree). The
 # doctor resolves it via grm-workflow-bootstrap's generate_golden helper and reuses
 # it as the canonical file set rather than maintaining its own list.
@@ -96,9 +110,17 @@ FLAVOR_DIR = "claude-code"
 
 # Statuses that represent a real, actionable problem (drive the exit code and
 # the "ATTENTION NEEDED" headline). Everything else — including the three
-# suppression statuses below — is informational.
-# "partial" covers justfile recipes that have a grimoire:placeholder body.
+# suppression statuses and the two advisory statuses below — is informational.
+# "partial" covers required justfile recipes that have a grimoire:placeholder body.
 PROBLEM_STATUSES = frozenset({"missing", "drifted", "fail", "partial"})
+
+# Advisory statuses (RSS-3, #321): a full-vocabulary justfile recipe that the
+# project has NOT wired to `just <recipe>` in `.claude/recipes.json` (unimplemented
+# or implemented via a raw command). Its absence/placeholder body is REPORTED for
+# coverage visibility (MISSING/PARTIAL/OK per recipe) but is NOT a health problem —
+# a lib/cli/framework stack legitimately omits deploy/package/smoke/etc.
+STATUS_ADVISORY_MISSING = "advisory-missing"
+STATUS_ADVISORY_PARTIAL = "advisory-partial"
 
 # Suppression statuses — a byte mismatch against golden that is expected, so it
 # is NOT a problem and is never a repair target.
@@ -106,9 +128,26 @@ STATUS_SEED_DIVERGED = "seed-diverged"
 STATUS_PARADIGM = "paradigm"
 STATUS_NEWER = "newer-than-golden"
 
-# Justfile contract: the three required Grimoire recipes and the placeholder
-# marker that signals a stub body. See docs/design/justfile-standard-design.md.
-JUSTFILE_REQUIRED_RECIPES = ("build", "run", "deploy")
+# Justfile contract (RSS-3, #321): the doctor audits the FULL build-recipe
+# vocabulary in the repo's `justfile`, reporting MISSING/PARTIAL/OK per recipe.
+# `JUSTFILE_CORE_RECIPES` are the always-required trio (build/run/deploy) — a
+# MISSING/PARTIAL there is a health problem when no recipes.json refutes it.
+# `JUSTFILE_FULL_VOCABULARY` is the whole interface vocabulary under its canonical
+# *justfile* names (INTERFACE `server` → `run`). `stop` (RSS-4, #322) joins the
+# vocabulary like every non-core-trio recipe: advisory unless a project's
+# recipes.json marks it implemented and routes it to `just stop`.
+# A recipe outside the core trio is REQUIRED only when `.claude/recipes.json` marks
+# its target implemented AND routes it to `just <recipe>` (so `recipe.py <t>` ≡
+# `just <t>` is enforced); otherwise it is advisory. See
+# docs/design/justfile-standard-design.md + build-recipe-interface-design.md.
+JUSTFILE_CORE_RECIPES = ("build", "run", "deploy")
+JUSTFILE_FULL_VOCABULARY = (
+    "build", "run", "stop", "test", "seed", "migrate", "lint", "clean",
+    "package", "deploy", "smoke", "release", "sync-deps", "vendor-check",
+)
+# Justfile recipe name → recipes.json INTERFACE target key (identity unless the
+# canonical justfile name differs from the versioned INTERFACE verb).
+JUSTFILE_RECIPE_TO_TARGET = {"run": "server"}
 JUSTFILE_PLACEHOLDER_MARKER = "# grimoire:placeholder"
 
 
@@ -206,11 +245,13 @@ class Report:
     upstream: list[Check] = field(default_factory=list)
     base: list[Check] = field(default_factory=list)
     justfile: list[Check] = field(default_factory=list)
+    architecture: list[Check] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
 
     @property
     def all_checks(self) -> list[Check]:
-        return [*self.framework, *self.upstream, *self.base, *self.justfile]
+        return [*self.framework, *self.upstream, *self.base, *self.justfile,
+                *self.architecture]
 
     @property
     def healthy(self) -> bool:
@@ -229,12 +270,25 @@ class Report:
 
 
 def find_repo_root(start: Path | None = None) -> Path:
-    """Walk up from start (or cwd) until grimoire-config.json is found."""
+    """Walk up from start (or cwd) until grimoire-config.json is found.
+
+    Delegates the primary walk to the shared `issue_tracker.find_repo_root`
+    (single body of truth, #335), which returns None on a miss. install-
+    doctor keeps one extra fallback pass on top of that None, deliberately
+    NOT folded into the shared function: look for the nearest ancestor with
+    a bare `.claude/` directory before giving up. This stays install-doctor-
+    only — it is the one call site that audits installs which may
+    legitimately be missing grimoire-config.json (a broken/partial/pre-
+    config install is exactly the case install-doctor exists to diagnose),
+    so treating a bare `.claude/` as "close enough" is more correct here.
+    The other three call sites (issue_tracker.py, migrate_roadmap_issues.py,
+    issue_reconcile.py) keep the shared function's plain cwd fallback.
+    """
     current = (start or Path.cwd()).resolve()
-    for candidate in [current, *current.parents]:
-        if (candidate / CONFIG_FILE).exists():
-            return candidate
-    # Fall back to the nearest dir that has a .claude/ — better than cwd.
+    root = issue_tracker.find_repo_root(current)
+    if root is not None:
+        return root
+    # Shared walk found nothing: install-doctor-specific extra fallback.
     for candidate in [current, *current.parents]:
         if (candidate / ".claude").is_dir():
             return candidate
@@ -541,39 +595,141 @@ def audit_base(root: Path) -> list[Check]:
 
 
 # ---------------------------------------------------------------------------
+# Audit: architecture-rules.json adoption (#314 — non-silent absent-ruleset gate)
+# ---------------------------------------------------------------------------
+
+
+def audit_architecture_rules(root: Path) -> list[Check]:
+    """Notice-only check that a project has adopted (or explicitly declined)
+    the architecture-fitness ruleset — the scaffold-default half of #314.
+
+    `grm-architecture-audit` itself already emits a visible WARN when
+    `.claude/architecture-rules.json` is absent (never silent); this check
+    surfaces the same fact at the install-doctor level so it shows up in the
+    overall health report without requiring a separate audit invocation. A
+    `warn` here is informational (not a PROBLEM_STATUSES member) — it never
+    drives the exit code, matching the underlying skill's report-only default.
+    """
+    rules_path = root / ARCHITECTURE_RULES_FILE
+    if not rules_path.is_file():
+        return [Check(ARCHITECTURE_RULES_FILE, "warn",
+                      "absent — architecture fitness rules not adopted; "
+                      "copy a per-family starter from "
+                      ".claude/quick-start-templates/{service,web,gui,lib}/files/.claude/architecture-rules.json "
+                      f"or {ARCHITECTURE_RULES_EXAMPLE}, or run "
+                      "grm-workflow-bootstrap to seed the generic default")]
+    try:
+        data = json.loads(rules_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        return [Check(ARCHITECTURE_RULES_FILE, "warn",
+                      f"present but unreadable/malformed ({exc}) — "
+                      "grm-architecture-audit will report this as an error")]
+    if isinstance(data, dict) and data.get("opt_out"):
+        reason = data.get("opt_out-reason", "")
+        detail = "explicitly opted out"
+        if reason:
+            detail += f" (reason: {reason})"
+        return [Check(ARCHITECTURE_RULES_FILE, "ok", detail)]
+    return [Check(ARCHITECTURE_RULES_FILE, "ok", "present — architecture fitness rules adopted")]
+
+
+# ---------------------------------------------------------------------------
 # Audit: Justfile contract (required recipes present and non-placeholder)
 # ---------------------------------------------------------------------------
 
 
-def audit_justfile(root: Path) -> list[Check]:
-    """Check that the three required Grimoire justfile recipes are present and real.
+def _load_recipes_targets(root: Path) -> dict | None:
+    """Return the `.claude/recipes.json` `targets` map, or None if unavailable.
 
-    Each recipe (build, run, deploy) is classified as:
+    Best-effort: a missing or malformed recipes.json yields None (the audit then
+    falls back to the core-trio required set). Never raises.
+    """
+    recipes_path = root / ".claude" / "recipes.json"
+    try:
+        data = json.loads(recipes_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    targets = data.get("targets")
+    return targets if isinstance(targets, dict) else None
+
+
+def _justfile_recipe_required(recipe: str, targets: dict | None) -> bool:
+    """Is `recipe` a REQUIRED justfile recipe (its MISSING/PARTIAL is a problem)?
+
+    - A target marked **implemented** in `.claude/recipes.json` whose command
+      routes to `just <recipe>` is required — this is exactly the
+      "recipe.py <t> ≡ just <t> for every implemented target" contract. Implemented
+      via a non-`just` command ⇒ the justfile is not the dispatch surface ⇒ advisory.
+    - The **core trio** (build/run/deploy) is required by the base Justfile
+      standard §2 UNLESS recipes.json explicitly declares the target absent
+      (`implemented:false`, `command:null`) — a framework/lib stack that
+      legitimately has no build/run/deploy. No recipes.json ⇒ the core trio is
+      required (legacy behaviour), everything else advisory.
+    """
+    target_key = JUSTFILE_RECIPE_TO_TARGET.get(recipe, recipe)
+    entry = targets.get(target_key) if isinstance(targets, dict) else None
+    # Implemented + routed through `just <recipe>` → required.
+    if isinstance(entry, dict) and entry.get("implemented"):
+        command = entry.get("command") or ""
+        return command.split()[:2] == ["just", recipe]
+    # Not implemented. Core trio is required unless recipes.json explicitly
+    # declares the target absent (command:null) for this stack.
+    if recipe in JUSTFILE_CORE_RECIPES:
+        if (isinstance(entry, dict) and entry.get("implemented") is False
+                and not entry.get("command")):
+            return False
+        return True
+    return False
+
+
+def audit_justfile(root: Path) -> list[Check]:
+    """Audit the FULL build-recipe vocabulary in the repo's justfile (RSS-3, #321).
+
+    Each recipe (canonical justfile name — INTERFACE `server` surfaces as `run`)
+    is classified OK / PARTIAL / MISSING:
       OK      — recipe line found at start-of-line AND body has no placeholder.
       PARTIAL — recipe found but body contains '# grimoire:placeholder'.
       MISSING — no recipe line found (or no justfile exists at all).
 
-    Any MISSING or PARTIAL is a problem (drives exit 1). All OK contributes no
-    failure. See docs/design/justfile-standard-design.md for the contract.
+    Required recipes (the core trio build/run/deploy, plus any target that
+    `.claude/recipes.json` marks implemented-and-routed-to-`just <recipe>`) drive
+    exit 1 on MISSING/PARTIAL. Every other vocabulary recipe is ADVISORY —
+    reported for coverage visibility but never a health problem (a lib/cli/
+    framework stack legitimately omits deploy/package/smoke/etc.). See
+    docs/design/justfile-standard-design.md for the contract.
     """
+    targets = _load_recipes_targets(root)
     justfile_path = root / "justfile"
     if not justfile_path.exists():
-        # No justfile at all — every required recipe is MISSING.
-        return [
-            Check(f"justfile:{recipe}", "missing",
-                  f"no justfile found — recipe '{recipe}' absent. "
-                  "See docs/design/justfile-standard-design.md for the contract.")
-            for recipe in JUSTFILE_REQUIRED_RECIPES
-        ]
+        # No justfile at all — every vocabulary recipe is MISSING (required ones
+        # are a problem; the rest advisory).
+        checks: list[Check] = []
+        for recipe in JUSTFILE_FULL_VOCABULARY:
+            required = _justfile_recipe_required(recipe, targets)
+            status = "missing" if required else STATUS_ADVISORY_MISSING
+            checks.append(Check(
+                f"justfile:{recipe}", status,
+                f"no justfile found — recipe '{recipe}' absent. "
+                "See docs/design/justfile-standard-design.md for the contract."))
+        return checks
 
     try:
         lines = justfile_path.read_text(encoding="utf-8").splitlines()
     except OSError as exc:
         return [Check("justfile", "fail", f"cannot read justfile: {exc}")]
 
-    checks: list[Check] = []
-    for recipe in JUSTFILE_REQUIRED_RECIPES:
+    checks = []
+    for recipe in JUSTFILE_FULL_VOCABULARY:
         status, detail = _classify_justfile_recipe(recipe, lines)
+        required = _justfile_recipe_required(recipe, targets)
+        if not required and status == "missing":
+            status = STATUS_ADVISORY_MISSING
+            detail = (f"recipe '{recipe}' absent (advisory — not wired to "
+                      "`just {0}` in .claude/recipes.json).".format(recipe))
+        elif not required and status == "partial":
+            status = STATUS_ADVISORY_PARTIAL
+            detail = (f"recipe '{recipe}' is a grimoire:placeholder stub "
+                      "(advisory — implement it when the project needs it).")
         checks.append(Check(f"justfile:{recipe}", status, detail))
     return checks
 
@@ -645,6 +801,7 @@ def build_report(root: Path, check_network: bool) -> Report:
     rep.upstream = up_checks
     rep.base = audit_base(root)
     rep.justfile = audit_justfile(root)
+    rep.architecture = audit_architecture_rules(root)
     rep.notes.append(
         "Feature-adoption is NOT audited mechanically: run each "
         "sync-from-upstream feature-manifest `detect` predicate per the SKILL.md "
@@ -695,20 +852,39 @@ def repair_plan(rep: Report) -> list[str]:
                 ".scaffold-base missing/empty → run sync-from-upstream.sh "
                 "--adopt-base ONCE the project is confirmed reconciled with a "
                 "known upstream commit (declares 'local matches upstream').")
-    # Justfile contract findings: MISSING and PARTIAL both need manual action.
+    for c in rep.architecture:
+        if c.status == "warn" and c.name == ARCHITECTURE_RULES_FILE:
+            steps.append(
+                f"{ARCHITECTURE_RULES_FILE} absent → adopt a per-family starter "
+                "from .claude/quick-start-templates/{service,web,gui,lib}/files/"
+                f".claude/architecture-rules.json or {ARCHITECTURE_RULES_EXAMPLE} "
+                "(or explicitly opt out with \"opt_out\": true + a reason) — "
+                "notice-only, never a repair blocker.")
+    # Justfile contract findings: required MISSING/PARTIAL need manual action;
+    # advisory findings are surfaced as optional coverage recommendations.
     jf_missing = [c for c in rep.justfile if c.status == "missing"]
     jf_partial = [c for c in rep.justfile if c.status == "partial"]
+    jf_advisory = [c for c in rep.justfile
+                   if c.status in (STATUS_ADVISORY_MISSING, STATUS_ADVISORY_PARTIAL)]
     if jf_missing:
         recipe_names = ", ".join(c.name.split(":", 1)[-1] for c in jf_missing)
         steps.append(
-            f"Justfile MISSING recipe(s): {recipe_names} — add the recipe(s) to "
-            "justfile. See docs/design/justfile-standard-design.md for the contract.")
+            f"Justfile MISSING required recipe(s): {recipe_names} — add the "
+            "recipe(s) to justfile. See docs/design/justfile-standard-design.md "
+            "for the contract.")
     if jf_partial:
         recipe_names = ", ".join(c.name.split(":", 1)[-1] for c in jf_partial)
         steps.append(
-            f"Justfile PARTIAL recipe(s): {recipe_names} — replace the "
+            f"Justfile PARTIAL required recipe(s): {recipe_names} — replace the "
             "grimoire:placeholder body with a real implementation. "
             "See docs/design/justfile-standard-design.md for the contract.")
+    if jf_advisory:
+        recipe_names = ", ".join(c.name.split(":", 1)[-1] for c in jf_advisory)
+        steps.append(
+            f"Justfile ADVISORY recipe(s) not yet wired: {recipe_names} — OPTIONAL. "
+            "Add a thin `just <recipe>` (delegating multi-line logic to scripts/) "
+            "and route `.claude/recipes.json` to it when the project needs the "
+            "target. Not a health failure.")
     if not steps:
         steps.append("Nothing to repair — install is healthy.")
     steps.append(
@@ -744,7 +920,8 @@ def render_markdown(rep: Report, *, plan: list[str] | None = None) -> str:
     section("Framework files (vs workflow-bootstrap golden)", rep.framework)
     section("Upstream connection (sync-from-upstream inputs)", rep.upstream)
     section("Sync base snapshot (.scaffold-base)", rep.base)
-    section("Justfile contract (required recipes)", rep.justfile)
+    section("Justfile contract (full recipe vocabulary)", rep.justfile)
+    section("Architecture-rules adoption (.claude/architecture-rules.json)", rep.architecture)
 
     if plan is not None:
         lines.append("## Repair plan (non-destructive — calls wrapped skills)")
@@ -774,6 +951,7 @@ def _json_payload(rep: Report, *, plan: list[str] | None = None) -> dict[str, An
         "upstream": [asdict(c) for c in rep.upstream],
         "base": [asdict(c) for c in rep.base],
         "justfile": [asdict(c) for c in rep.justfile],
+        "architecture": [asdict(c) for c in rep.architecture],
         "notes": rep.notes,
     }
     if plan is not None:
@@ -1069,81 +1247,157 @@ def _self_test() -> int:
     check(any("DRIFTED(1)" in s for s in plan2),
           "repair plan should target the one genuine drift")
 
-    # --- audit_justfile: three statuses + no-justfile case.
+    # --- audit_justfile: full-vocabulary audit (RSS-3, #321).
+    n_vocab = len(JUSTFILE_FULL_VOCABULARY)
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
 
-        # Case 1: no justfile → all three recipes MISSING.
+        # Case 1: no justfile, no recipes.json → full vocabulary reported; core
+        # trio MISSING (problem), the rest ADVISORY-MISSING (not a problem).
         results = audit_justfile(root)
-        check(len(results) == 3, f"no-justfile: expected 3 checks, got {len(results)}")
+        check(len(results) == n_vocab,
+              f"no-justfile: expected {n_vocab} checks, got {len(results)}")
+        by_name = {c.name: c for c in results}
+        for r in JUSTFILE_CORE_RECIPES:
+            c = by_name[f"justfile:{r}"]
+            check(c.status == "missing" and c.problem,
+                  f"no-justfile: core {r} should be missing+problem, got {c.status}")
         for c in results:
-            check(c.status == "missing",
-                  f"no-justfile: {c.name} should be missing, got {c.status}")
-            check(c.problem, f"no-justfile: {c.name} missing must be a problem")
+            recipe = c.name.split(":", 1)[-1]
+            if recipe not in JUSTFILE_CORE_RECIPES:
+                check(c.status == STATUS_ADVISORY_MISSING and not c.problem,
+                      f"no-justfile: {recipe} should be advisory-missing, got {c.status}")
 
-        # Case 2: justfile with all three recipes, no placeholders → all OK.
+        # Case 2: justfile with only the core trio → trio OK, extended ADVISORY.
         jf = root / "justfile"
         jf.write_text(
-            "build:\n"
-            "    cargo build\n"
-            "\n"
-            "run:\n"
-            "    cargo run\n"
-            "\n"
-            "deploy:\n"
-            "    ./deploy.sh\n",
-            encoding="utf-8",
-        )
-        results = audit_justfile(root)
-        check(len(results) == 3, f"all-ok: expected 3 checks, got {len(results)}")
-        for c in results:
-            check(c.status == "ok",
-                  f"all-ok: {c.name} should be ok, got {c.status}")
-            check(not c.problem, f"all-ok: {c.name} ok must not be a problem")
-
-        # Case 3: justfile missing 'deploy' recipe → deploy MISSING + non-zero.
-        jf.write_text(
-            "build:\n"
-            "    cargo build\n"
-            "\n"
-            "run:\n"
-            "    cargo run\n",
+            "build:\n    cargo build\n\n"
+            "run:\n    cargo run\n\n"
+            "deploy:\n    ./deploy.sh\n",
             encoding="utf-8",
         )
         results = audit_justfile(root)
         by_name = {c.name: c for c in results}
-        check(by_name["justfile:build"].status == "ok",
-              f"missing-deploy: build should be ok, got {by_name['justfile:build'].status}")
-        check(by_name["justfile:run"].status == "ok",
-              f"missing-deploy: run should be ok, got {by_name['justfile:run'].status}")
-        check(by_name["justfile:deploy"].status == "missing",
-              f"missing-deploy: deploy should be missing, got {by_name['justfile:deploy'].status}")
-        check(by_name["justfile:deploy"].problem,
-              "missing-deploy: deploy missing must be a problem")
+        for r in JUSTFILE_CORE_RECIPES:
+            check(by_name[f"justfile:{r}"].status == "ok",
+                  f"core-ok: {r} should be ok, got {by_name[f'justfile:{r}'].status}")
+        check(by_name["justfile:test"].status == STATUS_ADVISORY_MISSING,
+              "core-ok: test should be advisory-missing (extended, unwired)")
+        check(not by_name["justfile:test"].problem,
+              "core-ok: advisory test must not be a problem")
 
-        # Case 4: 'build' has placeholder body → PARTIAL + non-zero.
+        # Case 3: missing 'deploy' recipe → deploy MISSING + problem.
+        jf.write_text("build:\n    cargo build\n\nrun:\n    cargo run\n", encoding="utf-8")
+        by_name = {c.name: c for c in audit_justfile(root)}
+        check(by_name["justfile:deploy"].status == "missing" and by_name["justfile:deploy"].problem,
+              f"missing-deploy: deploy should be missing+problem, got {by_name['justfile:deploy'].status}")
+
+        # Case 4: core 'build' has placeholder body → PARTIAL + problem.
         jf.write_text(
-            "build:\n"
-            "    # grimoire:placeholder\n"
-            "    echo 'implement me'\n"
-            "\n"
-            "run:\n"
-            "    cargo run\n"
-            "\n"
-            "deploy:\n"
-            "    ./deploy.sh\n",
+            "build:\n    # grimoire:placeholder\n    echo 'implement me'\n\n"
+            "run:\n    cargo run\n\ndeploy:\n    ./deploy.sh\n",
             encoding="utf-8",
         )
-        results = audit_justfile(root)
-        by_name = {c.name: c for c in results}
-        check(by_name["justfile:build"].status == "partial",
-              f"partial-build: build should be partial, got {by_name['justfile:build'].status}")
-        check(by_name["justfile:build"].problem,
-              "partial-build: build partial must be a problem")
+        by_name = {c.name: c for c in audit_justfile(root)}
+        check(by_name["justfile:build"].status == "partial" and by_name["justfile:build"].problem,
+              f"partial-build: build should be partial+problem, got {by_name['justfile:build'].status}")
+
+        # Case 5: recipes.json marks an EXTENDED target implemented + routed to
+        # `just <recipe>` → that recipe becomes REQUIRED (MISSING is a problem).
+        claude_dir = root / ".claude"
+        claude_dir.mkdir(exist_ok=True)
+        (claude_dir / "recipes.json").write_text(json.dumps({
+            "targets": {
+                "test": {"command": "just test", "implemented": True},
+                # `server` (justfile `run`) implemented + routed → run required.
+                "server": {"command": "just run port=${port}", "implemented": True},
+            }
+        }), encoding="utf-8")
+        jf.write_text(
+            "build:\n    cargo build\n\nrun:\n    cargo run\n\ndeploy:\n    ./deploy.sh\n",
+            encoding="utf-8",
+        )
+        by_name = {c.name: c for c in audit_justfile(root)}
+        check(by_name["justfile:test"].status == "missing" and by_name["justfile:test"].problem,
+              f"recipes-wired: test should be required-missing, got {by_name['justfile:test'].status}")
         check(by_name["justfile:run"].status == "ok",
-              f"partial-build: run should be ok, got {by_name['justfile:run'].status}")
-        check(by_name["justfile:deploy"].status == "ok",
-              f"partial-build: deploy should be ok, got {by_name['justfile:deploy'].status}")
+              f"recipes-wired: run (server-routed) should be ok, got {by_name['justfile:run'].status}")
+
+        # Case 6: same recipes.json but justfile now defines 'test' → OK.
+        jf.write_text(
+            "build:\n    cargo build\n\nrun:\n    cargo run\n\n"
+            "test:\n    cargo test\n\ndeploy:\n    ./deploy.sh\n",
+            encoding="utf-8",
+        )
+        by_name = {c.name: c for c in audit_justfile(root)}
+        check(by_name["justfile:test"].status == "ok" and not by_name["justfile:test"].problem,
+              f"recipes-wired: test present should be ok, got {by_name['justfile:test'].status}")
+
+    # --- _justfile_recipe_required helper.
+    check(_justfile_recipe_required("build", None) is True,
+          "core build required even without recipes.json")
+    check(_justfile_recipe_required("package", None) is False,
+          "package advisory without recipes.json")
+    check(_justfile_recipe_required("package",
+          {"package": {"command": "just package v=${version}", "implemented": True}}) is True,
+          "package required when implemented + just-routed")
+    check(_justfile_recipe_required("package",
+          {"package": {"command": "./scripts/pkg.sh", "implemented": True}}) is False,
+          "package advisory when implemented via a non-just command")
+    check(_justfile_recipe_required("run",
+          {"server": {"command": "just run", "implemented": True}}) is True,
+          "run required when server target routed to `just run`")
+    # framework/lib stack: core target explicitly declared absent → advisory.
+    check(_justfile_recipe_required("build",
+          {"build": {"command": None, "implemented": False}}) is False,
+          "build advisory when recipes.json declares it absent (command:null)")
+    check(_justfile_recipe_required("deploy",
+          {"deploy": {"command": None, "implemented": False}}) is False,
+          "deploy advisory when recipes.json declares it absent (command:null)")
+
+    # --- repair_plan justfile entries (required + advisory).
+    # --- audit_architecture_rules: absent / present / opt_out / malformed.
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+
+        # Case 1: absent -> warn, not a problem.
+        results = audit_architecture_rules(root)
+        check(len(results) == 1, f"absent: expected 1 check, got {len(results)}")
+        check(results[0].status == "warn",
+              f"absent: expected warn, got {results[0].status}")
+        check(not results[0].problem, "absent architecture-rules.json must not be a problem")
+
+        # Case 2: present, real ruleset -> ok.
+        arch = root / ARCHITECTURE_RULES_FILE
+        arch.parent.mkdir(parents=True, exist_ok=True)
+        arch.write_text(json.dumps({"schema-version": 1, "layers": {}}), encoding="utf-8")
+        results = audit_architecture_rules(root)
+        check(results[0].status == "ok",
+              f"present: expected ok, got {results[0].status}")
+
+        # Case 3: present, explicit opt_out -> ok, reason surfaced.
+        arch.write_text(json.dumps({"schema-version": 1, "opt_out": True,
+                                    "opt_out-reason": "no layering yet"}), encoding="utf-8")
+        results = audit_architecture_rules(root)
+        check(results[0].status == "ok",
+              f"opt_out: expected ok, got {results[0].status}")
+        check("no layering yet" in results[0].detail,
+              "opt_out reason should be surfaced in the detail")
+
+        # Case 4: present but malformed -> warn (never crashes).
+        arch.write_text("{not json", encoding="utf-8")
+        results = audit_architecture_rules(root)
+        check(results[0].status == "warn",
+              f"malformed: expected warn, got {results[0].status}")
+
+    # --- repair_plan: architecture-rules absence is notice-only, never blocking.
+    rep_arch = Report(repo_root="/x")
+    rep_arch.architecture = [Check(ARCHITECTURE_RULES_FILE, "warn", "absent")]
+    plan_arch = repair_plan(rep_arch)
+    check(any(ARCHITECTURE_RULES_FILE in s for s in plan_arch),
+          "repair plan should mention the absent architecture-rules.json")
+    check(not any(c.problem for c in rep_arch.all_checks),
+          "architecture-rules warn must never be a problem status")
 
     # --- repair_plan justfile entries.
     rep2 = Report(repo_root="/x")
@@ -1151,6 +1405,7 @@ def _self_test() -> int:
         Check("justfile:build", "partial", "placeholder"),
         Check("justfile:run", "ok", ""),
         Check("justfile:deploy", "missing", "absent"),
+        Check("justfile:package", STATUS_ADVISORY_MISSING, "advisory"),
     ]
     plan3 = repair_plan(rep2)
     joined3 = "\n".join(plan3)
@@ -1158,6 +1413,8 @@ def _self_test() -> int:
           "repair plan should mention PARTIAL build recipe")
     check("MISSING" in joined3 and "deploy" in joined3,
           "repair plan should mention MISSING deploy recipe")
+    check("ADVISORY" in joined3 and "package" in joined3,
+          "repair plan should mention ADVISORY package recipe")
 
     if failures:
         print("SELF-TEST FAILED:")

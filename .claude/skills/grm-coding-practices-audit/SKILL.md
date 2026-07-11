@@ -12,8 +12,9 @@ reports adherence gaps. Two modes: a read-only **report** (default) and
 **`--file-issues`**, which files one issue per gap via `grm-feedback-to-issue`.
 
 This skill is **agent-driven**, not a linter — it reasons about the code; it does
-not run static analysis or parse an AST. Design + the audit-hint convention:
-`docs/design/coding-practices-audit-design.md`.
+not run static analysis or parse an AST. Design rationale + the audit-hint
+convention live in the upstream Grimoire repository (framework-internal — not
+shipped).
 
 ---
 

@@ -5,8 +5,14 @@ Validates a JSON payload (from a file or a live endpoint) against the Fleet
 Status Contract v1 spec (`docs/design/fleet-status-contract.md`).
 
 Supports two modes:
-  --self-test                   Run against built-in fixture JSONs; exit 0 on
-                                pass, non-zero on failure.
+  --self-test                   Run against the committed validation vectors
+                                under fleet-contract-vectors/ (manifest.json +
+                                cases/*.json); exit 0 on pass, non-zero on
+                                failure. The same vectors are the intended
+                                self-test fixture set for the future
+                                fleet-contract Rust crate (see
+                                docs/grimoire/design/fleet-status-contract.md
+                                §Crate spec pointer).
   --url <URL> [--token <tok>]   Fetch `GET <URL>/fleet/v1/status` (with and
                                 without the bearer token) and validate both
                                 the full shape (authed) and the minimal shape
@@ -31,12 +37,24 @@ import json
 import sys
 import urllib.request
 import urllib.error
+from pathlib import Path
 from typing import Any, Optional
+
+# Shared validation vectors (committed fixture payloads + expected outcomes),
+# consumed here and intended for the future fleet-contract Rust crate's
+# self-test too — see docs/grimoire/design/fleet-status-contract.md
+# §Crate spec pointer. Kept alongside this script so the skill directory is
+# self-contained.
+VECTORS_DIR = Path(__file__).resolve().parent / "fleet-contract-vectors"
 
 
 # ── Schema constants ───────────────────────────────────────────────────────────
 
 SCHEMA_VERSION = "1"
+# The prior schema_version consumers must still accept (§3.2 N/N-1 rule).
+# "1" is the first revision, so there is no N-1 yet; set to "1" and bump
+# SCHEMA_VERSION to "2" together whenever the contract's next revision ships.
+PREVIOUS_SCHEMA_VERSION: Optional[str] = None
 VALID_STATUSES = {"up", "degraded", "starting", "draining"}
 VALID_UPDATE_VERDICTS = {"UpToDate", "UpdateAvailable", "Unknown", "NotConfigured"}
 VALID_DEP_KINDS = {"build", "runtime"}
@@ -49,6 +67,28 @@ MINIMAL_FORBIDDEN_FIELDS = {
 }
 MINIMAL_FORBIDDEN_BUILD_FIELDS = {"git_sha", "built_at"}
 MINIMAL_FORBIDDEN_RUNTIME_FIELDS = {"bind", "started_at"}
+
+
+def check_schema_version_value(
+    sv: Any,
+    current: str = SCHEMA_VERSION,
+    previous: Optional[str] = PREVIOUS_SCHEMA_VERSION,
+) -> list[str]:
+    """Pure N/N-1 tolerance check (§3.2) — parameterized over the accepted
+    current/previous versions rather than hardcoding one value, so the same
+    logic works before and after a future schema_version bump.
+
+    Returns a list of error messages (empty ⇒ accepted). Kept standalone (not
+    a method) so it can be self-tested with hypothetical (current, previous)
+    pairs independent of this module's live SCHEMA_VERSION/PREVIOUS_SCHEMA_VERSION.
+    """
+    accepted = {v for v in (current, previous) if v}
+    if sv not in accepted:
+        return [
+            f"`schema_version` must be one of {sorted(accepted)!r} "
+            f"(N/N-1 tolerance); got {sv!r}"
+        ]
+    return []
 
 
 # ── Finding collector ─────────────────────────────────────────────────────────
@@ -112,6 +152,9 @@ class FleetConformanceValidator:
         if not isinstance(app, str) or not app:
             result.error("`app` must be a non-empty string")
 
+        # framework_version / last_synced (additive-optional, §3.5)
+        self._check_framework_sync_fields(payload, result)
+
         # instance block
         instance = payload.get("instance")
         if not isinstance(instance, dict):
@@ -168,6 +211,10 @@ class FleetConformanceValidator:
         if not isinstance(app, str) or not app:
             result.error("`app` must be a non-empty string")
 
+        # framework_version / last_synced (additive-optional, non-sensitive —
+        # allowed in the minimal shape too; §3.5)
+        self._check_framework_sync_fields(payload, result)
+
         # build block (minimal — version only)
         build = payload.get("build")
         if not isinstance(build, dict):
@@ -216,10 +263,21 @@ class FleetConformanceValidator:
 
     def _check_schema_version(self, payload: dict, result: ConformanceResult) -> None:
         sv = payload.get("schema_version")
-        if sv != SCHEMA_VERSION:
-            result.error(
-                f"`schema_version` must be {SCHEMA_VERSION!r}; got {sv!r}"
-            )
+        for msg in check_schema_version_value(sv):
+            result.error(msg)
+
+    def _check_framework_sync_fields(self, payload: dict, result: ConformanceResult) -> None:
+        """Validate the optional, non-sensitive `framework_version` / `last_synced`
+        fields (§1.2/§1.4/§3.5). Present on both full and minimal shapes; absent
+        is valid (older projects predate the field)."""
+        if "framework_version" in payload:
+            fv = payload["framework_version"]
+            if not isinstance(fv, str) or not fv:
+                result.error("`framework_version` must be a non-empty string when present")
+        if "last_synced" in payload:
+            ls = payload["last_synced"]
+            if ls is not None and not isinstance(ls, str):
+                result.error("`last_synced` must be a string or null when present")
 
     def _check_instance_block(self, block: dict, result: ConformanceResult) -> None:
         for field in ("id", "name", "env"):
@@ -365,130 +423,50 @@ def run_live(base_url: str, token: Optional[str]) -> int:
 
 
 # ── Self-test fixtures ─────────────────────────────────────────────────────────
-
-FIXTURE_FULL_VALID = {
-    "schema_version": "1",
-    "app": "familiar",
-    "instance": {"id": "550e8400-e29b-41d4-a716-446655440000", "name": "prod-01", "env": "production"},
-    "build": {"version": "1.20.0", "git_sha": "abc123def456", "built_at": "2026-06-01T12:00:00Z"},
-    "runtime": {"status": "up", "bind": "127.0.0.1:3000", "started_at": "2026-06-10T08:30:00Z"},
-    "dependencies": [
-        {"name": "tokio", "kind": "build", "version": "1.37.0"},
-        {
-            "name": "ollama",
-            "kind": "runtime",
-            "endpoint": "http://127.0.0.1:11434",
-            "reachable": True,
-            "version": "0.3.12",
-        },
-    ],
-    "update": {
-        "channel": "stable",
-        "verdict": "UpToDate",
-        "current": "1.20.0",
-        "available": None,
-        "last_checked": "2026-06-10T06:00:00Z",
-    },
-}
-
-FIXTURE_MINIMAL_VALID = {
-    "schema_version": "1",
-    "app": "familiar",
-    "build": {"version": "1.20.0"},
-    "runtime": {"status": "up"},
-}
-
-FIXTURE_FULL_MISSING_FIELDS = {
-    "schema_version": "1",
-    "app": "familiar",
-    # instance missing
-    "build": {"version": "1.20.0"},  # git_sha + built_at missing
-    "runtime": {"status": "up"},  # bind + started_at missing
-    "dependencies": [],
-    # update missing
-}
-
-FIXTURE_MINIMAL_WITH_FORBIDDEN = {
-    "schema_version": "1",
-    "app": "familiar",
-    "build": {"version": "1.20.0", "git_sha": "abc123"},  # git_sha MUST be absent
-    "runtime": {"status": "up"},
-    "instance": {"id": "x", "name": "y", "env": "local"},  # instance MUST be absent
-}
-
-FIXTURE_WRONG_SCHEMA_VERSION = {
-    "schema_version": "99",
-    "app": "familiar",
-    "build": {"version": "1.20.0"},
-    "runtime": {"status": "up"},
-}
-
-FIXTURE_INVALID_STATUS = {
-    "schema_version": "1",
-    "app": "familiar",
-    "build": {"version": "1.20.0"},
-    "runtime": {"status": "banana"},
-}
-
-FIXTURE_INVALID_VERDICT = {
-    "schema_version": "1",
-    "app": "familiar",
-    "instance": {"id": "x", "name": "y", "env": "local"},
-    "build": {"version": "1.20.0", "git_sha": "abc", "built_at": "2026-01-01T00:00:00Z"},
-    "runtime": {"status": "up", "bind": "0.0.0.0:3000", "started_at": "2026-01-01T00:00:00Z"},
-    "dependencies": [],
-    "update": {
-        "channel": "stable",
-        "verdict": "BANANA",
-        "current": "1.20.0",
-        "available": None,
-        "last_checked": None,
-    },
-}
-
-FIXTURE_DEP_MISSING_ENDPOINT = {
-    "schema_version": "1",
-    "app": "familiar",
-    "instance": {"id": "x", "name": "y", "env": "local"},
-    "build": {"version": "1.20.0", "git_sha": "abc", "built_at": "2026-01-01T00:00:00Z"},
-    "runtime": {"status": "up", "bind": "0.0.0.0:3000", "started_at": "2026-01-01T00:00:00Z"},
-    "dependencies": [
-        {
-            "name": "ollama",
-            "kind": "runtime",
-            # endpoint and reachable missing — should produce errors
-        }
-    ],
-    "update": {
-        "channel": "stable",
-        "verdict": "UpToDate",
-        "current": "1.20.0",
-        "available": None,
-        "last_checked": None,
-    },
-}
+#
+# The payload fixtures live as committed JSON under fleet-contract-vectors/,
+# loaded via a manifest that also records each case's shape and expected
+# outcome — see VECTORS_DIR above and manifest.json's header comment. This
+# is the single vector set a future fleet-contract Rust crate's self-test
+# validates against too, so Python and Rust cannot silently drift onto
+# different fixtures.
 
 
-FIXTURE_OMITTED_UPDATE_KEYS = {
-    # fleet.rs serializes update.available / update.last_checked with
-    # skip_serializing_if=Option::is_none — both keys ABSENT must validate
-    # clean (absent ≡ null per the spec).
-    "schema_version": "1",
-    "app": "familiar",
-    "instance": {"id": "x", "name": "y", "env": "local"},
-    "build": {"version": "1.20.0", "git_sha": "abc", "built_at": "2026-01-01T00:00:00Z"},
-    "runtime": {"status": "up", "bind": "0.0.0.0:3000", "started_at": "2026-01-01T00:00:00Z"},
-    "dependencies": [],
-    "update": {
-        "channel": "stable",
-        "verdict": "NotConfigured",
-        "current": "1.20.0",
-    },
-}
+class VectorCase:
+    """One committed validation-vector case: a payload plus its expected
+    outcome against a named shape validator."""
+
+    def __init__(self, name: str, shape: str, payload: Any, expect: str, min_errors: int) -> None:
+        self.name = name
+        self.shape = shape
+        self.payload = payload
+        self.expect = expect  # "pass" or "fail"
+        self.min_errors = min_errors
+
+
+def load_vector_cases(vectors_dir: Path = VECTORS_DIR) -> list[VectorCase]:
+    """Load the shared manifest + payload files into VectorCase objects."""
+    manifest_path = vectors_dir / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    cases: list[VectorCase] = []
+    for entry in manifest["cases"]:
+        payload_path = vectors_dir / entry["file"]
+        payload = json.loads(payload_path.read_text(encoding="utf-8"))
+        cases.append(
+            VectorCase(
+                name=entry["name"],
+                shape=entry["shape"],
+                payload=payload,
+                expect=entry["expect"],
+                min_errors=entry.get("min_errors", 1),
+            )
+        )
+    return cases
 
 
 def run_self_test() -> int:
-    """Run conformance checks against built-in fixture payloads. Returns exit code."""
+    """Run conformance checks against the committed validation vectors.
+    Returns exit code."""
     validator = FleetConformanceValidator()
     failures: list[str] = []
 
@@ -508,56 +486,64 @@ def run_self_test() -> int:
             print(f"  OK (expected failure): {result.label} — {len(result.errors)} error(s)")
 
     print("fleet_conformance.py --self-test")
+    print(f"Loading validation vectors from {VECTORS_DIR}")
     print()
 
-    # ── Full shape: valid ──────────────────────────────────────────────────
-    print("Group: full shape — valid payloads")
-    expect_pass(validator.validate_full(FIXTURE_FULL_VALID, "full-valid"))
-    expect_pass(
-        validator.validate_full(FIXTURE_OMITTED_UPDATE_KEYS, "full-omitted-update-keys")
-    )
+    cases = load_vector_cases()
+    validate_by_shape = {
+        "full": validator.validate_full,
+        "minimal": validator.validate_minimal,
+    }
 
-    # ── Full shape: invalid ────────────────────────────────────────────────
-    print("\nGroup: full shape — invalid payloads (each must produce >= 1 error)")
-    expect_fail(
-        validator.validate_full(FIXTURE_FULL_MISSING_FIELDS, "full-missing-fields"),
-        min_errors=1,
-    )
-    expect_fail(
-        validator.validate_full(FIXTURE_WRONG_SCHEMA_VERSION, "full-wrong-schema-version"),
-        min_errors=1,
-    )
-    expect_fail(
-        validator.validate_full(FIXTURE_INVALID_VERDICT, "full-invalid-verdict"),
-        min_errors=1,
-    )
-    expect_fail(
-        validator.validate_full(FIXTURE_DEP_MISSING_ENDPOINT, "full-dep-missing-endpoint"),
-        min_errors=1,
-    )
+    # ── Vector cases: valid payloads ────────────────────────────────────────
+    print("Group: valid payloads (expect PASS)")
+    for case in cases:
+        if case.expect != "pass":
+            continue
+        expect_pass(validate_by_shape[case.shape](case.payload, case.name))
 
-    # ── Minimal shape: valid ───────────────────────────────────────────────
-    print("\nGroup: minimal shape — valid payloads")
-    expect_pass(validator.validate_minimal(FIXTURE_MINIMAL_VALID, "minimal-valid"))
+    # ── Vector cases: invalid payloads ──────────────────────────────────────
+    print("\nGroup: invalid payloads (each must produce >= min_errors error(s))")
+    for case in cases:
+        if case.expect != "fail":
+            continue
+        expect_fail(
+            validate_by_shape[case.shape](case.payload, case.name),
+            min_errors=case.min_errors,
+        )
 
-    # ── Minimal shape: invalid ─────────────────────────────────────────────
-    print("\nGroup: minimal shape — invalid payloads (each must produce >= 1 error)")
-    expect_fail(
-        validator.validate_minimal(
-            FIXTURE_MINIMAL_WITH_FORBIDDEN, "minimal-with-forbidden-fields"
-        ),
-        min_errors=2,  # git_sha in build + instance present
-    )
-    expect_fail(
-        validator.validate_minimal(
-            FIXTURE_WRONG_SCHEMA_VERSION, "minimal-wrong-schema-version"
-        ),
-        min_errors=1,
-    )
-    expect_fail(
-        validator.validate_minimal(FIXTURE_INVALID_STATUS, "minimal-invalid-status"),
-        min_errors=1,
-    )
+    # ── Schema-version N/N-1 tolerance (pure logic, §3.2/§3.5) ─────────────
+    # Exercised with hypothetical (current, previous) pairs — independent of
+    # this module's live SCHEMA_VERSION/PREVIOUS_SCHEMA_VERSION — to prove the
+    # tolerance mechanism works both before and after a future schema bump.
+    print("\nGroup: schema_version N/N-1 tolerance (pure function)")
+    tolerance_failures: list[str] = []
+
+    def expect_tolerance_ok(sv: str, current: str, previous: Optional[str], desc: str) -> None:
+        errs = check_schema_version_value(sv, current=current, previous=previous)
+        if errs:
+            tolerance_failures.append(f"UNEXPECTED REJECT — {desc}: {errs}")
+        else:
+            print(f"  OK: {desc}")
+
+    def expect_tolerance_reject(sv: str, current: str, previous: Optional[str], desc: str) -> None:
+        errs = check_schema_version_value(sv, current=current, previous=previous)
+        if not errs:
+            tolerance_failures.append(f"UNEXPECTED ACCEPT — {desc}")
+        else:
+            print(f"  OK (expected reject): {desc}")
+
+    # Today: current="1", no N-1 yet.
+    expect_tolerance_ok("1", current="1", previous=None, desc="current version (no N-1 yet)")
+    expect_tolerance_reject("0", current="1", previous=None, desc="no N-1 defined — rejected")
+    # Hypothetical future bump: current="2", previous="1".
+    expect_tolerance_ok("2", current="2", previous="1", desc="future current version")
+    expect_tolerance_ok("1", current="2", previous="1", desc="future N-1 (still accepted)")
+    expect_tolerance_reject("0", current="2", previous="1", desc="two versions behind — rejected")
+    expect_tolerance_reject("3", current="2", previous="1", desc="unknown future version — rejected")
+
+    if tolerance_failures:
+        failures.extend(tolerance_failures)
 
     # ── Summary ────────────────────────────────────────────────────────────
     print()

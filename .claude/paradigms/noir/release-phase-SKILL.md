@@ -1,5 +1,5 @@
 ---
-name: release-phase
+name: grm-release-phase
 description: Dispatch work-item subagents for the next open phase autonomously — no per-item confirmation, no chips. Groups work by dependency, sizes each item by token estimate, and dispatches the full batch at once via isolated-worktree subagents. Use when the user says "start phase N", "dispatch the tasks", or "kick off phase". Run after release-agreement has locked the plan.
 ---
 
@@ -33,8 +33,8 @@ implement one item and return a branch; the returned branches are then merged
 in `mergeAfter` order by `grm-release-phase-merge`. `Auto` reuses the existing
 write-capable tier — no new machinery — and the execution variant still comes
 from `workflow-variant`. See the integration-master §Write-capable Workflow
-integration / §`release-phase-model` dial and
-`docs/design/release-phase-model-design.md`.
+integration / §`release-phase-model` dial. That dial is a framework-internal
+design — see the upstream Grimoire repository for that rationale.
 
 ---
 
@@ -201,6 +201,25 @@ implements one item, and returns its branch for merge.
 - **label/description**: `{ITEM-ID}: {short title}`.
 - **prompt**: self-contained task block (same task template as Supervised
   `grm-release-phase`), built per the §Shared-context dispatch guidance below.
+  That template's root check is immediately followed by
+  `grm-worktree-preflight`'s Step 0.5 (parent sync) — the subagent syncs
+  against `version/{X.Y}` before touching code, and re-runs it on session
+  resume, not just at spawn.
+
+> **Noir no-chip clause (mandatory).** Every Noir task-agent prompt MUST
+> include the following verbatim — copy it word-for-word into every dispatched
+> agent's prompt, as a top-level requirement before the work description:
+>
+> > "Report all out-of-scope follow-ups as plain text in your final report.
+> > Never call `spawn_task`, never create chips, never ask the user; you are
+> > running unattended."
+>
+> **Rationale:** the dispatched subagent carries the full tool set, including
+> `spawn_task`. Without an explicit prohibition, it may call `spawn_task` to
+> flag out-of-scope discoveries, which creates a chip requiring a human click
+> — stalling the unattended run. This clause is the primary prompt-side guard
+> (see `integration-master/SKILL.md` §Dispatch is chip-free for the
+> master-side re-routing layer).
 
 ---
 
@@ -259,4 +278,5 @@ When dispatching a batch of agents, minimize per-agent prompt size:
 - Give each agent only its **per-item delta**: its specific files, its branch, and
   its one acceptance criterion. Label by item, not by re-stating shared context.
 - Result: materially smaller per-agent prompts with no loss of fidelity.
-  Authority: `docs/design/context-efficiency-design.md`.
+  Design rationale lives in the upstream Grimoire repository (framework-internal
+  — not shipped).

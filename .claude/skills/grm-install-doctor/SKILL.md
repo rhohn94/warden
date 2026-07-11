@@ -1,6 +1,6 @@
 ---
 name: grm-install-doctor
-description: One idempotent, non-destructive-by-default health check for a Grimoire install — audits framework files against the workflow-bootstrap golden baseline (MISSING / DRIFTED), validates the upstream connection, confirms every sync feature-manifest feature is adopted, and checks the Justfile contract. Default is a read-only audit; `repair` emits a non-destructive plan. Use when verifying install / framework health or repairing the scaffold.
+description: One idempotent, non-destructive-by-default health check for a Grimoire install — audits framework files against the workflow-bootstrap golden baseline (MISSING / DRIFTED), validates the upstream connection, confirms feature adoption, checks the Justfile contract, and notices an absent architecture ruleset. Read-only audit by default; `repair` emits a non-destructive plan. Use when verifying install / framework health or repairing the scaffold.
 ---
 
 # Install-doctor
@@ -10,9 +10,9 @@ answers one question — *"is this scaffold installed correctly, connected to
 its upstream, and fully adopted?"* — and, only when explicitly asked, repairs
 what is broken.
 
-It is a **skill, not a role** (see `docs/grimoire/design/agent-roles-design.md`): it has
-no session of its own, owns no branch, and performs no integration. It runs in
-whatever session invokes it.
+It is a **skill, not a role** (the role taxonomy is a framework-internal design
+— see the upstream Grimoire repository): it has no session of its own, owns no
+branch, and performs no integration. It runs in whatever session invokes it.
 
 ## The cardinal rule: WRAP, never reimplement
 
@@ -80,7 +80,7 @@ framework-file check. `repair --freeze-baseline` (back-compat: `--repair`)
 closes that gap **non-interactively**: it derives a versioned
 `golden-v{X.Y}.tar.gz` from the current **pristine** scaffold into the gitignored
 `.grimoire-golden/` cache (delegating to `generate_golden.freeze_from_install`),
-then re-audits against it. This is the one mutation `grm-install-doctor` performs
+then re-audits against it. This is the one mutation `install-doctor` performs
 itself, and it touches **only the gitignored cache — never a tracked file** (so
 the "don't mutate tracked files" contract holds; do not commit the tarball).
 
@@ -121,6 +121,14 @@ Map each remaining finding to its owning skill and act in this order:
    live `permissions.allow`, skipping entries already present. **Path-scoped to
    framework scripts only — never widen.** Editing `settings.json` permissions is
    **user-confirmed**; the guard hooks remain the safety net regardless.
+7. **Absent `.claude/architecture-rules.json`** (ruleset-absent notice, #314) →
+   **notice-only, never a repair blocker.** Offer adoption: copy the per-family
+   starter matching the project's profile from
+   `.claude/quick-start-templates/{service,web,gui,lib}/files/.claude/architecture-rules.json`
+   (or `.claude/architecture-rules.example.json`) to
+   `.claude/architecture-rules.json` and adapt the layer globs; or, if the
+   project deliberately declines, commit a rules file with `"opt_out": true` +
+   an `"opt_out-reason"` so the decision is tracked, not silent.
 
 After repairs, **re-run Step 1** (the audit is idempotent) and emit a fresh
 report showing what changed. A second clean run is the success signal.
@@ -168,10 +176,14 @@ The helper emits a Markdown report (or JSON with `--json`). Shape:
 ## Sync base snapshot (.scaffold-base)
 | `.scaffold-base` | OK | present (N file(s) recorded) |
 
-## Justfile contract (required recipes)
+## Justfile contract (full recipe vocabulary)
 | `justfile:build` | OK | recipe 'build' present and non-placeholder |
 | `justfile:run` | PARTIAL | recipe 'run' has a grimoire:placeholder body — implement the recipe for this project. |
 | `justfile:deploy` | MISSING | recipe 'deploy' not found in justfile. See docs/design/justfile-standard-design.md for the contract. |
+| `justfile:package` | ADVISORY-MISSING | recipe 'package' absent (advisory — not wired to `just package` in .claude/recipes.json). |
+
+## Architecture-rules adoption (.claude/architecture-rules.json)
+| `.claude/architecture-rules.json` | WARN | absent — architecture fitness rules not adopted; copy a per-family starter … |
 
 ## Notes
 - Feature-adoption is NOT audited mechanically: run each feature-manifest detect …
@@ -194,6 +206,6 @@ not write it to a file unless the user asks.
 
 - `Step 1 — Audit (always; read-only)` — see `reference.md`
 - `Anti-patterns` — see `reference.md`
-- `Config validation (v1.31, #68)` — see `reference.md`
-- `Justfile contract check (v3.53, #196)` — see `reference.md`
-- `Docs legacy style finding (v3.37, WH-5)` — see `reference.md`
+- `Config validation` — see `reference.md`
+- `Justfile contract check` — see `reference.md`
+- `Docs legacy style finding` — see `reference.md`

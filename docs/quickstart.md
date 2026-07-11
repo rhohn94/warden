@@ -55,14 +55,18 @@ anything else. You will see:
 
 > "I see this is a fresh Grimoire project. Let me walk you through setup first."
 
-The onboarding interview then asks four questions in order:
+The onboarding interview then asks seven questions in order, each an
+independent dial (none is derived from another) and each active immediately:
 
 | Step | Question |
 |------|----------|
 | 1 | **Project name** — what do you call your project? |
-| 2 | **Work Paradigm** — Supervised / Weiss / Noir (activates immediately during setup) |
-| 3 | **Workflow variant** *(preview — not yet active)* — Efficient / Fast / Careful-Serial |
+| 2 | **Work Paradigm** — Supervised / Weiss / Noir |
+| 3 | **Execution strategy** — Fast / Efficient (default) / Cheap-Slow — how work is dispatched (fan-out width, isolation mode) |
 | 4 | **GUI presence** — does your project have (or will have) a user interface? |
+| 5 | **Model/effort profile** — Medium (default) / High Effort / Efficient / Low Effort / Eco/Budget / Autonomous — cost posture for subagent dispatch |
+| 6 | **Issue tracker** — Roadmap (default, `docs/roadmap.md`) / GitHub |
+| 7 | **Release-phase model** — Default / Auto (Auto offered only under Noir) |
 
 After you answer, onboarding:
 
@@ -104,8 +108,11 @@ settings that cannot be inferred (test/build/release commands, etc.).
 |-------|-------------------------------|
 | Project name | Quoted string after `name:` or `project:`; else the repo directory basename |
 | Work Paradigm | First case-insensitive match of `Supervised`, `Weiss`, or `Noir` (aliases `Collaborative`→Weiss, `Autonomous`→Noir accepted) |
-| Workflow variant | First case-insensitive match of `Efficient`, `Fast`, or `Careful-Serial` |
+| Execution strategy | First case-insensitive match of `Fast`, `Efficient`, or `Cheap-Slow` (legacy `Careful-Serial` accepted, migrated to `Cheap-Slow`) |
 | GUI presence | Keywords `gui/ui/interface/web/app/frontend` → yes; `headless/cli/api` → no; else → not yet |
+| Model/effort profile | First case-insensitive match of `Medium`, `High Effort`, `Low Effort`, `Efficient`, `Autonomous`, or `Eco/Budget`; else `Medium` |
+| Issue tracker | Match of `github` (+ nearby `owner/repo`) → GitHub; else omitted (roadmap default) |
+| Release-phase model | `Auto` only when named near "release"/"phase"/"orchestration" **and** the paradigm resolves to Noir; else `Default` |
 
 After SKIP ONBOARDING completes, review `.claude/grimoire-config.json` and
 adjust any inferred values if needed.
@@ -124,26 +131,20 @@ A typical file looks like:
 
 ```json
 {
-  "schema-version": 2,
+  "schema-version": 4,
   "name": "Acme Widget",
-  "work-paradigm": {
-    "value": "Supervised"
-  },
-  "workflow-variant": {
-    "value": "Efficient",
-    "in-development": true
-  }
+  "work-paradigm": { "value": "Supervised" },
+  "workflow-variant": { "value": "Efficient" },
+  "model-effort-profile": { "value": "Medium" },
+  "release-phase-model": { "value": "Default" }
 }
 ```
 
-The **Work Paradigm is active** — it is installed during setup (the
-`grm-work-paradigm-switch` skill runs as part of onboarding) and the
-`schema-version` is `2`, so `work-paradigm` no longer carries an
-`in-development` flag. The `workflow-variant` field is still
-`in-development: true` (**preview — not yet active**); it is stored now so a
-future Grimoire release can read your preference without re-asking. See
-[docs/features.md](features.md) for what each setting means and when it will
-take effect.
+All four dials shown are **active** — each is installed or read live during
+setup (`grm-work-paradigm-switch`, `grm-workflow-variant-switch`,
+`grm-model-effort-profile-switch`, `grm-release-phase-model-switch`), and none
+carries an `in-development` flag. See [docs/features.md](features.md) §5 for
+the full field list and what each setting means.
 
 ---
 

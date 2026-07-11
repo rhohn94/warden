@@ -155,7 +155,7 @@ catalog filing hand-off:
 2. Deduplicate: list all `Grimoire-Requirement`-tagged issues (open **and**
    closed) and skip any entry whose `[key: <key>]` marker is already present
    in an existing issue title.
-3. For each unfiled entry, spawn a **Reporter** (`grm-reporter` skill) to file
+3. For each unfiled entry, spawn a **Reporter** (`grm-agent-reporter` skill) to file
    one `Grimoire-Requirement`-tagged ticket via `grm-feedback-to-issue`, using
    the title, body, labels, and `audience: "internal"` from the catalog entry.
    `ensure_label` is called automatically before filing (WEB-5).

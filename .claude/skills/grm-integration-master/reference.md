@@ -14,8 +14,8 @@ gate, `grm-project-release`, and the push.
 Absent a PM (no `grm-project-manager` block, or a single-feature release), the
 master is unchanged: it remains the top-level orchestrator and runs the whole
 pipeline below exactly as documented (the degenerate one-lane case). The PM
-layer is additive — it does not remove the standalone master path. See
-`docs/grimoire/design/project-manager-role-design.md` §5.
+layer is additive — it does not remove the standalone master path. (Design
+rationale in the upstream Grimoire repository, framework-internal.)
 
 ---
 
@@ -23,7 +23,7 @@ layer is additive — it does not remove the standalone master path. See
 
 A long autonomous run can approach a usage/token limit mid-campaign. Account-level
 cap and reset-cadence signals are **not reliably observable from inside a run**
-(see `docs/grimoire/design/cost-governance-design.md` §Token-limit observability), so the
+(framework-internal rationale in the upstream Grimoire repository), so the
 master does **not** try to catch a cap and pause an in-flight generation. Instead
 it survives limit windows by **checkpointing and re-entering on a schedule**:
 
@@ -64,10 +64,16 @@ On wake, the master **re-reads the §5 ledger checkpoint** and continues from th
 next pending branch. The ledger + git branch tips are the durable state — no
 extra checkpoint file is needed.
 
+**Re-run `grm-worktree-preflight` on every wake, including its Step 0.5 parent
+sync.** A resumed session is exactly the case Step 0.5 targets — the parent
+(`version/{X.Y}`, or `dev` if no staging branch) has had the most time to move
+while paused. This applies to the master's own worktree and to any dispatched
+work-item subagent that resumes rather than freshly spawns.
+
 **Supervised and Weiss keep human-driven resumption** — they do **not**
 auto-schedule wakeups. **Push stays human-gated even when a wakeup resumes the
 run** (unless `autonomous-push.enabled` is set, per the top of this guide).
-Design: `docs/grimoire/design/autonomy-scheduling-design.md` §1.
+(Design rationale in the upstream Grimoire repository, framework-internal.)
 
 ---
 
@@ -100,16 +106,16 @@ merges autonomously, stops only on the listed stop conditions, and never pushes
 without human confirmation.
 
 See `.claude/workflows/write-capable-example.js` for the canonical reference
-implementation, and `docs/grimoire/design/write-capable-workflow-design.md` for the
-full tier specification.
+implementation (the full tier specification is a framework-internal design —
+see the upstream Grimoire repository).
 
 ### `release-phase-model` dial — `Default` vs `Auto` execution paths
 
 The `release-phase-model` config dial selects **how the master executes an
 agreed plan**. The master reads `release-phase-model.value` **live** at
 execution time (no file-swap — same pattern as `workflow-variant`); absent the
-field, treat it as `Default`. Full spec:
-`docs/grimoire/design/release-phase-model-design.md`.
+field, treat it as `Default`. (Full spec in the upstream Grimoire repository,
+framework-internal.)
 
 - **`Default` (default).** Decompose into phases and dispatch each work item as
   a separate isolated-worktree subagent (`Agent` with `isolation:"worktree"`) —
@@ -163,8 +169,8 @@ the default-on #13 scheduling); **hand off your own worktree** — you cannot
 exact removal command for the operator (or parent PM) to run elsewhere, never
 abandon it silently; **drop the now-stale** `.claude/integration-allow.local`
 marker; **clear scratch** (`/tmp/notes-*.md`, etc.); and **report the tally**.
-Full procedure: `integration-workflow.md` §Run teardown (end-of-run). Design:
-`docs/grimoire/design/agent-teardown-design.md`.
+Full procedure: `integration-workflow.md` §Run teardown (end-of-run). (Design
+rationale in the upstream Grimoire repository, framework-internal.)
 
 ## QA close gate (Noir, post-merge)
 
@@ -188,7 +194,8 @@ follow-ups; it does not re-open the branch or block subsequent merges.
 **Per-issue, per-merged-branch** — this gate runs for each issue covered by each
 merged branch, not once per release.
 
-Design authority: `docs/grimoire/design/qa-agent-design.md` §Issue close gate (v3.35, #113).
+Design rationale (§Issue close gate, v3.35, #113) lives in the upstream
+Grimoire repository (framework-internal — not shipped).
 
 ## Anti-patterns
 
@@ -206,8 +213,8 @@ Design authority: `docs/grimoire/design/qa-agent-design.md` §Issue close gate (
 
 ## Context efficiency (v1.29)
 
-Cost levers for long autonomous campaigns. Authority:
-`docs/grimoire/design/context-efficiency-design.md`.
+Cost levers for long autonomous campaigns. (Design rationale in the upstream
+Grimoire repository, framework-internal.)
 
 - **Cache-friendly ordering (#57).** Read **stable** content first (coding
   standards, design docs, the agreed release plan) and **volatile** content last
@@ -224,7 +231,7 @@ Cost levers for long autonomous campaigns. Authority:
 
 ## Autonomy hardening (v1.30)
 
-Authority: `docs/grimoire/design/autonomy-hardening-design.md`.
+(Design rationale in the upstream Grimoire repository, framework-internal.)
 
 - **Chip-free dispatch (#60).** `spawn_task` chips need a human click, so Noir
   never uses them for work-item dispatch — always dispatch via the write-capable

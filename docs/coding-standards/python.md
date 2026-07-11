@@ -58,6 +58,31 @@ Per-technology coding standards for Python. Read alongside the cross-language
 - Keep scripts in `scripts/` or behind a `[project.scripts]` entry point in
   `pyproject.toml`; no raw `python foo.py` invocations in CI.
 
+## Module size budget (#347)
+
+Mirroring `rust.md`'s stated per-language budget (`rs-module-size`, ~400
+lines): a Python module — in this repo, concretely a `.claude/skills/*/*.py`
+skill script — should stay within **~800 lines**; split along internal seams
+(one class/responsibility per module, per §Module & package structure above)
+before it grows past that. Python's higher budget than Rust's reflects the
+denser, more line-hungry nature of a stdlib-only CLI script (argparse
+plumbing, a self-test harness, and docstring-as-documentation all live in the
+same file here — see `docs/grimoire/design/scripting-unification-design.md`).
+
+**Named tracked exceptions (pending a future split):**
+- `.claude/skills/grm-doc-assurance/doc_assurance.py` (3539 lines) — five
+  independent checks (flavor-parity, design-doc layout, link integrity, docs
+  map, release consistency) share one CLI/report shell; splitting is tracked
+  but not yet scheduled.
+- `.claude/skills/grm-issue-tracker/issue_tracker.py` (2088 lines) — nine
+  operations across multiple pluggable backends (roadmap, github) in one
+  dispatcher; splitting per-backend is tracked but not yet scheduled.
+
+Both exceed the ~800-line budget today; they are recorded here rather than
+silently exempted so `grm-coding-practices-audit` / `arch-module-size` findings
+against them are recognized as known, tracked debt and not re-litigated each
+audit pass.
+
 ## Dependency hygiene
 
 - Declare dependencies in `pyproject.toml` (`[project.dependencies]`); pin to
@@ -90,3 +115,4 @@ centralise emission behind one telemetry module:
 <!-- audit: id="py-type-hints" check="public functions carry type hints" severity="info" applies="python" -->
 <!-- audit: id="py-no-mutable-default" check="no mutable default arguments (def f(x=[]))" severity="warn" applies="python" -->
 <!-- audit: id="py-pin-deps" check="dependencies are version-pinned in requirements/pyproject" severity="warn" applies="python" -->
+<!-- audit: id="py-module-size" check="modules stay under ~800 lines (skill scripts); large modules split along internal seams — see §Module size budget for named tracked exceptions" severity="info" applies="python" -->

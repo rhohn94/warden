@@ -29,6 +29,8 @@ Usage:
             [--watch] [--dry-run] [--list] [--generate STACK] [--recipes PATH]
             [--self-test]
 """
+from __future__ import annotations
+
 import argparse
 import json
 import os
@@ -36,7 +38,7 @@ import shlex
 import subprocess
 import sys
 
-INTERFACE_VERSION = 4
+INTERFACE_VERSION = 6
 
 # The canonical interface: target -> {desc, params{name->{env, default}}}.
 # `env` names the environment variable consulted for that parameter's value.
@@ -89,36 +91,90 @@ INTERFACE = {
     "smoke":    {"desc": "Boot app and verify entry page + critical assets return 2xx "
                          "with correct content-type. Exit 2 when unimplemented.",
                  "params": {"port": {"env": "GRIMOIRE_APP_PORT", "default": "3000"}}},
+    # v5 (recipe layer phase 2, issue #201 §4): the changelog-derived release
+    # ceremony (no args). Derives the version from the newest changelog heading,
+    # guards (release branch / clean tree / tag absent / changelog entry present),
+    # bumps the version file(s), tests + release-builds, archives, commits, tags,
+    # and reconciles the matching milestone:v{X.Y} issues into release notes via
+    # the issue-tracker abstraction. Web-app-shape: the `web` stack pre-fills a
+    # stub; other stacks leave it command: null (exit 2 when called). Reference
+    # implementation: quick-start-templates/web/files/scripts/release.sh.
+    "release":  {"desc": "changelog-derived release ceremony (bump/test/build/tag "
+                         "+ milestone reconciliation). Exit 2 when unimplemented.",
+                 "params": {}},
+    # v6 (RSS-4, #322): kill running instance(s) of THIS project's process.
+    # Resolution order: `--port` -> `$GRIMOIRE_APP_PORT` -> the pidfile `run`
+    # wrote -> a project-declared process pattern. Only kills processes
+    # positively identified as this project's own; idempotent (nothing running
+    # is exit 0 with a report, never an error). Web/service stacks get a real
+    # generic reference implementation (`scripts/stop.sh`, universal like
+    # sync-deps/vendor-check); other stacks leave it `command: null` (exit 2
+    # when called — advisory, like every unimplemented target).
+    # Full spec: docs/design/justfile-standard-design.md §stop.
+    "stop":     {"desc": "kill running instance(s) of this project's process. "
+                        "Exit 2 when unimplemented.",
+                 "params": {"port": {"env": "GRIMOIRE_APP_PORT", "default": ""}}},
 }
+
+# Dispatcher aliases: alternate target spellings that resolve to a canonical
+# INTERFACE target. `run` is the canonical *justfile* recipe name (Justfile
+# standard §2); the versioned INTERFACE target has always been `server`, kept
+# permanently as a dispatcher alias so `recipe.py server` and `recipe.py run`
+# resolve to the SAME recipe entry (whose command is `just run …`). This is a
+# pure alias — no new INTERFACE verb — so INTERFACE_VERSION is NOT bumped for the
+# server↔run reconciliation (RSS-3, #321). Authority:
+# docs/grimoire/design/build-recipe-interface-design.md §run↔server reconciliation
+# + docs/design/justfile-standard-design.md §2.
+ALIASES = {"run": "server"}
+
+
+def resolve_alias(target: str) -> str:
+    """Map a dispatcher alias to its canonical INTERFACE target (identity if none)."""
+    return ALIASES.get(target, target)
 
 # Stack presets used by --generate to pre-fill inferrable targets. Unknown/other
 # targets are stubbed unimplemented (command: null) so the agent never silently
 # no-ops.
+# RSS-3 (#321): every preset command routes through the standard `justfile` —
+# `just <recipe> …` — so a generated recipes.json is a thin routing table over the
+# justfile (the one place recipes live). The `server` target routes to `just run`
+# (canonical justfile name; see ALIASES). Multi-line logic lives in `scripts/`;
+# the thin `just` recipe delegates to it. Preset commands are stubs
+# (implemented: false) until the project wires the justfile recipe body and flips
+# implemented: true.
 # `web` extends `server` with the deployment-protocol producers (package/deploy);
 # server/cli/library leave package+deploy as unimplemented stubs (command: null),
 # so a non-web project that calls them gets the loud exit-2, never a no-op.
-# Every stack (v3) pre-fills the dependency-channel verbs `grm-sync-deps` +
-# `vendor-check` as stubs — the consume side is universal regardless of stack.
-_DEP_CHANNEL_PRESET = {"sync-deps": "echo TODO sync-deps ${mode}",
-                       "vendor-check": "echo TODO vendor-check ${full}"}
-# v4 (runtime verification): web and server stacks pre-fill a curl-based smoke
-# stub (implemented: false, TODO command); cli/library leave smoke absent so
+# Every stack (v3) pre-fills the dependency-channel verbs `sync-deps` +
+# `vendor-check` as stubs whose `just` recipe delegates to the framework scripts —
+# the consume side is universal regardless of stack.
+_DEP_CHANNEL_PRESET = {"sync-deps": "just sync-deps ${mode}",
+                       "vendor-check": "just vendor-check ${full}"}
+# v4 (runtime verification): web and server stacks pre-fill a smoke stub
+# (implemented: false) routing to `just smoke`; cli/library leave smoke absent so
 # generate() stubs it as command: null (exit 2 when called — advisory).
-_SMOKE_PRESET = {"smoke": "echo TODO smoke --port ${port}"}
+_SMOKE_PRESET = {"smoke": "just smoke ${port}"}
+# v6 (RSS-4, #322): web/server stacks pre-fill a stop stub routing to `just
+# stop`; cli/library leave stop absent (a stack with no runnable process has
+# nothing to stop) so generate() stubs it command: null (exit 2 — advisory).
+_STOP_PRESET = {"stop": "just stop ${port}"}
 STACK_PRESETS = {
-    "server": {"build": "echo TODO build", "server": "echo TODO serve --port ${port}",
-               "test": "echo TODO test", "lint": "echo TODO lint", "clean": "echo TODO clean",
-               **_DEP_CHANNEL_PRESET, **_SMOKE_PRESET},
-    "web":     {"build": "echo TODO build", "server": "echo TODO serve --port ${port}",
-                "test": "echo TODO test", "lint": "echo TODO lint", "clean": "echo TODO clean",
-                "package": "echo TODO package --version ${version} --target ${target}",
-                "deploy": "echo TODO deploy --env ${env}",
-                **_DEP_CHANNEL_PRESET, **_SMOKE_PRESET},
-    "cli":     {"build": "echo TODO build", "test": "echo TODO test",
-                "lint": "echo TODO lint", "clean": "echo TODO clean",
+    "server": {"build": "just build ${env}",
+               "server": "just run ${env} ${port}",
+               "test": "just test", "lint": "just lint", "clean": "just clean",
+               **_DEP_CHANNEL_PRESET, **_SMOKE_PRESET, **_STOP_PRESET},
+    "web":     {"build": "just build ${env}",
+                "server": "just run ${env} ${port}",
+                "test": "just test", "lint": "just lint", "clean": "just clean",
+                "package": "just package ${version} ${target}",
+                "deploy": "just deploy ${env}",
+                "release": "just release",
+                **_DEP_CHANNEL_PRESET, **_SMOKE_PRESET, **_STOP_PRESET},
+    "cli":     {"build": "just build ${env}", "test": "just test",
+                "lint": "just lint", "clean": "just clean",
                 **_DEP_CHANNEL_PRESET},
-    "library": {"build": "echo TODO build", "test": "echo TODO test",
-                "lint": "echo TODO lint", "clean": "echo TODO clean",
+    "library": {"build": "just build ${env}", "test": "just test",
+                "lint": "just lint", "clean": "just clean",
                 **_DEP_CHANNEL_PRESET},
 }
 
@@ -129,7 +185,7 @@ class RecipeError(Exception):
     pass
 
 
-def load_recipes(path):
+def load_recipes(path: str) -> dict:
     try:
         with open(path, encoding="utf-8") as fh:
             data = json.load(fh)
@@ -143,7 +199,7 @@ def load_recipes(path):
     return data
 
 
-def resolve_params(target, cli_args, env):
+def resolve_params(target: str, cli_args: dict, env: dict) -> dict:
     """Resolve each interface param for `target` (CLI -> env -> recipe -> spec)."""
     spec = INTERFACE[target]["params"]
     recipe_defaults = cli_args.get("_recipe_params", {})
@@ -164,7 +220,7 @@ def resolve_params(target, cli_args, env):
     return out
 
 
-def substitute(command, params):
+def substitute(command: str, params: dict) -> str:
     """Replace ${name} placeholders in a command template with resolved params."""
     rendered = command
     for name, val in params.items():
@@ -172,7 +228,7 @@ def substitute(command, params):
     return rendered
 
 
-def build_command(target, recipes, cli_args, env):
+def build_command(target: str, recipes: dict, cli_args: dict, env: dict) -> tuple:
     if target not in INTERFACE:
         raise RecipeError("unknown target %r — valid targets: %s"
                           % (target, ", ".join(sorted(INTERFACE))))
@@ -188,7 +244,7 @@ def build_command(target, recipes, cli_args, env):
     return substitute(entry["command"], params), params
 
 
-def generate_recipes(stack, existing=None):
+def generate_recipes(stack: str, existing: dict | None = None) -> dict:
     """Return a recipes dict for `stack`, preserving any existing implemented
     targets and stubbing every interface target not yet present."""
     preset = STACK_PRESETS.get(stack, {})
@@ -206,7 +262,7 @@ def generate_recipes(stack, existing=None):
     return {"interface-version": INTERFACE_VERSION, "stack": stack, "targets": targets}
 
 
-def list_targets(recipes):
+def list_targets(recipes: dict) -> list:
     rows = []
     for name in sorted(INTERFACE):
         entry = recipes.get("targets", {}).get(name, {}) if recipes else {}
@@ -217,14 +273,16 @@ def list_targets(recipes):
     return rows
 
 
-def main(argv=None):
+def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Grimoire build-recipe dispatcher.")
     ap.add_argument("target", nargs="?", help="one of: " + ", ".join(sorted(INTERFACE)))
     ap.add_argument("--port"); ap.add_argument("--env"); ap.add_argument("--filter")
     ap.add_argument("--fixture"); ap.add_argument("--watch", action="store_true")
     # v2 (web-app deployment protocol): package params.
     ap.add_argument("--version", dest="version", help="release version for `package`")
-    ap.add_argument("--target", dest="target", help="target triple/platform for `package`")
+    # NB: distinct dest from the positional `target` (the verb) — sharing `dest`
+    # made `recipe.py package` leak the verb into the `package` ${target} param.
+    ap.add_argument("--target", dest="pkg_target", help="target triple/platform for `package`")
     # v3 (dependency channel): sync-deps mode + vendor-check scope.
     ap.add_argument("--mode", dest="mode",
                     help="sync-deps mode flag, e.g. --check / --update / --offline")
@@ -263,18 +321,22 @@ def main(argv=None):
             return 0
         if not args.target:
             ap.error("a target is required (or use --list / --generate / --self-test)")
+        # Resolve a dispatcher alias (e.g. `run` → `server`) to its canonical
+        # INTERFACE target before dispatch, so `recipe.py run` ≡ `recipe.py server`
+        # ≡ `just run`.
+        verb = resolve_alias(args.target)
         recipes = load_recipes(args.recipes)
         cli_args = {"port": args.port, "env": args.env, "filter": args.filter,
                     "fixture": args.fixture, "watch": args.watch,
-                    "version": args.version, "target": args.target,
+                    "version": args.version, "target": args.pkg_target,
                     "mode": args.mode, "full": args.full,
                     "_recipes_path": args.recipes}
-        command, params = build_command(args.target, recipes, cli_args, os.environ)
+        command, params = build_command(verb, recipes, cli_args, os.environ)
     except RecipeError as e:
         print("recipe: %s" % e, file=sys.stderr)
         return 2
 
-    if args.target == "server" and "port" in params:
+    if verb == "server" and "port" in params:
         print("recipe: server port = %s" % params["port"], file=sys.stderr)
     if args.dry_run:
         print(command)
@@ -291,8 +353,8 @@ def _self_test():
     g = generate_recipes("server")
     if g["interface-version"] != INTERFACE_VERSION:
         failures.append("generate: wrong interface version")
-    if INTERFACE_VERSION != 4:
-        failures.append("interface version should be 4 (smoke added)")
+    if INTERFACE_VERSION != 6:
+        failures.append("interface version should be 6 (stop added)")
     if g["targets"]["seed"]["command"] is not None or g["targets"]["seed"]["implemented"]:
         failures.append("generate: seed should be an unimplemented stub")
     if "${port}" not in (g["targets"]["server"]["command"] or ""):
@@ -324,6 +386,12 @@ def _self_test():
         failures.append("generate(server): smoke should be a pre-filled unimplemented stub")
     if "${port}" not in (g["targets"]["smoke"]["command"] or ""):
         failures.append("generate: smoke stub should carry ${port}")
+    # v5: release is an interface target; web-app-shape (like package/deploy), so a
+    # non-web stack (server) stubs it command: null → exit 2 when called.
+    if "release" not in INTERFACE:
+        failures.append("interface should define 'release' target")
+    if g["targets"]["release"]["command"] is not None or g["targets"]["release"]["implemented"]:
+        failures.append("generate(server): release should be a command:null unimplemented stub")
 
     # the `web` stack pre-fills package/deploy as stubs carrying their params.
     gw = generate_recipes("web")
@@ -339,10 +407,27 @@ def _self_test():
         failures.append("generate(web): smoke should be a pre-filled unimplemented stub")
     if "${port}" not in (gw["targets"]["smoke"]["command"] or ""):
         failures.append("generate(web): smoke stub should carry ${port}")
-    # cli stack: smoke is absent from the preset → generate() stubs command: null.
+    # web stack release stub: pre-filled (not null) but unimplemented.
+    if gw["targets"]["release"]["command"] is None or gw["targets"]["release"]["implemented"]:
+        failures.append("generate(web): release should be a pre-filled unimplemented stub")
+    # cli stack: smoke + release are absent from the preset → generate() stubs command: null.
     gc = generate_recipes("cli")
     if gc["targets"]["smoke"]["command"] is not None or gc["targets"]["smoke"]["implemented"]:
         failures.append("generate(cli): smoke should be command:null unimplemented stub")
+    if gc["targets"]["release"]["command"] is not None or gc["targets"]["release"]["implemented"]:
+        failures.append("generate(cli): release should be command:null unimplemented stub")
+    # v6: stop is an interface target; web/server stacks pre-fill a stub carrying
+    # ${port}, cli/library stub it command: null (nothing runnable to stop).
+    if "stop" not in INTERFACE:
+        failures.append("interface should define 'stop' target")
+    if g["targets"]["stop"]["command"] is None or g["targets"]["stop"]["implemented"]:
+        failures.append("generate(server): stop should be a pre-filled unimplemented stub")
+    if "${port}" not in (g["targets"]["stop"]["command"] or ""):
+        failures.append("generate: stop stub should carry ${port}")
+    if gw["targets"]["stop"]["command"] is None or gw["targets"]["stop"]["implemented"]:
+        failures.append("generate(web): stop should be a pre-filled unimplemented stub")
+    if gc["targets"]["stop"]["command"] is not None or gc["targets"]["stop"]["implemented"]:
+        failures.append("generate(cli): stop should be command:null unimplemented stub")
 
     # build a concrete recipes dict and exercise resolution + substitution.
     recipes = {"targets": {
@@ -366,6 +451,11 @@ def _self_test():
         # chain mirrors the server target.
         "smoke": {"command": "bash scripts/smoke.sh --port ${port}", "implemented": True,
                   "params": {"port": {"default": "3000"}}},
+        # v6: an implemented stop resolves ${port} exactly like server/smoke;
+        # release is left an unimplemented stub (must fail loud, exit-2).
+        "stop": {"command": "scripts/stop.sh ${port}", "implemented": True,
+                 "params": {"port": {"default": ""}}},
+        "release": {"command": None, "implemented": False},
     }}
 
     # package param substitution: CLI > recipe default.
@@ -415,6 +505,26 @@ def _self_test():
     if cmd != "bash scripts/smoke.sh --port 3000":
         failures.append("smoke recipe-default port not honored: %r" % cmd)
 
+    # v6: stop port substitution — CLI > $GRIMOIRE_APP_PORT > recipe default (empty).
+    cmd, p = build_command("stop", recipes,
+                           {"port": "8420", "_recipes_path": "x"}, {})
+    if cmd != "scripts/stop.sh 8420":
+        failures.append("stop CLI port not honored: %r" % cmd)
+    cmd, p = build_command("stop", recipes, {"_recipes_path": "x"},
+                           {"GRIMOIRE_APP_PORT": "20003"})
+    if cmd != "scripts/stop.sh 20003":
+        failures.append("stop env port not honored: %r" % cmd)
+    cmd, p = build_command("stop", recipes, {"_recipes_path": "x"}, {})
+    if cmd != "scripts/stop.sh ":
+        failures.append("stop recipe-default (empty) port not honored: %r" % cmd)
+
+    # unimplemented release fails loud (never silent no-op — like every target).
+    try:
+        build_command("release", recipes, {"_recipes_path": "x"}, {})
+        failures.append("unimplemented release should raise")
+    except RecipeError:
+        pass
+
     # CLI flag wins.
     cmd, p = build_command("server", recipes, {"port": "8420", "_recipes_path": "x"}, {})
     if cmd != "serve --port 8420 --env dev":
@@ -451,6 +561,25 @@ def _self_test():
     except RecipeError:
         pass
 
+    # RSS-3 (#321): the `run` alias resolves to the canonical `server` target.
+    if resolve_alias("run") != "server":
+        failures.append("resolve_alias('run') should be 'server'")
+    if resolve_alias("server") != "server":
+        failures.append("resolve_alias('server') should be identity")
+    if resolve_alias("build") != "build":
+        failures.append("resolve_alias('build') should be identity (no alias)")
+    # `recipe.py run` dispatches the same recipe entry as `recipe.py server`.
+    cmd_run, _ = build_command(resolve_alias("run"), recipes,
+                               {"port": "8420", "_recipes_path": "x"}, {})
+    if cmd_run != "serve --port 8420 --env dev":
+        failures.append("run alias should resolve the server recipe: %r" % cmd_run)
+    # every preset's `server` command routes to `just run` (canonical justfile name).
+    for stack in ("server", "web"):
+        srv = generate_recipes(stack)["targets"]["server"]["command"] or ""
+        if not srv.startswith("just run"):
+            failures.append("generate(%s): server should route to `just run`, got %r"
+                            % (stack, srv))
+
     # dry-run via main(): prints the resolved command, exits 0, runs nothing.
     with tempfile.TemporaryDirectory() as d:
         rp = os.path.join(d, "recipes.json")
@@ -459,6 +588,30 @@ def _self_test():
         rc = main(["test", "--filter", "-k smoke", "--dry-run", "--recipes", rp])
         if rc != 0:
             failures.append("dry-run should exit 0")
+        # the `run` alias dispatches via main() (dry-run) exactly like `server`.
+        rc = main(["run", "--port", "8420", "--dry-run", "--recipes", rp])
+        if rc != 0:
+            failures.append("run alias dry-run should exit 0")
+        # v6: stop dispatches via main() (dry-run) exactly like server/smoke.
+        rc = main(["stop", "--port", "8420", "--dry-run", "--recipes", rp])
+        if rc != 0:
+            failures.append("stop dry-run should exit 0")
+        # the positional verb must NOT leak into the package ${target} param
+        # (argparse dest collision regression). `recipe.py package` → recipe
+        # defaults, and `--target <triple>` threads through cleanly.
+        import contextlib
+        import io
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = main(["package", "--dry-run", "--recipes", rp])
+        out = buf.getvalue().strip()
+        if rc != 0 or out != "just package --version 0.0.0 --target host":
+            failures.append("package verb leaked into ${target}: %r" % out)
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            main(["package", "--target", "aarch64-apple-darwin", "--dry-run", "--recipes", rp])
+        if buf.getvalue().strip() != "just package --version 0.0.0 --target aarch64-apple-darwin":
+            failures.append("package --target not threaded: %r" % buf.getvalue().strip())
         # generation round-trips and preserves an implemented target.
         recipes["targets"]["build"] = {"command": "make", "implemented": True}
         with open(rp, "w") as fh:
@@ -475,6 +628,18 @@ def _self_test():
        json.dumps(generate_recipes("cli"), sort_keys=True):
         failures.append("generate is non-deterministic")
 
+    # v7 (#329): `just` binds recipe args positionally, so a `key=${...}` token
+    # in a preset command silently misassigns params to the wrong slot. No
+    # generated preset may carry that pattern (positional-only, like deploy).
+    import re
+    key_eq_token = re.compile(r"\b[A-Za-z_][A-Za-z0-9_]*=\$\{")
+    for stack_name, stack_cmds in STACK_PRESETS.items():
+        for target_name, cmd in stack_cmds.items():
+            if key_eq_token.search(cmd):
+                failures.append(
+                    "preset %s.%s uses a named key=${...} arg, should be "
+                    "positional: %r" % (stack_name, target_name, cmd))
+
     if failures:
         print("SELF-TEST FAILED:")
         for f in failures:
@@ -482,8 +647,9 @@ def _self_test():
         return 1
     print("recipe self-test: OK (generate/stub/preserve, param resolution "
           "CLI>env>recipe>spec, ${} substitution, unimplemented+unknown raise, "
-          "dry-run, determinism, interface-v4 deploy/package + sync-deps/"
-          "vendor-check + smoke stubs + loud exit-2)")
+          "dry-run, determinism, interface-v6 deploy/package + sync-deps/"
+          "vendor-check + smoke + release + stop stubs + loud exit-2, run→server "
+          "alias, presets route to `just <recipe>`)")
     return 0
 
 

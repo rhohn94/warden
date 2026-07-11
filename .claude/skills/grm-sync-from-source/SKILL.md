@@ -1,9 +1,13 @@
 ---
 name: grm-sync-from-source
-description: Pull workflow skills, hooks, and structural docs from a source project (the repo where you actively develop the workflow) into this Grimoire repo, then re-generalize and refresh the golden baseline. Safe by default — never overwrites newer or in-progress scaffolding files without review. Use when you've improved a skill/hook/doc in your main project and want those improvements reflected in the reusable scaffolding.
+description: Direction — source project → this Grimoire repo (opposite of grm-sync-from-upstream: scaffolding → bootstrapped project). Pull workflow skills, hooks, and structural docs from a source project into this repo, then re-generalize and refresh the golden baseline. Safe by default — never overwrites newer/in-progress files without review. Use when you've improved a skill/hook/doc in your main project and want it reflected in the scaffolding.
 ---
 
 # Sync-from-source
+
+**Direction: source project → this scaffolding repo.** The mirror image is
+`grm-sync-from-upstream` (scaffolding → a bootstrapped project); don't confuse
+the two by name — this one only ever pulls inbound to this repo.
 
 Brings workflow improvements **from** a source project (e.g. the repo where
 you actually use these skills day-to-day) **into** this scaffolding repo, so
@@ -130,11 +134,12 @@ If a file can't be cleanly generalized, revert it from
 
 ## Step 4 — Refresh golden
 
-The synced + generalized files are now the live scaffolding skills. Update the
-restore baseline so `grm-workflow-bootstrap` reproduces them:
-
-- Run the **`grm-workflow-snapshot`** skill. Its mandatory genericize check is a
-  second safety net against source-specific values leaking into `golden/`.
+The synced + generalized files are now the live scaffolding skills. The golden
+baseline `grm-workflow-bootstrap` restores from is generated on demand from
+these live files (v3.49), so no manual re-snapshot step is needed — but
+double-check the genericize pass above caught every source-specific value,
+since that check is the safety net against source-specific values leaking
+into the generated golden image.
 
 ---
 

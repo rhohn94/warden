@@ -28,6 +28,7 @@ network is touched **only** at sync time, never at build or run time.
 > python3 .claude/skills/grm-sync-deps/sync_deps.py --update   # resolve latest-on-channel, rewrite the pin
 > python3 .claude/skills/grm-sync-deps/sync_deps.py --check    # detect drift; write nothing; nonzero on drift
 > python3 .claude/skills/grm-sync-deps/sync_deps.py --offline  # validate vendored bytes vs the lock, zero network
+> python3 .claude/skills/grm-sync-deps/sync_deps.py --verify   # provenance integrity check (#315) — see below
 > python3 .claude/skills/grm-sync-deps/sync_deps.py --self-test
 > ```
 >
@@ -77,12 +78,22 @@ recomputed by `--check` and the conformance gate to detect drift):
       "artifact_sha256": "sha256:…",
       "tree_sha256": "sha256:…",
       "release_json_sha256": "sha256:…",
-      "signature_verified": false,
+      "signature_verified": "unsigned",
       "synced_at": "2026-06-13T18:20:00Z"
     }
   }
 }
 ```
+
+**`signature_verified`** is a **tri-state** (`true` | `false` | `"unsigned"` —
+v3.79, §Signing / #318): `"unsigned"` when no `pubkey` is pinned for the dep in
+`vendor.toml`, or the producer's own `release.json.signature` is still `null`
+(the fleet-default today, and always a soft-fail — sync proceeds either way);
+`true` when a pinned `pubkey` verified the producer's `SHA256SUMS.minisig`
+sidecar; `false` when a pinned pubkey's verification **failed** (a bad or
+tampered signature) — also soft-fail (the sha256 integrity floor above already
+guarantees byte integrity; a bad signature is a provenance-layer problem the
+conformance gate surfaces, not a placement-blocking one). See §Signing below.
 
 The lock is JSON so the verifier and the conformance gate (§5) stay pure-stdlib
 on the read/gate path — no TOML parse needed to *read* the lock. The write-side
@@ -103,8 +114,10 @@ no-op).
 3. **Verify** — recompute the artifact's sha256 and require an exact match
    against its `SHA256SUMS` entry **before any filesystem placement**. A mismatch
    is a **hard refuse** (exit 1); an absent `SHA256SUMS`/missing entry is a **loud
-   degrade** (exit 2), never silent trust. (`{artifact}.minisig` verification is
-   the deferred-signing seam — `signature_verified` stays `false` this release.)
+   degrade** (exit 2), never silent trust. When a `pubkey` is pinned, the
+   `SHA256SUMS.minisig` sidecar (if the producer shipped one) is additionally
+   verified pure-Python (`minisign_verify.py`, no `minisign` binary needed) — see
+   §Signing below; a signature outcome never blocks placement (soft-fail).
 4. **Stage + atomic-replace** `vendor/<dep>/` — extract into staging (honoring
    `strip_components` / `extract` allowlist, with tar path-traversal hardening),
    then atomic `os.replace` into place. On any failure the existing tree is rolled
@@ -119,7 +132,8 @@ no-op).
 | `--update` | resolve latest-on-channel, rewrite the pin, then sync | yes (`gh`) |
 | `--check` | recompute `tree_sha256` vs the lock; **write nothing**; nonzero on drift | no |
 | `--offline` | assert vendored bytes match the lock; the "build with network disabled" gate | **none** |
-| `--self-test` | deterministic, offline-fixture-based regression run | none |
+| `--verify` | provenance integrity check (LOCAL-FORK / DEAD-VENDOR / VERSION-CONTRADICTION / STUB-VENDOR-MANIFEST) — see below | none |
+| `--self-test` | deterministic, offline-fixture-based regression run (covers `sync_deps` + `vendor_verify`) | none |
 
 ## `vendored-crate` semantics
 
@@ -160,6 +174,17 @@ drift (nonzero, writes nothing); `--offline` clean validation with zero network;
 **tampered artifact hard-refused with `vendor/<dep>/` left untouched and no lock
 entry written**; absent `SHA256SUMS` loud-degrade; `--update` pin rewrite +
 re-vendor; `vendored-crate` strip + extract allowlist; asset-name allowlist and
-tar-traversal refusals.
+tar-traversal refusals. `vendor_verify.py --self-test` additionally exercises:
+`LOCAL-FORK` on a drifted tree (with a contradicted `VENDOR.md` claim and a
+diff summary naming the new file); `DEAD-VENDOR` on both an empty declared
+`dest` and an uninitialized git submodule; `VERSION-CONTRADICTION` on a
+`Cargo.toml` version disagreeing with the pin; `STUB-VENDOR-MANIFEST` firing
+WARN-only on an all-stub `vendor.toml` with dep references elsewhere; and zero
+false positives on a healthy consumer / absent `vendor.toml`.
 
 Design: `docs/design/dependency-channel-design.md` §3–§4.
+
+## Reference (load on demand)
+
+- `Signing — artifact provenance` — see `reference.md`
+- `Provenance verification — --verify` — see `reference.md`

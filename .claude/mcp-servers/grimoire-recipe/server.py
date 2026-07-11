@@ -34,6 +34,20 @@ import sys
 CONFIG_REL = ".claude/grimoire-config.json"
 
 
+# --- Intentional duplication (#341) -----------------------------------
+# _find_repo_root() and _bootstrap_imports()'s lib_candidates list below
+# are byte-identical across all 15 MCP server.py entry points (5 servers
+# x 3 flavors: claude-code, root, copilot). This is a genuine
+# chicken-and-egg: the bootstrap LOCATES and sys.path-inserts the shared
+# runtime lib, so it cannot import from that lib to de-duplicate itself.
+# Accepted as intentional copy-with-a-reason rather than factored out
+# (mirrors the #331 precedent for the hook-script equivalent). The
+# canonical reference copy is the claude-code flavor
+# (claude-code/.claude/mcp-servers/<server>/server.py); any edit to this
+# block must be replicated verbatim to all 15 sites.
+# ------------------------------------------------------------------------
+
+
 def _find_repo_root(start: pathlib.Path | None = None) -> pathlib.Path:
     """Walk up from this file (or start) to the repo root holding the config."""
     current = (start or pathlib.Path(__file__)).resolve()
@@ -57,7 +71,7 @@ def _bootstrap_imports(repo_root: pathlib.Path) -> None:
         repo_root / "mcp-servers" / "lib",
     ]
     recipe_candidates = [
-        repo_root / ".claude" / "skills" / "build-recipe",
+        repo_root / ".claude" / "skills" / "grm-build-recipe",
         repo_root / "scripts",
     ]
     for candidates in (lib_candidates, recipe_candidates):

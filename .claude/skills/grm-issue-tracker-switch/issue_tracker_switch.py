@@ -8,16 +8,21 @@ Does NOT modify issue_tracker.py (the abstraction/backend library). This
 file is the write-path companion; the read-path is issue_tracker.py's
 load_config().
 
-Design authority: docs/grimoire/design/issue-tracker-design.md §10
+Design rationale (§10) lives in the upstream Grimoire repository
+(framework-internal -- not shipped).
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import sys
 from pathlib import Path
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "grm-issue-tracker"))
+from issue_tracker import CONFIG_FILE  # noqa: E402  (path set above)
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -25,7 +30,6 @@ from pathlib import Path
 
 VALID_PROVIDERS = {"roadmap", "github", "grimoire"}
 VALID_AUDIENCES = {"internal", "external"}
-CONFIG_FILE = ".claude/grimoire-config.json"
 
 # The synthesized default returned when the block is absent.  Mirrors
 # issue_tracker.py's DEFAULT_TRACKER_CONFIG exactly.

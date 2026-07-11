@@ -55,10 +55,9 @@ The integration master is the **only** role that merges into
 For **long-horizon, multi-release** operation under Noir, run releases as
 repeated **iterations** while keeping the orchestrating session's context flat.
 Each iteration is delegated to a fresh subagent so the orchestrator accumulates
-only a tiny summary per cycle. Full design:
-`docs/design/noir-iterative-loop-design.md`; role:
-`docs/design/agent-roles-design.md` §B.12 (`release-master`); helper:
-`.claude/skills/grm-noir-loop/`.
+only a tiny summary per cycle. The full design and the `release-master` role
+(§B.12) are framework-internal — see the upstream Grimoire repository for that
+rationale. Helper: `.claude/skills/grm-noir-loop/`.
 
 **The loop, per `/loop` firing.** Claude Code's `/loop` keeps the same
 orchestrator session alive across firings (fixed-interval or self-paced
@@ -66,7 +65,9 @@ orchestrator session alive across firings (fixed-interval or self-paced
 three things:
 
 1. **Spawn ONE `release-master` subagent** (via the `Agent` tool — chip-free, no
-   `spawn_task`) with a self-contained prompt (the §C spawn contract). The prompt
+   `spawn_task`) at the active profile's **`orchestrate` band** — the
+   `{model, effort}` pair from the `grm-repo-reference` resolver, Sonnet in
+   every starter profile — with a self-contained prompt (the §C spawn contract). The prompt
    names the state file path; it does
    **not** inline release history. Inside its own fresh context the
    release-master *is* an integration master for that one iteration — it runs the
@@ -115,154 +116,8 @@ chips, which require a human click and are reserved for the Supervised / Weiss
 paradigms. The master dispatches the full batch without per-item gates and
 queues merges as the subagents return their branches.
 
----
-
-## Subagent delegation
-
-Spawn `Agent` subagents for mechanical / read-only work autonomously.
-Reserve `opus`/high for review and integration judgement per the
-`grm-repo-reference` table.
-
-## Workflow-based orchestration
-
-Use `Workflow` for read-heavy analysis steps autonomously when appropriate.
-Two tiers are available under Noir: the **read-only tier** (analysis/synthesis,
-no file mutations — all paradigms) and the **write-capable tier** (each agent
-commits on an isolated branch; master merges — Noir only). See
-§Write-capable workflow tier below for the full spec.
-
-## Dead-worktree cleanup
-
-Run the dead-worktree check and removal autonomously after each merge step
-(see Supervised `integration-workflow.md` §Dead-worktree cleanup for the
-full procedure). Stop and surface if a worktree is not clean.
-
-**Post-release cleanup step.** Cleanup is also a named, ordered release step,
-run once after `grm-project-release` tags the version and the human-gated push
-completes (`grm-project-release` §Post-release cleanup drives it;
-`grm-release-phase-merge` cross-references it). Only the **marker-blessed master**
-may run it — per the cross-worktree branch hijack rule (§Enforcement). For each
-work-item branch/worktree: verify merged + clean, **preserve or report** any
-uncommitted work (never silent `--force`), `unlock` then `git worktree remove`,
-`git worktree prune`, and safe-delete merged + leftover `worktree-*` branches
-with `-d`. Report the tally.
-
-## Run teardown (end-of-run)
-
-When the master **finishes** — the milestone is reached, or the user says stop
-and no work is outstanding — it runs teardown as its **final ordered step**,
-after §Post-release cleanup. (A master that is *pausing* with work still
-queued checkpoints and schedules a resume instead — it does **not** tear down.)
-Full design: `docs/design/agent-teardown-design.md`. Ordered:
-
-1. **Confirm durability.** All intended commits made, §5 ledger ticked, release
-   tagged + pushed (or pause-state checkpointed); nothing keep-worthy left
-   uncommitted.
-2. **Cancel self-created schedules.** Cancel every wakeup/cron this run created
-   to resume itself (`CronList` → `CronDelete`; do not re-arm `ScheduleWakeup`) —
-   the de-scheduling counterpart to default-on resume scheduling (#13). Cancel
-   only this run's schedules; leave unrelated operator schedules alone. A
-   self-scheduling agent that finishes without de-scheduling leaks timers (wakes
-   to a finished campaign, burning tokens).
-3. **Reclaim dispatched worktrees.** Cross-reference §Post-release cleanup —
-   already done for the work items; confirm the tally is clean.
-4. **Hand off your own worktree.** The marker-blessed master cannot
-   `git worktree remove` the worktree it is running in (checkout busy; HEAD
-   held). So: (a) confirm its branch is merged and the tree clean; (b)
-   switch/detach off any branch slated for deletion to release the lock; (c)
-   **surface a one-line handoff** naming the surviving worktree path and the
-   exact `git worktree remove <path>` command for the operator (or the parent
-   PM) to run from another checkout. Never abandon it silently.
-5. **Drop the stale marker.** A surviving worktree's
-   `.claude/integration-allow.local` is now stale — note it (gitignored/local);
-   removing it keeps an idle worktree from looking like an active master.
-6. **Clear scratch.** Remove temp/scratch artifacts the run created (e.g.
-   `/tmp/notes-*.md`); gitignored `.claude/cache/` is machine-local, leave or
-   prune.
-7. **Report the teardown tally:** schedules cancelled, worktrees removed /
-   handed-off, marker disposition, scratch cleared, own-worktree disposition.
-
-## Recovering from a stranded-branch / HEAD-drift incident
-
-**Symptom.** A dispatched `Agent` (`isolation: "worktree"`) ran in-place in the
-master's worktree (no `worktreePath:`/`worktreeBranch:` footer); its
-`git switch -c <branch>` relocated the master's HEAD onto that work-item branch.
-Subsequent merges/commits piled onto the stray branch, so `version/{X.Y}` (or
-`dev`/`main`) never advanced and a release shipped empty or partial. This is the
-v1.15 incident; the fix work is `docs/design/dispatch-hardening-design.md`.
-
-**Detection.** The HEAD-verification gate (`grm-release-phase-merge` §Before every
-merge run) and the `protected-branch-guard.sh` HEAD-drift block both fire when
-the master is off-staging. Confirm with `git symbolic-ref --short HEAD` and
-`git log --oneline version/{X.Y}..<stray-branch>` (the stranded commits).
-
-**Recovery (each `git branch -f`/`git reset --hard`/`git tag -d` needs explicit
-user confirmation — they are destructive):**
-
-1. **Locate the work.** Identify the stray branch holding the phase's commits
-   (`git branch --contains <known-stranded-commit>`).
-2. **Re-point the staging branch** at the stranded tip if it holds the intended
-   work: `git branch -f version/{X.Y} <stray-branch>` (confirm first).
-3. **Restore HEAD:** `git switch version/{X.Y}`; re-verify
-   `git symbolic-ref --short HEAD`.
-4. **If a bad release already promoted/tagged** an empty `dev`/`main`: rewind
-   the affected refs to their pre-release tips (`git reset --hard <good-sha>`,
-   per-action confirmation), delete the premature tag (`git tag -d <X.Y>`), then
-   redo `grm-release-phase-merge` (`version/{X.Y}` → `dev`) and `grm-project-release`
-   (`dev` → `main`, re-tag) cleanly.
-5. **Re-verify** the staging/dev/main tips carry the expected commits before any
-   push. Push only at the normal human-gated post-release moment.
-
-**Prevention.** Run the HEAD-verification gate and the branch-content assertion
-on every batch (see `integration-master-SKILL.md` §Dispatch isolation), and
-treat a missing isolation footer as an isolation failure — re-dispatch rather
-than merge.
-
-## GitHub PR boundary flow (github-pr, v3.5)
-
-When `github-pr.enabled` is `true` (GitHub-hosted repo), the boundary merge is
-performed **via a pull request** instead of a local `git merge --no-ff`. Read the
-dial live: `github-pr.{enabled, boundary, merge-method, review.auto-dispatch,
-review.post-comments}`. Absent/`false` ⇒ today's local-merge flow, unchanged.
-**Suppressed under Stealth Mode** (a PR + branch push is a fingerprint).
-
-At the configured `boundary` (`version-to-dev` default / `dev-to-main` / `both`;
-under a PM, also lane `version/{X.Y}/<lane>` -> `version/{X.Y}`):
-
-1. **Push the head branch** — a push-class action: propose-and-wait (human-gated)
-   unless `autonomous-push.enabled`. `push-guard.sh` permits the `version/*` head
-   **only because** `github-pr.enabled`; marker + destructive-flag rules unchanged.
-2. **Open the PR** (idempotent): `grm-github-pr` skill /
-   `python3 .claude/skills/grm-github-pr/github_pr.py open --base <B> --head <H> --plan <plan>`.
-   On `degraded` (no `gh` / remote), fall back to the local merge and log it.
-3. **Dispatch a Reviewer in PR mode** (if `review.auto-dispatch`): it reads the
-   PR diff, runs `code-review`, and posts findings per `review.post-comments`
-   (`off` / `comment` / `request-changes`). See the `grm-reviewer` skill §2.5.
-4. **Merge via the PR**: `github_pr.py merge --pr N --method <merge-method>` —
-   **skip the local `--no-ff` merge at this boundary**. Do not merge while
-   `reviewDecision == CHANGES_REQUESTED`. Boundaries not in `boundary` merge
-   locally as today.
-
-`grm-github-pr` does **not** imply autonomous push — open/merge stay governed by the
-existing push gate. Full design: `docs/design/github-pr-integration-design.md`.
-
-## Pushing to origin
-
-**Human-gated by default.** A single trigger moment, once per release: after
-`grm-project-release` promotes `dev` → `main` and tags, propose pushing `dev`,
-`main`, and the version tag **together** and wait for explicit user
-instruction. The earlier `version/{X.Y}` → `dev` integration no longer prompts
-a push (`dev` stays local until release).
-
-**Opt-in exception (#16):** if `grimoire-config.json` contains
-`autonomous-push: { enabled: true }` (an explicit, never-inferred project
-setting; default **false**), the master MAY push at that release moment
-without waiting — the `push-guard.sh` mechanical rails still apply
-(blessed-worktree marker required; only allowlisted refs — `dev`, `main`, and
-the version tag; destructive flags always denied). With the flag absent or
-`false`, behaviour is unchanged: propose and wait. See
-`.claude/skills/grm-integration-master/SKILL.md` (§top) and
-`docs/design/autonomy-scheduling-design.md` §2.
+`.claude/skills/grm-integration-master/SKILL.md` (§top). Design rationale (§2)
+lives in the upstream Grimoire repository (framework-internal — not shipped).
 
 Destructive flags (`--force`, `--all`, etc.) are always denied.
 
@@ -276,13 +131,14 @@ Release from the version tag, carrying the `version-history` notes and the
 Release is the **authoritative artifact** downstream `grm-sync-from-upstream` consumes
 (`UPSTREAM_TRANSPORT=release` downloads the flavor's zip). No longer optional — it
 degrades only when `gh` is unavailable, and then **loudly**. Full procedure:
-`grm-project-release` §GitHub Release. Design:
-`docs/design/release-distribution-design.md`.
+`grm-project-release` §GitHub Release. Design rationale lives in the upstream
+Grimoire repository (framework-internal — not shipped).
 
 ## Lane model & multiple marked lane worktrees (v3.1)
 
-When a **Project Manager** owns a multi-feature release (see
-`docs/design/project-manager-role-design.md` and
+When a **Project Manager** owns a multi-feature release (the PM role is a
+framework-internal design — see the upstream Grimoire repository for that
+rationale — and
 `.claude/skills/grm-project-manager/SKILL.md`), the single `version/{X.Y}` staging
 line is split into **parallel lanes**, each implemented by its own integration
 master:
@@ -326,10 +182,29 @@ back to serial, in-place lane execution.
 ## Enforcement (guard hooks)
 
 Same hooks as Supervised: `protected-branch-guard.sh`, `push-guard.sh`,
-`release-plan-guard.sh`, `worktree-guard.sh`. Noir autonomy operates within
-— not around — these mechanical guards. Write-capable Workflow agents are
-subject to the same hooks as isolated-worktree subagent work-item agents: no
-marker means fail-closed on protected branches.
+`release-plan-guard.sh`, `worktree-guard.sh`, `bundled-sync-guard.sh`. Noir
+autonomy operates within — not around — these mechanical guards. Write-capable
+Workflow agents are subject to the same hooks as isolated-worktree subagent
+work-item agents: no marker means fail-closed on protected branches.
+
+**Bundled-sync-commit guard (v3.67, #126 criterion 3).** `bundled-sync-guard.sh`
+is a PreToolUse(Bash) hook matching `git commit`: it denies (`exit 2`) a single
+commit whose STAGED changes span both `grm-sync-from-upstream`'s typical
+touch-set (`.claude/`, `CLAUDE.md`, `AGENTS.md`, `docs/grimoire/`, the
+`.github/` Copilot mirror) and `grm-design-language-adapt`'s typical touch-set
+(`docs/design/ux/`, `vendor/aura/`, `static/aura/`, `templates/base.html`) at
+once. This is the mechanical enforcement of BMI-3 Rule 3c — until v3.67 both
+skills only *reminded* the operator, in prose, to keep framework-sync and Aura
+vendoring in separate commits (never bundled, per design rationale (§3) that
+lives in the upstream Grimoire repository, framework-internal); nothing
+stopped a commit from ignoring the reminder. This closes the exact `24c73dd`
+anti-pattern (a 660-file "Grimoire upstream + Aura v3.21" commit) at the
+mechanical level, complementing — not replacing — each skill's own Rule
+3a/3b branch- and release-boundary refusal (which the skills implement
+themselves, since only they know their own touch-set and boundary context at
+invocation time). Applies to every actor (no marker exemption): bundling the
+two concerns is never legitimate, unlike the marked/unmarked distinctions the
+other guards draw. Self-tested via `--self-test`.
 
 **Cross-worktree branch hijack rule (v1.7).** A spawned/work-item agent (and a
 write-capable Workflow agent) must git-operate **only on its own worktree**. An
@@ -342,6 +217,35 @@ worktree (or crossing boundaries for §Dead-worktree cleanup) is unaffected.
 Agents branch in place from the staging ref
 (`git switch -c <branch> version/{X.Y}`). Autonomy does not exempt an agent
 from this rule — it is enforced mechanically.
+
+**Clean release-boundary guard for marked commits on `main`.**
+The (actor, branch-class) model's `marked + protected -> allow` cell is now
+**conditional** when the protected branch is `main`: a marked integration
+master's `commit`/`merge` on `main` is allowed only at a genuine
+release-promotion boundary, closing the residual where a marked master could
+previously commit to `main` at any time (the #126 failure mode — a manual
+release and a scaffolding sync committed straight to `main` outside any
+promotion flow). `dev` and `version/*` are unaffected — the conditional check
+applies to `main` only. A boundary is clean when any of:
+
+1. `dev` and `main` have identical trees (the BMI-2 tree-content predicate,
+   §Recovering from an integration-branch fork above) — `dev` is already
+   fully promoted.
+2. The invocation IS the promotion merge itself (`git merge <dev-ref>` while
+   HEAD is `main`).
+3. The `.claude/release-in-progress.local` marker is present.
+
+**`.claude/release-in-progress.local` marker convention.** Mirrors
+`.claude/integration-allow.local`: a deliberate, local-only, git-ignored
+marker file, never committed. `grm-project-release`'s promote step creates it
+immediately before `git switch main && git merge dev` and removes it
+immediately after tagging — bracketing the part of the promotion window that
+conditions 1–2 above don't already cover on their own (most commonly a
+version-bump commit landing on `main` directly, after the merge, when trees
+have diverged again). If a release run fails or is aborted mid-promotion, the
+marker must be removed before retrying — a stale marker would leave `main`
+permanently boundary-exempt. Denied cases print a remediation message
+pointing at `grm-project-release`.
 
 ## Git-protocol governance (branch-and-merge default; #84)
 
@@ -393,4 +297,5 @@ branch list from the Workflow's structured output and merges via
 **push to origin remains human-gated even in Noir** (applies to all agents
 and the master). Guard hooks enforce all of these mechanically.
 
-Full design: `docs/design/write-capable-workflow-design.md`.
+The full design is a framework-internal design — see the upstream Grimoire
+repository for that rationale.

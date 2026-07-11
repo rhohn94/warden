@@ -1,6 +1,6 @@
 ---
 name: grm-build-recipe
-description: Shared named-target interface for driving any Grimoire project's build/run/data operations under stable names, regardless of stack — a skill or agent calls the dispatcher `recipe.py <target>` (build / server / test / seed / migrate / lint / clean) and the correct project command runs. The per-project implementation lives in `.claude/recipes.json`. Use when running a recipe target or generating the recipe file.
+description: Shared named-target interface for driving any Grimoire project's build/run/data operations under stable names, regardless of stack — a skill or agent calls the dispatcher `recipe.py <target>` (build / server / stop / test / seed / migrate / lint / clean) and the correct project command runs. The per-project implementation lives in `.claude/recipes.json`. Use when running a recipe target or generating the recipe file.
 ---
 
 # Build-recipe interface (BR1)
@@ -12,7 +12,7 @@ shell strings — not addressable by other skills under a stable name. The
 is the stable call surface every skill uses — they invoke the dispatcher, never
 the raw command.
 
-Design authority: `docs/design/build-recipe-interface-design.md`. Prefer this
+Design authority: `docs/grimoire/design/build-recipe-interface-design.md`. Prefer this
 dispatcher over re-deriving project commands (scripting-unification #75).
 
 > **Preferred interface — the `grimoire-recipe` MCP server (v3.28).** Listing
@@ -36,7 +36,7 @@ The canonical target vocabulary lives in `recipe.py` (`INTERFACE`,
 | Target | Does | Standard params |
 |---|---|---|
 | `build` | compile / assemble | — |
-| `server` | start the app server | `--port` (defaults to `$GRIMOIRE_APP_PORT`, #77), `--env` |
+| `server` (justfile `run`) | start the app server | `--port` (defaults to `$GRIMOIRE_APP_PORT`, #77), `--env` |
 | `test` | run the test suite | `--filter`, `--watch` |
 | `seed` | populate a local data store | `--fixture`, `--env` |
 | `migrate` | run pending migrations | `--env` |
@@ -44,24 +44,47 @@ The canonical target vocabulary lives in `recipe.py` (`INTERFACE`,
 | `clean` | remove build artifacts | — |
 | `package` | assemble a versioned, deployable release bundle (v2) | `--version`, `--target` |
 | `deploy` | install / self-update a deployed instance from a bundle (v2) | `--env` (defaults `prod`) |
-| `grm-sync-deps` | reconcile / vendor first-party deps from a release channel (v3) | `--mode` (`--check`/`--update`/`--offline`) |
+| `sync-deps` | reconcile / vendor first-party deps from a release channel (v3) | `--mode` (`--check`/`--update`/`--offline`) |
 | `vendor-check` | dependency-channel conformance gate, exit 0/nonzero (v3) | `--full` (whole-vendor audit) |
+| `smoke` | Boot app and verify entry page + critical assets return 2xx with correct content-type. Exit 2 when unimplemented. (v4) | `--port` (defaults to `$GRIMOIRE_APP_PORT`) |
+| `release` | changelog-derived release ceremony (bump/test/build/tag + milestone reconciliation) (v5) | — (no args) |
+| `stop` | kill running instance(s) of this project's process (v6) | `--port` (defaults to `$GRIMOIRE_APP_PORT`) |
 
-**Interface version (`INTERFACE_VERSION`) is `3`** — v3 added the
-dependency-channel consume-side targets `grm-sync-deps` + `vendor-check` (v2 added
-the web-app deployment-protocol targets `package` + `deploy`). `package` is the
-producer of the deployable bundle, `release.json` manifest, and
+> **`run` ↔ `server` (RSS-3, #321).** `run` is the canonical **justfile** recipe
+> name; `server` is the versioned INTERFACE target, kept as a permanent
+> **dispatcher alias** (`ALIASES = {"run": "server"}`) — `recipe.py run` ≡
+> `recipe.py server`, both resolving to the entry whose command is `just run …`.
+> A pure alias: **no new target, `INTERFACE_VERSION` unchanged**;
+> `.claude/recipes.json` keeps the historical `server` key.
+
+**Interface version (`INTERFACE_VERSION`) is `6`** — v6 added `stop` (kill running
+instance(s) of this project's process, RSS-4 #322); v5 added the changelog-derived
+`release` ceremony (recipe layer phase 2, issue #201 §4); v4 added the runtime
+verification gate `smoke` (boot app + curl entry page + critical assets, assert
+2xx + correct content-type; full spec: `docs/grimoire/design/runtime-verification-design.md`).
+v3 added the dependency-channel consume-side targets `grm-sync-deps` + `vendor-check`
+(v2 added the web-app deployment-protocol targets `package` + `deploy`). `package`
+is the producer of the deployable bundle, `release.json` manifest, and
 `grimoire-build-info.json` stamp; `deploy` drives the install / self-update
 path; the protocol those two serve is `docs/web-app-deployment-protocol.md`
 (§1/§2/§8 for `package`, §3/§6 for `deploy`). `grm-sync-deps` reconciles/vendors
 first-party deps from a release channel (resolve → download → verify sha256 →
 atomic-replace → write `vendor.lock`); `vendor-check` is the conformance gate
 (exit 0 = conformant, nonzero = violation); the substrate those two serve is
-`docs/design/dependency-channel-design.md` (§4 for `grm-sync-deps`, §5 for
-`vendor-check`, §6 for the scaffold defaults). The bump is **extend-only**:
+`docs/grimoire/design/dependency-channel-design.md` (§4 for `grm-sync-deps`, §5 for
+`vendor-check`, §6 for the scaffold defaults). `release` derives the version from
+the newest changelog heading, guards + bumps + tests + builds + tags, and folds
+the matching `milestone:v{X.Y}` issues into the release notes (issue #201 §4); its
+reference implementation is `scripts/release.sh`. `stop` kills the process
+`run` started — resolution order `--port` → `$GRIMOIRE_APP_PORT` → the pidfile
+`run` wrote (`$GRIMOIRE_RUN_PIDFILE`) → a declared process pattern
+(`$GRIMOIRE_APP_PATTERN`); idempotent, only kills identified processes; ref
+impl `scripts/stop.sh` (generic, like `sync-deps`/`vendor-check`); full spec:
+`docs/design/justfile-standard-design.md` §2.3. The bump is **extend-only**:
 `grm-sync-from-upstream` adds new targets as **stubs** to existing projects and
 never overwrites an implemented target. `grm-sync-deps`/`vendor-check` are universal
-(every stack); `package`/`deploy` are web-app-shape (non-web stacks stub them).
+(every stack); `package`/`deploy`/`smoke`/`release`/`stop` are web-app-shape
+(non-web stacks stub them).
 Like every target, they **fail loud (exit 2)** when a project calls them without
 implementing them — never a silent no-op.
 
@@ -85,7 +108,7 @@ python3 .claude/skills/grm-build-recipe/recipe.py --list            # targets + 
   project hasn't implemented a target, the dispatcher says so and points at
   `--generate`. Callers can rely on "exit 0 means it actually ran."
 - The `server` target prints its resolved port to stderr so callers
-  (`grm-environment-manager`, the port layer) can surface the URL.
+  (`grm-agent-environment-manager`, the port layer) can surface the URL.
 
 ## The recipe file — `.claude/recipes.json`
 
@@ -112,42 +135,11 @@ real command and flips `implemented: true`. Generation runs at
 `grm-workflow-bootstrap` (initial, from the declared stack), at `grm-sync-from-upstream`
 (stub newly-added interface targets), and on demand here.
 
-## Wiring the `deploy` target to `scripts/deploy.sh` (v3.27, DEP-1)
-
-The `deploy` target is the stable call surface for the deploy path. In a web
-project's `recipes.json`, the `deploy` entry MUST invoke `scripts/deploy.sh`
-with the `${env}` parameter so the recipe dispatcher (`recipe.py deploy
---env <env>`) drives the standard deploy script:
-
-```json
-"deploy": {
-  "command": "scripts/deploy.sh ${env}",
-  "implemented": true,
-  "params": {
-    "env": { "default": "production" }
-  }
-}
-```
-
-- The `--env` CLI flag flows through `recipe.py deploy --env dev` →
-  `scripts/deploy.sh dev`. Callers use the recipe target, not the script
-  directly.
-- The optional `[<version>]` argument to `scripts/deploy.sh` is env-specific
-  (typically prompted for production); callers that need to pin a version
-  invoke `scripts/deploy.sh` directly.
-- Non-web stacks (`server`/`cli`/`library`) leave `deploy` as
-  `command: null, implemented: false` — any call exits 2 (loud failure).
-- The `web` stack preset (`--generate web`) stubs the deploy target as
-  `echo TODO deploy --env ${env}`; replace this with the `scripts/deploy.sh`
-  invocation and flip `implemented: true` when the script is ready.
-
-Full deploy-environment model: `docs/design/deploy-environment-design.md`;
-interface contract: `docs/web-app-deployment-protocol.md` §Environments.
-
 ## How other skills use it
 
 - **environment-manager:** launch via `recipe server` (reads the claimed
-  port), stop/clean via `recipe clean`.
+  port), kill a running instance via `recipe stop` (RSS-4, #322 — still
+  per-action authorized before invoking it).
 - **Port isolation:** `recipe server` consumes `$GRIMOIRE_APP_PORT` — the
   injection point for the per-worktree port.
 - **QA agent:** drive verification builds/tests via `recipe build` /
@@ -172,3 +164,7 @@ interface contract: `docs/web-app-deployment-protocol.md` §Environments.
 - Treating a missing target as "nothing to do" (it is an error — fail loud).
 - Overwriting an implemented recipe on sync (sync is extend-only).
 - Hardcoding a port in the `server` command instead of `${port}` / `$GRIMOIRE_APP_PORT`.
+
+## Reference (load on demand)
+
+- `The `recipes.json` → `just` routing convention (all targets, RSS-3 #321)` — see `reference.md`

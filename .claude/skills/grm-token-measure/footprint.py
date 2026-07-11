@@ -16,6 +16,8 @@ directly: every skill's description (loaded on every trigger of that skill) plus
 CLAUDE.md (loaded every session). SKILL.md bodies load only when a skill fires,
 so they are reported separately. Token estimate is chars//4 (a rough proxy).
 """
+from __future__ import annotations
+
 import os, sys, glob
 
 SKILL_BUDGET = 12_000   # doc-assurance body budget; bodies over this are flagged.
@@ -23,7 +25,7 @@ CHARS_PER_TOKEN = 4     # rough token estimate divisor (matches the audit proxy)
 
 
 # ── Frontmatter description extraction ───────────────────────────────────
-def extract_description(text):
+def extract_description(text: str) -> str:
     """Return the SKILL.md `description:` field's first line, or "" if absent.
 
     Handles the two shapes used in this repo:
@@ -82,7 +84,7 @@ class SkillFootprint:
         return self.body_bytes > SKILL_BUDGET
 
 
-def collect(root):
+def collect(root: str) -> tuple:
     """Return (skills, claude_md_bytes).
 
     `skills` is a list[SkillFootprint] for every <root>/.claude/skills/*/SKILL.md,
@@ -106,7 +108,7 @@ def _est_tokens(chars):
     return chars // CHARS_PER_TOKEN
 
 
-def render(skills, claude_md_bytes):
+def render(skills: list, claude_md_bytes: int) -> list:
     """Build the full report as a list of printable lines."""
     out = []
     # ── Per-skill table ────────────────────────────────────────────────
@@ -141,7 +143,7 @@ def render(skills, claude_md_bytes):
 
 
 # ── Self-test ────────────────────────────────────────────────────────────
-def self_test():
+def self_test() -> tuple:
     """Fixture-tree tests asserting the totals math. Returns (passed, failed, lines)."""
     import tempfile, shutil
 
@@ -245,7 +247,7 @@ def self_test():
     return passed, failed, out_lines
 
 
-def main():
+def main() -> None:
     args = sys.argv[1:]
     if "--self-test" in args:
         passed, failed, lines = self_test()

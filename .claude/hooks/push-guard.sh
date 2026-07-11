@@ -51,8 +51,10 @@ import json
 import os
 import re
 import shlex
-import subprocess
 import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _hook_common import _scalar, current_branch, read_config  # noqa: E402
 
 PUSH_SUBCMDS = {"push", "send-pack"}
 
@@ -97,14 +99,7 @@ PR_HEAD_PATTERN = re.compile(r"^version/.+$")
 
 def github_pr_enabled(proj: str) -> bool:
     """True iff .claude/grimoire-config.json has github-pr.enabled == true."""
-    if not proj:
-        return False
-    try:
-        with open(os.path.join(proj, ".claude", "grimoire-config.json")) as f:
-            cfg = json.load(f)
-    except (OSError, ValueError):
-        return False
-    block = cfg.get("github-pr")
+    block = read_config(proj).get("github-pr")
     if not isinstance(block, dict):
         return False
     enabled = block.get("enabled")
@@ -256,19 +251,6 @@ def load_allowlist(proj: str) -> set[str]:
     except OSError:
         pass
     return al
-
-
-def current_branch(repo: str) -> str | None:
-    try:
-        out = subprocess.run(
-            ["git", "-C", repo, "symbolic-ref", "--quiet", "--short", "HEAD"],
-            capture_output=True, text=True, timeout=5,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return None
-    if out.returncode != 0:
-        return None
-    return out.stdout.strip() or None
 
 
 def normalize_ref(name: str) -> str:

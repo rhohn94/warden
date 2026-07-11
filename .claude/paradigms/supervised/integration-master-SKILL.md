@@ -24,8 +24,38 @@ gate, `grm-project-release`, and the push.
 Absent a PM (no `grm-project-manager` block, or a single-feature release), the
 master is unchanged: it remains the top-level orchestrator and runs the whole
 pipeline below exactly as documented (the degenerate one-lane case). The PM
-layer is additive — it does not remove the standalone master path. See
-`docs/design/project-manager-role-design.md` §5.
+layer is additive — it does not remove the standalone master path. The PM role
+is a framework-internal design (§5) — see the upstream Grimoire repository for
+that rationale.
+
+---
+
+## Model & escalation (orchestrate band)
+
+The integration master itself resolves through the **`orchestrate` band** of the
+active model/effort profile (`.claude/model-effort-profiles.json`) — **Sonnet in
+every starter profile**. Whoever dispatches a master as a subagent (the Noir
+loop's release-master spawn, a Project Manager lane dispatch) resolves
+`orchestrate` and passes the resulting `{model, effort}` pair on the `Agent`
+call; a master running as the user's own session keeps the session model.
+
+The lean orchestrator is safe because judgment-heavy moments are **escalated,
+never absorbed**. On any of these exceptional conditions —
+
+- a merge conflict whose resolution is not mechanically obvious,
+- a post-merge test failure with unclear root cause,
+- a design or planning question (architecture choice, scope interpretation),
+- acceptance-criteria ambiguity about whether an item is genuinely done —
+
+the master spawns a one-shot **adjudicator** (or **designer**, for design and
+planning questions) at the active profile's **`review` band** — Opus-class in
+most profiles — handing it the concrete artifacts (diff, conflict hunks, failing
+test output, plan excerpt, acceptance criteria) and a mandate to return a
+verdict with an explicit confidence.
+
+The adjudicator runs *before* the user gate: its recommendation is presented at
+the existing decision gate, and the user still confirms — escalation sharpens
+the question, it never replaces the gate.
 
 ---
 
@@ -108,8 +138,8 @@ confirmation before running `git push`.
 
 ## Context efficiency (v1.29)
 
-Cost levers for long autonomous campaigns. Authority:
-`docs/design/context-efficiency-design.md`.
+Cost levers for long autonomous campaigns. Design rationale lives in the
+upstream Grimoire repository (framework-internal — not shipped).
 
 - **Cache-friendly ordering (#57).** Read **stable** content first (coding
   standards, design docs, the agreed release plan) and **volatile** content last
@@ -126,7 +156,8 @@ Cost levers for long autonomous campaigns. Authority:
 
 ## Autonomy hardening (v1.30)
 
-Authority: `docs/design/autonomy-hardening-design.md`.
+Design rationale lives in the upstream Grimoire repository (framework-internal
+— not shipped).
 
 - **Unattended dispatch (#60).** `spawn_task` chips need a human click, so for
   genuine **unattended** Noir dispatch use the write-capable workflow / the

@@ -13,7 +13,8 @@ pristine, re-arms the onboarding sentinel, and hands back to onboarding.
 The non-negotiable invariant is **archive, never delete**. Every project-local
 file (and any customised framework file) is **copied** into a timestamped
 archive *before* anything is cleared or overwritten, so a reset is always fully
-recoverable. Full contract: `docs/grimoire/design/hard-reset-design.md`.
+recoverable. The full contract is a framework-internal design — see the
+upstream Grimoire repository for that rationale.
 
 > **This skill is destructive-adjacent.** It clears project-local files and
 > overwrites framework files. Even though it archives everything first, it is
@@ -21,13 +22,11 @@ recoverable. Full contract: `docs/grimoire/design/hard-reset-design.md`.
 > without an explicit per-action confirmation in the same turn** (Step 4). A
 > trigger phrase only *enters* the skill — it does not authorise the reset.
 
-> **Not for repos where the Grimoire framework files are the product.** If your
-> project's source tree IS the framework content (e.g. you are developing Grimoire
-> itself), a reset would archive the product, not the project layer on top of it.
-> This skill is for **adopting projects** that layer their own source on top of
-> the scaffold. The pre-flight summary (Step 3) will list what it considers
-> "project source"; review it carefully before confirming. The human gate is the
-> backstop.
+> **Not for repos where the Grimoire framework files are the product** (e.g. you
+> are developing Grimoire itself) — a reset would archive the product, not a
+> project layer on top of it. This skill is for **adopting projects**. Review
+> the Step 3 "project source" list carefully before confirming; the human gate
+> is the backstop.
 
 ---
 
@@ -81,7 +80,7 @@ written `<golden>` below); all paths restore from there.
 | `.claude/integration-allow.local` | archive → remove |
 | `.claude/settings.local.json` | archive → remove |
 
-**Ambiguous cases** (`hard-reset-design.md` §1.3–§1.4):
+**Ambiguous cases** (rationale in the upstream Grimoire repository, framework-internal):
 
 - **`CLAUDE.md`** — treat as **project-local for archival, framework for
   restoration**: archive the current file verbatim, then restore it from the
@@ -97,8 +96,8 @@ written `<golden>` below); all paths restore from there.
   above is project source → archive → remove. The exclude-list approach means no
   stray project file is silently left behind; the Step 3 summary lists every path.
 
-**Meta-skill self-preservation:** like `grm-workflow-bootstrap` and
-`grm-workflow-snapshot`, `grm-hard-reset` is a framework file but **must not
+**Meta-skill self-preservation:** like `grm-workflow-bootstrap`,
+`grm-hard-reset` is a framework file but **must not
 archive/clear itself while executing** — the running copy is preserved through
 the run; the golden-restore (Step 5) re-establishes it as a pristine framework
 file like any other.
@@ -223,9 +222,9 @@ preserve-mode reset lands in the same paradigm with pristine content.
 
 Default: **arm the sentinel and stop.** Because line 1 of `CLAUDE.md` is now the
 sentinel, the user's next prompt triggers the standard onboarding flow
-(`grm-onboarding` → `grm-repo-init` → `grm-work-paradigm-switch` → `grm-workflow-bootstrap`) per
-`docs/grimoire/design/onboarding-design.md`. Report that the scaffold is reset and the
-next prompt will begin onboarding.
+(`grm-onboarding` → `grm-repo-init` → `grm-work-paradigm-switch` → `grm-workflow-bootstrap`)
+(framework-internal rationale in the upstream Grimoire repository). Report that
+the scaffold is reset and the next prompt will begin onboarding.
 
 - **`--reonboard-now`:** invoke the `grm-onboarding` skill directly now instead of
   waiting for the next prompt.
@@ -236,5 +235,6 @@ No git operations. The user reviews the working-tree changes and commits.
 
 ## Reference (load on demand)
 
+- `Recovering from an archive` (`hard_reset.py --restore`) — see `reference.md`
 - `What this skill does NOT do` — see `reference.md`
 - `Anti-patterns` — see `reference.md`

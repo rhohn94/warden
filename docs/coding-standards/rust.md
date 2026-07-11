@@ -83,8 +83,8 @@ consumer invokes one stable name. The canonical command set, cheap-to-expensive:
 
 Run format and lint as hard gates; collect unused-deps and complexity as
 warn-level findings. Keep individual functions under ~50 lines and modules under
-~400; split before they grow past that. Design:
-`../design/rust-quality-enforcement-design.md`.
+~400; split before they grow past that. (Design rationale in the upstream
+Grimoire repository, framework-internal.)
 
 ## Telemetry hooks (where they integrate)
 

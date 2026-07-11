@@ -81,21 +81,166 @@ db-down:
 
 # build — compile/package the project into dist/ artifacts.
 # env: "dev" skips optimisations; "prod" for release artifacts.
-# grimoire:placeholder
 build env="dev":
+    # grimoire:placeholder
     @echo "TODO: replace with build command (e.g. npm run build, cargo build, python -m build)"
 
-# run — start the web app in dev mode. Run `just build` first if your project
-# requires compiled artifacts before the process can start.
-run: db-up
-    @echo "Replace this with the project's run command (e.g. the web app entrypoint)."
+# run — start the web app in dev mode (canonical name; `recipe.py server` and
+# `recipe.py run` both resolve here). Run `just build` first if your project
+# requires compiled artifacts before the process can start. When you wire the
+# real run command, background it and write its PID to $GRIMOIRE_RUN_PIDFILE
+# (default .grimoire-run.pid) so `just stop` (scripts/stop.sh) can find and kill
+# it, e.g.: `nohup <entrypoint> & echo $! > "${GRIMOIRE_RUN_PIDFILE:-.grimoire-run.pid}"`.
+run env="dev" port="3000": db-up
+    # grimoire:placeholder
+    @echo "TODO: replace with the run command (e.g. the web app entrypoint) on port {{port}}, env {{env}}."
 
-# deploy — push artifacts to a live environment.
-# env: REQUIRED (no default — forces explicit choice); one of: dev | staging | prod.
-# dry_run: "true" to plan without executing side effects.
-# grimoire:placeholder
+# stop — kill running instance(s) of this project's process (#322, INTERFACE v6).
+# Resolution order: port param -> $GRIMOIRE_APP_PORT -> the pidfile `run` writes
+# -> a declared process pattern. Idempotent — nothing running is exit 0. See
+# scripts/stop.sh for the generic reference implementation.
+stop port="":
+    scripts/stop.sh {{port}}
+
+# test — run the test suite (depends on db-up so the DB is ready first, and on
+# api-types-check so a stale typed API boundary fails the suite — no-op when
+# the api-types pattern isn't adopted; see docs/grimoire/design/typed-api-boundary-design.md).
+test filter="" watch="": db-up api-types-check
+    # grimoire:placeholder
+    @echo "TODO: replace with the test command (e.g. pytest {{filter}})."
+
+# seed — populate a local data store with fixtures.
+seed fixture="" env="dev":
+    # grimoire:placeholder
+    @echo "TODO: replace with the seed command (fixture {{fixture}}, env {{env}})."
+
+# migrate — run pending schema / data migrations.
+migrate env="dev":
+    # grimoire:placeholder
+    @echo "TODO: replace with the migrate command (env {{env}})."
+
+# lint — static analysis / formatting checks.
+lint:
+    # grimoire:placeholder
+    @echo "TODO: replace with the lint command (e.g. ruff check ., eslint ., cargo clippy)."
+
+# clean — remove build artifacts.
+clean:
+    # grimoire:placeholder
+    @echo "TODO: replace with the clean command (e.g. rm -rf dist/)."
+
+# ---------------------------------------------------------------------------
+# Typed API boundary (extras — NOT build-recipe INTERFACE targets; see
+# docs/grimoire/design/typed-api-boundary-design.md and .claude/recipes.json's
+# "extras" object). Opt-in: no-op (exit 0) on a project that hasn't adopted
+# the api-types pattern.
+# ---------------------------------------------------------------------------
+
+# api-types — regenerate the committed frontend types from the backend
+# api-types crate (ts-rs codegen; reference implementation).
+api-types:
+    scripts/api_types.sh gen
+
+# api-types-check — drift gate: regenerate into a temp dir and diff against
+# the committed types; nonzero exit on drift. Wired into `test`'s
+# prerequisite chain above.
+api-types-check:
+    scripts/api_types.sh check
+
+# sync-deps — reconcile / vendor first-party deps from a release channel.
+# Delegates to the framework consume-side script; mode selects --check/--update/--offline.
+sync-deps mode="":
+    python3 .claude/skills/grm-sync-deps/sync_deps.py {{mode}}
+
+# vendor-check — dependency-channel conformance gate (exit 0/nonzero). Delegates
+# to the framework script; full selects the whole-vendor audit.
+vendor-check full="":
+    python3 .claude/skills/grm-dependency-audit/dependency_channel_conformance.py --root . {{full}}
+
+# package — assemble a versioned, deployable release bundle in dist/.
+# Delegates to the shared scripts/package.sh (resolves VERSION + TRIPLE, builds,
+# stages dist/<name>-v{VER}-{TRIPLE}/, emits release.json + SHA256SUMS, and tars
+# deterministically). Parameterize the app via scripts/package-manifest.sh (see
+# the PACKAGE_* contract in scripts/package.sh) or pass version/target explicitly.
+# version/target default to "" so package.sh auto-detects from the manifest / env.
+package version="" target="":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    args=()
+    [ -n "{{version}}" ] && args+=(--version "{{version}}")
+    [ -n "{{target}}" ] && args+=(--triple "{{target}}")
+    scripts/package.sh ${args[@]+"${args[@]}"}
+
+# deploy — push a packaged bundle to a named environment.
+# env: REQUIRED (no default — forces explicit choice); one of the environments
+#      declared in .claude/grimoire-config.json (local | dev | beta | production).
+# dry_run: "true" to plan every action without executing side effects.
+# Delegates to the shared scripts/deploy.sh, which reads the `environments` block
+# and branches on transport (ssh | local-symlink | pull) × service_manager.
 deploy env dry_run="false":
-    @echo "TODO: replace with deploy command (e.g. fly deploy --env {{env}})"
+    #!/usr/bin/env bash
+    set -euo pipefail
+    # `just` binds recipe args positionally: prefer `just deploy prod true`. Accept
+    # the documented `dry_run=true` spelling too by stripping a leading `dry_run=`
+    # (just would otherwise pass the whole token as the positional value).
+    dr="{{dry_run}}"; dr="${dr#dry_run=}"
+    if [ "$dr" = "true" ]; then
+        scripts/deploy.sh {{env}} --dry-run
+    else
+        scripts/deploy.sh {{env}}
+    fi
 
-test: db-up
-    @echo "Replace this with the project's test command."
+# smoke — boot-free liveness check: GET /healthz and assert a 2xx JSON body with
+# {status, version} (web-app-deployment-protocol.md §5). port selects the local
+# dev server port (matches the build-recipe `smoke` param; defaults to 3000).
+# Override the base URL via SMOKE_BASE_URL (else http://localhost:{{port}}, with
+# $GRIMOIRE_APP_PORT honoured when port is left at its default).
+smoke port="3000":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    base="${SMOKE_BASE_URL:-http://localhost:${GRIMOIRE_APP_PORT:-{{port}}}}"
+    url="$base/healthz"
+    echo "smoke: GET $url (port={{port}})"
+    body="$(curl -fsS "$url")" || { echo "smoke: /healthz did not return 2xx" >&2; exit 1; }
+    echo "$body" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert "status" in d and "version" in d, "healthz JSON must carry {status, version}: %r" % d; print("smoke: OK status=%s version=%s" % (d["status"], d["version"]))'
+
+# release — the changelog-derived release ceremony (no args).
+# Delegates to the shared scripts/release.sh, which derives the version from the
+# newest heading in the changelog (docs/version-history.md by default), runs the
+# guards (release branch, clean tree, tag absent, changelog entry present), bumps
+# the project's version file(s), runs test + release build, archives, commits the
+# bump, tags, and reconciles the matching milestone:v{X.Y} issues into release
+# notes (via the grm-issue-tracker abstraction — github + roadmap both work).
+# Parameterize via scripts/release-manifest.sh (see the RELEASE_* contract in
+# scripts/release.sh). Pass extra flags through (e.g. `just release --dry-run`).
+release *ARGS:
+    scripts/release.sh {{ARGS}}
+
+# smoke-visual — scripted-screenshot pixel-diff smoke gate (Grimoire #289, RSS-9).
+# Generalizes the fleet's pixel-diff harness (forge-engine/obsidian/retro-game-
+# player) into one reusable recipe: captures each configured route via a
+# project-declared headless-browser command, diffs against the committed
+# baseline in tests/smoke-baselines/, and hard-fails on a MISSING baseline
+# (never a silent no-op — closes the forge-engine#150 class of bug). This
+# extends the curl-based `smoke` floor above with a slower, browser-based
+# visual-regression layer; it is NOT part of the versioned build-recipe
+# INTERFACE vocabulary (see .claude/recipes.json `extras.smoke-visual`).
+# Configure via scripts/smoke-visual-manifest.sh (SMOKE_VISUAL_* contract — see
+# the header of scripts/smoke-visual.sh) or CLI flags (--route, --capture-cmd).
+# port: local dev server port (matches `run`/`smoke`; defaults to 3000).
+# update_baselines: "true" to regenerate the committed references from the
+# current capture — the documented workflow after an intentional UI change
+# (docs/grimoire/design/runtime-verification-design.md §Visual smoke gate).
+smoke-visual port="3000" update_baselines="false":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    # `just` binds recipe args positionally: prefer `just smoke-visual 3000 true`.
+    # Accept the documented `port=3000`/`update_baselines=true` spelling too (the
+    # same convenience `deploy`'s dry_run accepts above) by stripping a leading
+    # `port=`/`update_baselines=` — `just` would otherwise pass the whole token
+    # as the positional value.
+    p="{{port}}"; p="${p#port=}"
+    ub="{{update_baselines}}"; ub="${ub#update_baselines=}"
+    args=(--port "$p")
+    [ "$ub" = "true" ] && args+=(--update-baselines)
+    scripts/smoke-visual.sh "${args[@]}"

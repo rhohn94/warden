@@ -54,8 +54,8 @@ Per-technology coding standards for HTML. Read alongside the cross-language
 Web projects drive HTML quality through the recipe `lint` target. The canonical
 command is `htmlhint` with semantic, accessibility-attribute, and
 no-inline-style rules enabled; findings are warn-level by default and escalate
-to block via the v1.26 `code-quality` `audit-gate` dial. Design:
-`../design/html-css-quality-enforcement-design.md`.
+to block via the v1.26 `code-quality` `audit-gate` dial. (Design rationale in
+the upstream Grimoire repository, framework-internal.)
 
 ## Audit hints
 

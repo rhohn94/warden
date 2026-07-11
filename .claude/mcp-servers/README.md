@@ -3,7 +3,8 @@
 Bundled [Model Context Protocol](https://modelcontextprotocol.io) servers that
 give agents **native, token-cheap tools** for common Grimoire operations,
 portable across every MCP harness (Claude Code, Cursor, VS Code / Copilot,
-Windsurf, Codex). Authoritative design: `docs/design/mcp-server-design.md`.
+Windsurf, Codex). Design rationale lives in the upstream Grimoire repository
+(framework-internal — not shipped).
 
 ## Layout
 
@@ -26,8 +27,8 @@ standard library — **zero third-party dependencies**, no `pip`/`npm` install, 
 compiled wheels, runs on any Python 3, fastest cold start. The official SDKs were
 evaluated and rejected (they pull ~15 deps incl. compiled `pydantic-core` and
 `cryptography`); token cost to the agent and cross-harness compatibility are
-identical either way, so the lightest option wins. See the design doc's
-Alternatives section.
+identical either way, so the lightest option wins. (Full evaluation in the
+upstream Grimoire repository, framework-internal.)
 
 ## Registration
 
@@ -96,27 +97,27 @@ read-only and never merges. The **agent** commits. **CLI fallback**: `python3
 .claude/skills/grm-release-agent-tracker/release_plan.py
 {get-ledger|diff|merge-queue|merge-preflight|plan-phase|tick}`. Consumers
 (`grm-release-agent-tracker`, `grm-ledger-tick`, `grm-release-phase`, `grm-release-phase-merge`,
-`grm-noir-loop`) are re-pointed MCP-first. Design:
-`docs/design/grimoire-release-server-design.md`.
+`grm-noir-loop`) are re-pointed MCP-first. (Design rationale in the upstream
+Grimoire repository, framework-internal.)
 
 ## The v3.28 ops servers — `grimoire-status`, `grimoire-recipe`, `grimoire-environment`
 
 Three more instances of the template (the second wave of the MCP expansion
-audit, `docs/design/mcp-expansion-audit.md` ranks 2/5/8). Each is a thin
-read-only/structured adapter over an existing engine; compact JSON responses:
+audit — framework-internal; see the upstream Grimoire repository for that
+rationale). Each is a thin read-only/structured adapter over an existing
+engine; compact JSON responses:
 
 | Server | Wraps | Tools | Contract |
 |---|---|---|---|
 | `grimoire-status`      | `status-broker/project_status.py` | `get_status` | **Read-only** — structured JSON project overview (name, framework version, paradigm, dials, latest/in-flight release, manifest version, tech stack, degraded-source warnings). No writes, no git, no tracker calls. |
 | `grimoire-recipe`      | `build-recipe/recipe.py`          | `list_targets`, `dry_run`, `run_recipe` | Recipes stay project-defined in `.claude/recipes.json`; the server adds **no new execution authority**. `run_recipe` returns structured `{target, exit_code, ok, stdout, stderr}`. |
-| `grimoire-environment` | `environment-manager/env_probe.py`| `list_processes`, `port_status`, `instance_urls` | **Read-only** process/port inspection. Lifecycle ops (`kill`/`start`) are deliberately **not** exposed — they stay per-action-authorized agent-side per `environment-manager-design.md`. |
+| `grimoire-environment` | `environment-manager/env_probe.py`| `list_processes`, `port_status`, `instance_urls` | **Read-only** process/port inspection. Lifecycle ops (`kill`/`start`) are deliberately **not** exposed — they stay per-action-authorized agent-side (framework-internal design; see the upstream Grimoire repository for that rationale). |
 
-**MCP-first, CLI-fallback contract.** Consumers (`grm-status-broker`, `grm-build-recipe`,
-`grm-environment-manager`) prefer these tools when `mcp.enabled` and the server is
+**MCP-first, CLI-fallback contract.** Consumers (`grm-agent-status-broker`, `grm-build-recipe`,
+`grm-agent-environment-manager`) prefer these tools when `mcp.enabled` and the server is
 registered; otherwise they fall back to the identical engine CLI
-(`project_status.py` / `recipe.py` / `env_probe.py`). Designs:
-`docs/design/status-broker-design.md`, `build-recipe-interface-design.md`,
-`environment-manager-design.md`, and `mcp-server-design.md`.
+(`project_status.py` / `recipe.py` / `env_probe.py`). (Design rationale for all
+four in the upstream Grimoire repository, framework-internal.)
 
 ## Authoring a new Grimoire MCP server (the template)
 

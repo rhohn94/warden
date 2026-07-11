@@ -1,0 +1,84 @@
+# Quick-start task runner (just — https://github.com/casey/just) — reusable library.
+#
+# Ships the full build-recipe vocabulary (RSS-3, #321): every INTERFACE target has
+# a standard `just` recipe here — the one place recipes live. `recipe.py <t>`
+# routes to `just <t>` via .claude/recipes.json. Placeholder bodies carry
+# `# grimoire:placeholder` until wired; sync-deps/vendor-check delegate to the
+# framework scripts. A library has no server to run and nothing to deploy, so its
+# .claude/recipes.json declares `run`/`deploy` absent (advisory in
+# grm-install-doctor); the recipes are still present as placeholders for uniformity.
+# Authority: docs/design/justfile-standard-design.md +
+# docs/grimoire/design/build-recipe-interface-design.md.
+
+set shell := ["bash", "-uc"]
+
+# build — compile the library.
+build env="dev":
+    # grimoire:placeholder
+    @echo "TODO: replace with the build command (env {{env}})."
+
+# run — a library has no runnable entrypoint; present for vocabulary uniformity.
+run env="dev" port="3000":
+    # grimoire:placeholder
+    @echo "A library has no run target — implement only if the project ships a demo/CLI."
+
+# stop — a library has no runnable entrypoint; present for vocabulary uniformity.
+stop port="":
+    # grimoire:placeholder
+    @echo "A library has no run target to stop — implement only if the project ships a demo/CLI."
+
+# test — run the test suite.
+test filter="" watch="":
+    # grimoire:placeholder
+    @echo "TODO: replace with the test command (e.g. pytest {{filter}}, cargo test)."
+
+# seed — populate a local data store with fixtures.
+seed fixture="" env="dev":
+    # grimoire:placeholder
+    @echo "TODO: replace with the seed command (fixture {{fixture}}, env {{env}})."
+
+# migrate — run pending schema / data migrations.
+migrate env="dev":
+    # grimoire:placeholder
+    @echo "TODO: replace with the migrate command (env {{env}})."
+
+# lint — static analysis / formatting checks.
+lint:
+    # grimoire:placeholder
+    @echo "TODO: replace with the lint command (e.g. ruff check ., cargo clippy)."
+
+# clean — remove build artifacts.
+clean:
+    # grimoire:placeholder
+    @echo "TODO: replace with the clean command (e.g. rm -rf dist/ target/)."
+
+# package — build the publishable distribution (wheel / crate / npm tarball).
+package version="" target="":
+    # grimoire:placeholder
+    @echo "TODO: replace with the package command (version {{version}}, target {{target}})."
+
+# deploy — a library publishes rather than deploys; implement `release` instead.
+deploy env dry_run="false":
+    # grimoire:placeholder
+    @echo "A library has no deploy target — use `release` to publish (env {{env}})."
+
+# smoke — runtime verification; a pure library usually has none.
+smoke port="3000":
+    # grimoire:placeholder
+    @echo "A pure library has no served surface to smoke-check (port {{port}})."
+
+# release — the changelog-derived release/publish ceremony. See the web
+# quick-start template for a scripts/release.sh reference implementation.
+release *ARGS:
+    # grimoire:placeholder
+    @echo "TODO: replace with the release/publish ceremony (see the web template's scripts/release.sh)."
+
+# sync-deps — reconcile / vendor first-party deps from a release channel.
+# Delegates to the framework consume-side script; mode selects --check/--update/--offline.
+sync-deps mode="":
+    python3 .claude/skills/grm-sync-deps/sync_deps.py {{mode}}
+
+# vendor-check — dependency-channel conformance gate (exit 0/nonzero). Delegates
+# to the framework script; full selects the whole-vendor audit.
+vendor-check full="":
+    python3 .claude/skills/grm-dependency-audit/dependency_channel_conformance.py --root . {{full}}

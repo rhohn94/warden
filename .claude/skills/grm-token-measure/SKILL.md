@@ -5,11 +5,12 @@ description: Measure per-class token usage (input / output / cache_read / cache_
 
 # Token measure
 
-Reusable measurement harness for the token-efficiency methodology
-(`docs/grimoire/design/token-efficiency-design.md`). Parses a session transcript and
-sums the four Anthropic token classes per operation, emitting the per-class
-report table the design doc's measurement protocol requires. **Read-only** —
-it parses `.jsonl` and prints a report; it mutates nothing.
+Reusable measurement harness for the token-efficiency methodology (a
+framework-internal design — see the upstream Grimoire repository for that
+rationale). Parses a session transcript and sums the four Anthropic token
+classes per operation, emitting the per-class report table the design doc's
+measurement protocol requires. **Read-only** — it parses `.jsonl` and prints a
+report; it mutates nothing.
 
 ## Method (resolved open question)
 
@@ -104,7 +105,8 @@ compare the next release against it.
 - **Compare:** at the next closeout, diff current vs baseline; **flag** any class
   whose `output` (the dominant cost lever) regressed beyond a threshold
   (default +15%, informational). A regression is a prompt to investigate, not a
-  hard gate. Design: `docs/design/context-efficiency-design.md`.
+  hard gate. (Design rationale in the upstream Grimoire repository,
+  framework-internal.)
 
 ## Static footprint (v3.37.2)
 
@@ -112,3 +114,57 @@ compare the next release against it.
 without a transcript — Σ skill descriptions + `CLAUDE.md` + per-skill body sizes,
 with over-budget bodies flagged. Run it to re-baseline `token-efficiency-baseline.md`:
 `python3 .claude/skills/grm-token-measure/footprint.py`.
+
+## Per-run telemetry artifact
+
+`run_metadata.py` (third script in this directory) emits one structured JSON
+file per run to `.claude/cache/runs/<run_id>.json`, reusing `parse_usage.py`'s
+token accounting and adding run-context fields (paradigm, profile, model,
+release, outcome, item counts, wall-clock, start time). Consumed by
+`grm-release-phase-merge` and `grm-project-release` as a best-effort telemetry
+emit — never gates a merge or release. Usage:
+
+```bash
+python3 .claude/skills/grm-token-measure/run_metadata.py --emit --outcome pass \
+  --release <X.Y> [--transcript T] [--config grimoire-config.json] [--run-id ID]
+python3 .claude/skills/grm-token-measure/run_metadata.py --validate <file>
+```
+
+The artifact shape is a published contract other tooling depends on — do not
+rename, retype, or remove a field (additive nullable fields are safe).
+
+## Standalone entry-point telemetry (#345/#346)
+
+`telemetry_entry.py` (fourth script in this directory) is the one-line opt-in
+`docs/coding-standards.md`'s `telemetry-errors`/`telemetry-cli-invocations`
+rows point standalone skill scripts at — release-boundary skills
+(`grm-release-phase-merge`, `grm-project-release`) already emit `run_metadata`
+directly; any other script wraps its `main()`:
+
+```python
+from telemetry_entry import instrument
+
+@instrument                       # unhandled exception → outcome=fail + context
+def main(argv=None):
+    ...
+
+@instrument(record_success=True)  # also records a clean exit's argv/exit code
+def main(argv=None):
+    ...
+```
+
+A bash caller at a boundary (not an importable `main()`) uses the CLI mode
+instead: `telemetry_entry.py --emit --outcome fail --exit-code N [--note TEXT]`.
+Both paths write the same `run_metadata` artifact plus a small, non-contract
+context sibling (`<run_id>.context.json`: argv/flags/exit_code) — telemetry
+emission is always best-effort and never changes the wrapped script's
+behavior or exit code. Self-test: `python3
+.claude/skills/grm-token-measure/telemetry_entry.py --self-test`.
+
+## Cross-skill dependency
+
+`grm-cost-budget/cost_budget.py` imports `parse_transcript` and
+`TranscriptError` directly from this skill's `parse_usage.py` (#363) rather
+than duplicating the transcript-accumulator logic. `parse_usage.py` declares
+both names in its `__all__` and marks them as consumed by grm-cost-budget —
+do not rename them here without updating that consumer.

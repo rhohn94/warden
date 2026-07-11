@@ -1,0 +1,6 @@
+{
+  "schema_version": "99",
+  "app": "familiar",
+  "build": {"version": "1.20.0"},
+  "runtime": {"status": "up"}
+}

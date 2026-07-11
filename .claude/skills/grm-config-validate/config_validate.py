@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""config_validate.py — validate + migrate .claude/grimoire-config.json (v1.31, #68; stealth-mode v3.0; project-manager v3.1; github-pr v3.5; qa v3.6; worktree-ports v3.7; iterate v3.11; mcp v3.12; web-app v3.26; environments v3.27; config-migration v3.51 #163).
+"""config_validate.py — validate + migrate .claude/grimoire-config.json (v1.31, #68; stealth-mode v3.0; project-manager v3.1; github-pr v3.5; qa v3.6; worktree-ports v3.7; iterate v3.11; mcp v3.12; web-app v3.26; environments v3.27; config-migration v3.51 #163; environments deploy-topology v3.68 #201; issue-filing-authority v3.74 #221).
 
 Validates the config against a declared schema (known blocks + value sets),
 reports unknown/missing fields, and runs an idempotent migration that fills
@@ -14,16 +14,28 @@ is affirmatively detected/confirmed as a web app.
 The environments block (v3.27) is additive with absence-as-default and is NOT
 a migration default — absence means no deploy environments declared, which is
 valid for non-web or early-stage projects. Schema version does not bump
-(deploy-environment-design.md §1).
+(deploy-environment-design.md §1). The v3.68 #201 Phase 1 deploy-topology fields
+(transport / service_manager / host / path / service / bind / service_address)
+are likewise additive — absence of any field stays valid, no schema bump.
 
 The changelog block (v3.31) is additive with absence-as-default and is NOT a
 migration default — absence reads as user-facing off (operator-only changelog),
 so --migrate is a no-op for it and schema-version does not bump
 (changelog-surface-design.md §2).
 
+The issue-filing-authority block (v3.74 #221) is additive with
+absence-as-default and is NOT a migration default — absence reads as "not
+provisioned" (the settings.json filing allowlist is not written), so --migrate
+is a no-op for it and schema-version does not bump. It is written only when a
+user affirmatively opts in (bootstrap interview or a github-tracker switch), and
+must NEVER be silently defaulted to true — that would grant issue-filing
+authority without consent (issue-filing-authority-design.md).
+
 Usage: config_validate.py [--path P] [--migrate] [--self-test]
 Exit: 0 if valid (after optional migrate) or self-test passes, 1 otherwise.
 """
+from __future__ import annotations
+
 import json, os, sys, subprocess
 
 # Current declared schema version. `--migrate` raises an older config to this.
@@ -48,6 +60,12 @@ ENUMS = {
     "worktree-ports.strategy": {"os-assign", "random-probe", "index"},
     "iterate.audit-agent": {"dispatched", "inline"},
     "web-app.value": {"yes", "no"},
+    # web-app.agentic (v3.57, standard-package adoption): an additive,
+    # absence-as-default capability dial — "this web app runs its own
+    # agentic/LLM workloads, so it has token cost/throughput worth surfacing".
+    # Gates the conditional token-bookkeeper catalog entry's `applies-when`
+    # predicate (web-app-support-design.md §5.5). Absence reads as "no".
+    "web-app.agentic": {"yes", "no"},
     "changelog.user-facing": {"on", "off"},
 }
 # Canonical environment names (v3.27). The validator warns if a project
@@ -56,10 +74,18 @@ KNOWN_ENV_NAMES = {"local", "dev", "beta", "production"}
 # Valid per-env field values (additive; sub-validated in the cross-rule).
 KNOWN_ENV_CHANNELS = {"stable", "beta"}
 KNOWN_ENV_DEPLOY_POLICIES = {"auto", "pr_gate", "manual"}
+# Deploy-topology fields (v3.68 #201 Phase 1, deploy-environment-design.md §1).
+# Additive: absence of any of these stays valid. `transport` names how the
+# bundle reaches the target; `service_manager` names the init system deploy.sh
+# restarts through. Both are closed sets — an unrecognized value is an error.
+KNOWN_ENV_TRANSPORTS = {"ssh", "local-symlink", "pull"}
+KNOWN_ENV_SERVICE_MANAGERS = {"systemd", "launchd"}
 KNOWN_TOP = {"schema-version", "name", "framework-version", "work-paradigm",
              "workflow-variant", "model-effort-profile", "release-phase-model",
              "code-quality", "issue-tracker", "cost-governance", "autonomous-push",
+             "issue-filing-authority",
              "stealth-mode", "project-manager", "github-pr", "qa", "worktree-ports",
+             "autonomy-allow",
              "iterate", "mcp", "web-app", "environments", "changelog",
              "doc-hierarchy", "branch-model"}
 # T-shirt sizes recognized in iterate.quota.
@@ -87,7 +113,7 @@ ADDITIVE_DEFAULTS = {
 }
 
 
-def dialval(cfg, path):
+def dialval(cfg: dict, path: str) -> tuple:
     cur = cfg
     for part in path.split("."):
         if not isinstance(cur, dict) or part not in cur:
@@ -98,7 +124,7 @@ def dialval(cfg, path):
     return cur, True
 
 
-def validate(cfg):
+def validate(cfg: dict) -> tuple:
     errors, warnings = [], []
     if "schema-version" not in cfg:
         errors.append("missing required field: schema-version")
@@ -196,6 +222,22 @@ def validate(cfg):
             v, present = dialval(cfg, path)
             if present and not isinstance(v, bool):
                 errors.append(f"{path} = {v!r} must be a boolean")
+    # cross-rule: issue-filing-authority block (v3.74 #221). Absence is valid and
+    # is the default (not provisioned). When present it must be an object; the
+    # opt-in fact `issue-filing-authority.enabled` must be a boolean. This mirrors
+    # autonomous-push's opt-in shape ({"enabled": bool}) — the provisioning of the
+    # settings.json filing allowlist keys off `enabled == true`. It is never
+    # silently defaulted to true (not in ADDITIVE_DEFAULTS), so a project only
+    # grants filing authority by an explicit user opt-in.
+    ifa = cfg.get("issue-filing-authority")
+    if ifa is not None:
+        if not isinstance(ifa, dict):
+            errors.append("issue-filing-authority must be an object "
+                          "(e.g. {\"enabled\": true})")
+        else:
+            en, present = dialval(cfg, "issue-filing-authority.enabled")
+            if present and not isinstance(en, bool):
+                errors.append(f"issue-filing-authority.enabled = {en!r} must be a boolean")
     # cross-rule: web-app.stack (the advisory framework hint, §1.2) is a
     # non-empty string or null; the gating fact is web-app.value (enum above).
     wa = cfg.get("web-app")
@@ -243,6 +285,22 @@ def validate(cfg):
                 if dsa is not None and not (isinstance(dsa, str) and dsa.strip()):
                     errors.append(f"environments.{env_name}.dependent-service-address = "
                                   f"{dsa!r} must be a non-empty string or null")
+                # v3.68 #201 Phase 1 deploy-topology fields (additive; each valid
+                # when absent). transport / service_manager are closed sets; the
+                # remaining fields are free-form non-empty strings (or null).
+                tr = entry.get("transport")
+                if tr is not None and tr not in KNOWN_ENV_TRANSPORTS:
+                    errors.append(f"environments.{env_name}.transport = {tr!r} not in "
+                                  f"{sorted(KNOWN_ENV_TRANSPORTS)}")
+                sm = entry.get("service_manager")
+                if sm is not None and sm not in KNOWN_ENV_SERVICE_MANAGERS:
+                    errors.append(f"environments.{env_name}.service_manager = {sm!r} not in "
+                                  f"{sorted(KNOWN_ENV_SERVICE_MANAGERS)}")
+                for fld in ("host", "path", "service", "bind", "service_address"):
+                    val = entry.get(fld)
+                    if val is not None and not (isinstance(val, str) and val.strip()):
+                        errors.append(f"environments.{env_name}.{fld} = {val!r} "
+                                      f"must be a non-empty string or null")
     # cross-rule: branch-model block (v3.38, BMI-3). Absence is valid (default
     # dev). When present: must be an object; integration-branch (if set) must be
     # a non-empty string — the sync skills read it to detect the integration line.
@@ -262,7 +320,7 @@ def validate(cfg):
 _DATA_ISOLATION_TRUTHY = {"true", "yes", "1"}
 
 
-def migrate(cfg):
+def migrate(cfg: dict) -> list:
     changed = []
     for block, default in ADDITIVE_DEFAULTS.items():
         if block not in cfg:
@@ -290,7 +348,7 @@ def migrate(cfg):
     return changed
 
 
-def self_test():
+def self_test() -> tuple:
     """In-memory checks of the schema rules, centred on the web-app block (v3.26)
     and the environments block (v3.27).
 
@@ -322,6 +380,22 @@ def self_test():
     errs, _ = validate(cfg)
     cases.append(("empty-string web-app.stack is rejected",
                   any("web-app.stack" in e for e in errs)))
+
+    # 2c. web-app.agentic (v3.57): valid "yes" passes; an out-of-set value is
+    #     rejected by the ENUMS machinery; absence is the default (no warning).
+    cfg = dict(base, **{"web-app": {"value": "yes", "agentic": {"value": "yes"}}})
+    errs, _ = validate(cfg)
+    cases.append(("valid web-app.agentic (yes) has no errors",
+                  not any("web-app.agentic" in e for e in errs)))
+    cfg = dict(base, **{"web-app": {"value": "yes", "agentic": {"value": "sometimes"}}})
+    errs, _ = validate(cfg)
+    cases.append(("invalid web-app.agentic is rejected",
+                  any("web-app.agentic" in e for e in errs)))
+    cfg = dict(base, **{"web-app": {"value": "yes"}})
+    errs, warns = validate(cfg)
+    cases.append(("absent web-app.agentic is valid (absence = default no)",
+                  not any("web-app.agentic" in e for e in errs)
+                  and not any("web-app.agentic" in w for w in warns)))
 
     # 3. Absent block — the default; valid, no web-app warning/error.
     cfg = dict(base)
@@ -425,6 +499,55 @@ def self_test():
     cases.append(("unrecognized env name produces warning not error",
                   not errs and any("staging" in w for w in warns)))
 
+    # --- deploy-topology fields (v3.68 #201 Phase 1) ---
+
+    # 6f. Full deploy-topology env (all new fields present, valid values) — no errors.
+    cfg = dict(base, **{"environments": {"production": {
+        "channel": "stable", "deploy_policy": "manual", "data_isolation": True,
+        "transport": "ssh", "service_manager": "systemd",
+        "host": "deployer@goon.example", "path": "/srv/goon-cave",
+        "service": "goon-cave", "bind": "127.0.0.1:3000",
+        "service_address": "https://goon.example"}}})
+    errs, _ = validate(cfg)
+    cases.append(("full deploy-topology env (all new fields) has no errors", not errs))
+
+    # 6g. New deploy-topology fields are all optional — absence stays valid.
+    cfg = dict(base, **{"environments": {"dev": {"channel": "stable"}}})
+    errs, _ = validate(cfg)
+    cases.append(("deploy-topology fields are optional (absence valid)", not errs))
+
+    # 6h. Invalid transport — flagged.
+    cfg = dict(base, **{"environments": {"production": {"transport": "carrier-pigeon"}}})
+    errs, _ = validate(cfg)
+    cases.append(("invalid transport is rejected", any("transport" in e for e in errs)))
+
+    # 6i. Invalid service_manager — flagged.
+    cfg = dict(base, **{"environments": {"production": {"service_manager": "upstart"}}})
+    errs, _ = validate(cfg)
+    cases.append(("invalid service_manager is rejected",
+                  any("service_manager" in e for e in errs)))
+
+    # 6j. Empty-string topology string field (host) — flagged.
+    cfg = dict(base, **{"environments": {"production": {"host": "  "}}})
+    errs, _ = validate(cfg)
+    cases.append(("empty-string host is rejected", any("host" in e for e in errs)))
+
+    # 6k. Every valid transport / service_manager value is accepted.
+    for t in sorted(KNOWN_ENV_TRANSPORTS):
+        cfg = dict(base, **{"environments": {"production": {"transport": t}}})
+        errs, _ = validate(cfg)
+        cases.append((f"transport={t} is accepted", not errs))
+    for s in sorted(KNOWN_ENV_SERVICE_MANAGERS):
+        cfg = dict(base, **{"environments": {"production": {"service_manager": s}}})
+        errs, _ = validate(cfg)
+        cases.append((f"service_manager={s} is accepted", not errs))
+
+    # 6l. --migrate does not synthesize the new topology fields.
+    cfg = dict(base, **{"environments": {"production": {"channel": "stable"}}})
+    migrate(cfg)
+    cases.append(("migrate does not synthesize topology fields",
+                  set(cfg["environments"]["production"].keys()) == {"channel"}))
+
     # 7. Absent environments block — valid (absence = no environments declared).
     cfg = dict(base)
     errs, warns = validate(cfg)
@@ -516,6 +639,50 @@ def self_test():
     cases.append(("migrate does not synthesize a branch-model block",
                   "branch-model" not in cfg))
 
+    # --- issue-filing-authority block (v3.74 #221) ---
+
+    # 11. Absent block — valid, and it is the default (not provisioned).
+    cfg = dict(base)
+    errs, warns = validate(cfg)
+    cases.append(("absent issue-filing-authority block is valid (absence = default off)",
+                  not errs and not any("issue-filing-authority" in w for w in warns)))
+
+    # 11b. Valid opt-in block (enabled: true) — no errors.
+    cfg = dict(base, **{"issue-filing-authority": {"enabled": True}})
+    errs, _ = validate(cfg)
+    cases.append(("valid issue-filing-authority block (enabled true) has no errors", not errs))
+
+    # 11c. Valid opt-out block (enabled: false) — no errors.
+    cfg = dict(base, **{"issue-filing-authority": {"enabled": False}})
+    errs, _ = validate(cfg)
+    cases.append(("valid issue-filing-authority block (enabled false) has no errors", not errs))
+
+    # 11d. Non-boolean enabled — flagged by the cross-rule.
+    cfg = dict(base, **{"issue-filing-authority": {"enabled": "yes"}})
+    errs, _ = validate(cfg)
+    cases.append(("non-boolean issue-filing-authority.enabled is rejected",
+                  any("issue-filing-authority.enabled" in e for e in errs)))
+
+    # 11e. Non-object block — flagged by the cross-rule.
+    cfg = dict(base, **{"issue-filing-authority": "on"})
+    errs, _ = validate(cfg)
+    cases.append(("non-object issue-filing-authority block is rejected",
+                  any("issue-filing-authority must be an object" in e for e in errs)))
+
+    # 11f. --migrate does NOT synthesize the block (absence is the default; the
+    #      dial must never be silently defaulted to true — that would grant
+    #      filing authority without consent).
+    cfg = dict(base)
+    migrate(cfg)
+    cases.append(("migrate does not synthesize an issue-filing-authority block",
+                  "issue-filing-authority" not in cfg))
+
+    # 11g. A config that already records the opt-in survives migrate unchanged.
+    cfg = dict(base, **{"issue-filing-authority": {"enabled": True}})
+    migrate(cfg)
+    cases.append(("migrate preserves an existing issue-filing-authority block",
+                  cfg.get("issue-filing-authority") == {"enabled": True}))
+
     lines, passed, failed = [], 0, 0
     for label, ok in cases:
         lines.append(f"  {'PASS' if ok else 'FAIL'}: {label}")
@@ -541,7 +708,7 @@ def _repo_root_for(path):
     return os.getcwd()
 
 
-def validate_codex_flavor(repo_root):
+def validate_codex_flavor(repo_root: str) -> tuple:
     """Delegate codex flavor config validation to the codex flavor's own validator.
 
     The codex flavor (v3.55) ships its own config cluster
@@ -573,7 +740,7 @@ def validate_codex_flavor(repo_root):
     return True, out.rstrip()
 
 
-def main():
+def main() -> None:
     args = sys.argv[1:]
     if "--self-test" in args:
         passed, failed, lines = self_test()

@@ -14,12 +14,31 @@ reason about. Design: `docs/grimoire/design/architecture-fitness-design.md`.
 
 Read-only; never edits source.
 
+> **Preferred interface — `architecture_fitness.py` (#212).** The algorithm
+> below is now a real, stdlib-only script: `python3
+> .claude/skills/grm-architecture-audit/architecture_fitness.py --root .`
+> (add `--gate` to escalate per the live `code-quality.audit-gate` dial, `--json`
+> for machine output). It implements Steps 1–4 exactly — regex import
+> extraction, layer/edge resolution, cycle detection, and `structure` block
+> conformance — deterministically and without burning tokens re-deriving the
+> import graph each run. `grm-code-health` imports its `build_import_graph()` /
+> `module_coupling()` for its own module-coupling section, and **`grm-structure-migrate`**
+> imports its `check_structure()` for the migrate-mode detection engine (#320) —
+> one shared scan, not three implementations. The Steps below are the fallback procedure (and the
+> conceptual model the script implements) for when the script can't run in the
+> current environment.
+
 ## Step 1 — Load the ruleset
 
-Read `.claude/architecture-rules.json`. **If it is absent, report
-`architecture-audit: no rules declared` and exit clean** — never fail a project
-that has not opted in. The file declares (see the design doc for the full
-schema):
+Read `.claude/architecture-rules.json`. **If it is absent, emit a visible WARN
+pointing at adoption** (a per-family starter shipped by
+`grm-quick-start-template` — `.claude/quick-start-templates/{service,web,gui,lib}/`
+— or `.claude/architecture-rules.example.json`) **and exit clean** — never fail
+a project that has not opted in; the absence is surfaced, not silent (#314). A
+project may explicitly decline by committing a rules file with `"opt_out":
+true` (+ `"opt_out-reason"`) — this is reported as an explicit opt-out, exits
+clean, and runs no fitness checks. The file declares (see the design doc for
+the full schema):
 
 - `layers` — name → glob(s) of files belonging to each layer.
 - `allowed-edges` — directed allow-list of layer→layer dependencies; any edge
@@ -32,6 +51,9 @@ schema):
   `docs/project-structure.md`): `required` (top-level dirs that must exist),
   `aliases` (nonstandard dir name → its standard home), `gitignored` (dirs that
   must not be tracked by git). Absent → skip structure conformance (Step 3a).
+- `opt_out` (+ optional `opt_out-reason`) — a project's explicit, tracked
+  decision to decline architecture fitness enforcement. Surfaced distinctly
+  from an absent rules file; runs no checks.
 
 ## Step 2 — Resolve layers and extract imports
 

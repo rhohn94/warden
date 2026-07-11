@@ -7,14 +7,16 @@ description: Scan a project's reusable components and emit a machine- and human-
 
 Produces a catalog of the project's reusable components — the input a
 `grm-quick-start-template` author consumes, and a discovery aid for anyone bootstrapping
-a new project. **Read-only** (writes only the report artifact). Conventions and the
-long-term direction: `docs/design/quick-start-templates-design.md`.
+a new project. **Read-only** (writes only the report artifact). The conventions
+and long-term direction are a framework-internal design — see the upstream
+Grimoire repository for that rationale.
 
 This export is a deliberate **stopgap** — a flat on-demand scan. The scalable
-versioned successor is the `grm-component-registry` skill (`.claude/component-registry.json`,
-designed in `docs/design/component-catalog-architecture-design.md`). When that
-registry is present this export becomes a **view** over it; absent, it falls back
-to the live scan below. Either way the report is fully back-compatible.
+versioned successor is the `grm-component-registry` skill
+(`.claude/component-registry.json`; design rationale in the upstream Grimoire
+repository). When that registry is present this export becomes a **view** over
+it; absent, it falls back to the live scan below. Either way the report is
+fully back-compatible.
 
 ## Step 0 — Source from the registry when present (back-compat view)
 
@@ -34,7 +36,8 @@ to the live scan below. Either way the report is fully back-compatible.
 > into the report forms of Step 3 (skip the manual Steps 1–2). The engine owns
 > discovery, hashing, and taxonomy validation identically to a real build, so the
 > view stays in lock-step with the registry by construction. The Step text below
-> is the conceptual model. Design: `docs/design/scripting-unification-design.md` §5.
+> is the conceptual model. Design rationale lives in the upstream Grimoire
+> repository (framework-internal — not shipped).
 
 If `.claude/component-registry.json` already exists on disk, you may instead
 **render the report directly from it** (read its `components` map and

@@ -14,11 +14,15 @@ the overlap analysis to a lane plan, dispatches one integration master per lane
 official release. It does not pause for confirmation at decomposition, lane
 planning, dispatch, or merge.
 
-**Push to origin stays human-gated** (and is categorically off under Stealth
-Mode). Only the PM pushes, at the single post-release moment — propose and wait,
-unless `autonomous-push.enabled` is explicitly set (never inferred).
+**Push to origin stays human-gated by default** (and is categorically off under
+Stealth Mode). Only the PM pushes, at the single post-release moment, per
+`grm-project-release` §push: an active `AskUserQuestion` prompt (`Push now` /
+`Hold`) with the exact push plan — never a passive announcement — unless
+`autonomous-push.enabled` is explicitly set (never inferred), in which case the
+PM pushes immediately with no question asked.
 
-Authority for the full design: `docs/design/project-manager-role-design.md`.
+The full design is a framework-internal design — see the upstream Grimoire
+repository for that rationale.
 
 ---
 
@@ -113,6 +117,10 @@ Optionally refresh `grm-component-registry` first.
   `spawn_task` chips. Each IM runs on its lane branch and merges its task agents'
   work into it via
   `grm-release-phase-merge` — unchanged mechanics, scoped to the lane branch.
+- **Lane-IM model = `orchestrate` band.** Resolve the active profile's
+  `orchestrate` band via the `grm-repo-reference` resolver (Sonnet in every
+  starter profile) and pass the `{model, effort}` pair on each lane-IM dispatch.
+  Each IM escalates judgment calls per its guide §Model & escalation.
 - **Lane ledger.** Track lane status in the plan (lane → features → IM status →
   integrated?) — the `grm-release-agent-tracker` view, one tier up.
 - **Lane integration.** As lanes complete, merge each lane branch into
@@ -171,7 +179,8 @@ Stop and surface to the user when:
 
 1. A cross-lane merge conflict cannot be resolved by reading the code.
 2. The test suite / QA gate fails and the root cause is unclear.
-3. A push to origin is ready (human-gated — propose and wait).
+3. A push to origin is ready (human-gated — actively prompt via
+   `AskUserQuestion` with the push plan; `Push now` / `Hold`).
 4. The user says "stop" / "pause."
 5. The milestone is reached.
 
@@ -200,8 +209,8 @@ or a lane scheduled** (`CronList` → `CronDelete`; do not re-arm), **hand off y
 own PM worktree** (surface its path + exact `git worktree remove` command — you
 cannot remove the one you run in), drop stale `.claude/integration-allow.local`
 markers, clear scratch, and **report the tally**. Procedure:
-`integration-workflow.md` §Run teardown (end-of-run); design:
-`docs/design/agent-teardown-design.md`.
+`integration-workflow.md` §Run teardown (end-of-run); design rationale lives
+in the upstream Grimoire repository (framework-internal — not shipped).
 
 ## Anti-patterns
 
@@ -211,6 +220,9 @@ markers, clear scratch, and **report the tally**. Procedure:
   serialize and record instead).
 - Overstating coverage when the registry was absent (always `log()` the
   heuristic degrade).
-- Pushing without human confirmation — push is always human-gated.
+- Pushing without an `AskUserQuestion` confirmation when gated, or a passive
+  "next is the push" announcement instead of an active prompt.
+- Stopping to ask when `autonomous-push.enabled` is true — push immediately
+  instead; that is the documented ungated contract, not a shortcut to flag.
 - A lane IM pushing, or touching another lane's branch.
 - Engaging a PM for a single-feature release (use the standalone master).

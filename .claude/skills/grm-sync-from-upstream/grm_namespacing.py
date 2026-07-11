@@ -17,7 +17,7 @@ rewrite tiers (see the design doc, grm-namespacing-design.md):
       forms — they all share the `skills/<name>/` substring.
 
   Tier 2 — bare-name prose (conservative, to avoid corrupting common-word
-      skill names like `grm-iterate`, `grm-scout`, `grm-reviewer`):
+      skill names like `grm-iterate`, `grm-agent-scout`, `grm-agent-reviewer`):
       (a) a backticked token EXACTLY equal to a known name: `<name>` -> `grm-<name>`
       (b) `<name> skill` / `skill <name>` / `the <name> skill` patterns.
 
@@ -445,16 +445,16 @@ def _test_submodule_boundary() -> list[str]:
         report = ns.run()
 
         # 1. The normal project skill was renamed.
-        if not (root / ".claude" / "skills" / "grm-scout").is_dir():
-            failures.append("SUBMODULE: project-level scout/ was NOT renamed to grm-scout/ (expected rename)")
+        if not (root / ".claude" / "skills" / "grm-agent-scout").is_dir():
+            failures.append("SUBMODULE: project-level scout/ was NOT renamed to grm-agent-scout/ (expected rename)")
         if (root / ".claude" / "skills" / "scout").exists():
             failures.append("SUBMODULE: project-level scout/ still present after rename")
 
         # 2. The submodule's skills tree was NOT touched.
         if not (root / "vendor-sub" / ".claude" / "skills" / "scout").exists():
             failures.append("SUBMODULE: scout/ inside the submodule was renamed (must NOT be touched)")
-        if (root / "vendor-sub" / ".claude" / "skills" / "grm-scout").exists():
-            failures.append("SUBMODULE: grm-scout/ was created inside the submodule tree")
+        if (root / "vendor-sub" / ".claude" / "skills" / "grm-agent-scout").exists():
+            failures.append("SUBMODULE: grm-agent-scout/ was created inside the submodule tree")
         sub_content = (root / "vendor-sub" / ".claude" / "skills" / "scout" / "SKILL.md").read_text()
         if "SUBMODULE-CONTENT" not in sub_content:
             failures.append("SUBMODULE: submodule SKILL.md content was modified")
@@ -462,8 +462,8 @@ def _test_submodule_boundary() -> list[str]:
         # 3. The lib/third-party/ tree was NOT touched.
         if not (vendored_skills / "scout").exists():
             failures.append("VENDORED: scout/ inside lib/third-party/ was renamed (must NOT be touched)")
-        if (vendored_skills / "grm-scout").exists():
-            failures.append("VENDORED: grm-scout/ was created inside lib/third-party/")
+        if (vendored_skills / "grm-agent-scout").exists():
+            failures.append("VENDORED: grm-agent-scout/ was created inside lib/third-party/")
         vend_content = (vendored_skills / "scout" / "SKILL.md").read_text()
         if "VENDORED-CONTENT" not in vend_content:
             failures.append("VENDORED: lib/third-party/ SKILL.md content was modified")
@@ -486,7 +486,7 @@ def _self_test() -> int:
     failures: list[str] = []
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
-        # Fake skill `grm-scout` (a common-word name) + a normal skill `grm-doc-assurance`.
+        # Fake skill `grm-agent-scout` (a common-word name) + a normal skill `grm-doc-assurance`.
         (root / ".claude" / "skills" / "scout").mkdir(parents=True)
         (root / ".claude" / "skills" / "doc-assurance").mkdir(parents=True)
         (root / ".claude" / "skills" / "scout" / "SKILL.md").write_text(
@@ -510,8 +510,8 @@ def _self_test() -> int:
         ref = root / "docs" / "guide.md"
         ref.parent.mkdir(parents=True)
         ref.write_text(
-            "Run `python3 .claude/skills/grm-scout/scout.py`.\n"
-            "Use the `grm-scout` skill and the grm-doc-assurance skill.\n"
+            "Run `python3 .claude/skills/grm-agent-scout/scout.py`.\n"
+            "Use the `grm-agent-scout` skill and the grm-doc-assurance skill.\n"
             "We scout the area before we iterate on the plan.\n"
             "See skills/grm-doc-assurance/SKILL.md too.\n",
             encoding="utf-8",
@@ -521,25 +521,25 @@ def _self_test() -> int:
         report = ns.run()
 
         # 1. dir renamed
-        if not (root / ".claude" / "skills" / "grm-scout").is_dir():
-            failures.append("grm-scout dir not created")
+        if not (root / ".claude" / "skills" / "grm-agent-scout").is_dir():
+            failures.append("grm-agent-scout dir not created")
         if (root / ".claude" / "skills" / "scout").exists():
             failures.append("old scout dir still present")
 
         # 2. frontmatter updated
-        fm = (root / ".claude" / "skills" / "grm-scout" / "SKILL.md").read_text()
-        if "name: grm-scout" not in fm:
+        fm = (root / ".claude" / "skills" / "grm-agent-scout" / "SKILL.md").read_text()
+        if "name: grm-agent-scout" not in fm:
             failures.append("frontmatter name not updated")
 
         # 3. path rewrite (Tier 1)
         out = ref.read_text()
-        if "skills/grm-scout/scout.py" not in out:
-            failures.append("Tier-1 path rewrite failed (.claude/skills/grm-scout/)")
+        if "skills/grm-agent-scout/scout.py" not in out:
+            failures.append("Tier-1 path rewrite failed (.claude/skills/grm-agent-scout/)")
         if "skills/grm-doc-assurance/SKILL.md" not in out:
             failures.append("Tier-1 relative path rewrite failed")
 
         # 4. backticked exact token (Tier 2a)
-        if "`grm-scout` skill" not in out:
+        if "`grm-agent-scout` skill" not in out:
             failures.append("Tier-2a backtick rewrite failed")
 
         # 5. prose pattern (Tier 2b) — "the grm-doc-assurance skill"
@@ -562,7 +562,7 @@ def _self_test() -> int:
         gi = (skills / "grm-iterate" / "SKILL.md").read_text()
         if "NEW-synced-content" not in gi:
             failures.append("COLLISION: synced grm-iterate/ content was clobbered")
-        archived = list(root.glob(".grimoire-archive/*/.claude/skills/grm-iterate/SKILL.md"))
+        archived = list(root.glob(".grimoire-archive/*/.claude/skills/iterate/SKILL.md"))
         if not archived:
             failures.append("COLLISION: stale iterate/ was not archived")
         elif "OLD-stale-content" not in archived[0].read_text():

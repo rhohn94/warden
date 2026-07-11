@@ -34,6 +34,8 @@ Conflict rule (edge between two features sharing a component c):
   aggressive   — both sides write c.
 Read-only co-dependencies never conflict under balanced/aggressive.
 """
+from __future__ import annotations
+
 import argparse
 import json
 import sys
@@ -86,7 +88,7 @@ def _feature_components(feat, registry_present):
     return comps
 
 
-def compute_plan(registry, features, policy, max_parallel):
+def compute_plan(registry: dict | None, features: list, policy: str, max_parallel: int) -> dict:
     if policy not in POLICIES:
         raise ValueError("policy must be one of %s" % (POLICIES,))
     if max_parallel < 1:
@@ -286,7 +288,7 @@ def _self_test():
     return 0
 
 
-def main(argv=None):
+def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Deterministic feature-overlap → lane plan.")
     ap.add_argument("--registry")
     ap.add_argument("--features")

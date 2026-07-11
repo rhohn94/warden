@@ -79,23 +79,92 @@ db-down:
 # App lifecycle (depend on db-up so the DB is ready first)
 # ---------------------------------------------------------------------------
 
+# The full build-recipe vocabulary (RSS-3, #321): every INTERFACE target has a
+# standard `just` recipe here (the one place recipes live). `recipe.py <t>` routes
+# to `just <t>` via .claude/recipes.json. Placeholder bodies carry
+# `# grimoire:placeholder` until wired; sync-deps/vendor-check delegate to the
+# framework scripts. Authority: docs/design/justfile-standard-design.md.
+
 # build — compile/package the project into dist/ artifacts.
 # env: "dev" skips optimisations; "prod" for release artifacts.
-# grimoire:placeholder
 build env="dev":
+    # grimoire:placeholder
     @echo "TODO: replace with build command (e.g. npm run build, cargo build, python -m build)"
 
-# run — start the service in dev mode. Run `just build` first if your project
-# requires compiled artifacts before the process can start.
-run: db-up
-    @echo "Replace this with the project's run command (e.g. the service entrypoint)."
+# run — start the service in dev mode (canonical name; `recipe.py server` and
+# `recipe.py run` both resolve here). Run `just build` first if your project
+# requires compiled artifacts before the process can start. When you wire the
+# real run command, background it and write its PID to $GRIMOIRE_RUN_PIDFILE
+# (default .grimoire-run.pid) so `just stop` (scripts/stop.sh) can find and kill
+# it, e.g.: `nohup <entrypoint> & echo $! > "${GRIMOIRE_RUN_PIDFILE:-.grimoire-run.pid}"`.
+run env="dev" port="3000": db-up
+    # grimoire:placeholder
+    @echo "TODO: replace with the run command (e.g. the service entrypoint) on port {{port}}, env {{env}}."
+
+# stop — kill running instance(s) of this project's process (#322, INTERFACE v6).
+# Resolution order: port param -> $GRIMOIRE_APP_PORT -> the pidfile `run` writes
+# -> a declared process pattern. Idempotent — nothing running is exit 0. See
+# scripts/stop.sh for the generic reference implementation.
+stop port="":
+    scripts/stop.sh {{port}}
+
+# test — run the test suite (depends on db-up so the DB is ready first).
+test filter="" watch="": db-up
+    # grimoire:placeholder
+    @echo "TODO: replace with the test command (e.g. pytest {{filter}})."
+
+# seed — populate a local data store with fixtures.
+seed fixture="" env="dev":
+    # grimoire:placeholder
+    @echo "TODO: replace with the seed command (fixture {{fixture}}, env {{env}})."
+
+# migrate — run pending schema / data migrations.
+migrate env="dev":
+    # grimoire:placeholder
+    @echo "TODO: replace with the migrate command (env {{env}})."
+
+# lint — static analysis / formatting checks.
+lint:
+    # grimoire:placeholder
+    @echo "TODO: replace with the lint command (e.g. ruff check ., cargo clippy)."
+
+# clean — remove build artifacts.
+clean:
+    # grimoire:placeholder
+    @echo "TODO: replace with the clean command (e.g. rm -rf dist/)."
+
+# package — assemble a versioned, deployable release bundle (web-app-shape;
+# optional for a service). See the web quick-start template for a real
+# scripts/package.sh reference implementation.
+package version="" target="":
+    # grimoire:placeholder
+    @echo "TODO: replace with the package command (version {{version}}, target {{target}})."
 
 # deploy — push artifacts to a live environment.
 # env: REQUIRED (no default — forces explicit choice); one of: dev | staging | prod.
 # dry_run: "true" to plan without executing side effects.
-# grimoire:placeholder
 deploy env dry_run="false":
+    # grimoire:placeholder
     @echo "TODO: replace with deploy command (e.g. fly deploy --env {{env}})"
 
-test: db-up
-    @echo "Replace this with the project's test command."
+# smoke — runtime verification (boot + probe the served surface). See the web
+# quick-start template for a /healthz reference implementation.
+smoke port="3000":
+    # grimoire:placeholder
+    @echo "TODO: replace with the smoke check (probe http://localhost:{{port}} for 2xx)."
+
+# release — the changelog-derived release ceremony (web-app-shape; optional for a
+# service). See the web quick-start template for a scripts/release.sh reference.
+release *ARGS:
+    # grimoire:placeholder
+    @echo "TODO: replace with the release ceremony (see the web template's scripts/release.sh)."
+
+# sync-deps — reconcile / vendor first-party deps from a release channel.
+# Delegates to the framework consume-side script; mode selects --check/--update/--offline.
+sync-deps mode="":
+    python3 .claude/skills/grm-sync-deps/sync_deps.py {{mode}}
+
+# vendor-check — dependency-channel conformance gate (exit 0/nonzero). Delegates
+# to the framework script; full selects the whole-vendor audit.
+vendor-check full="":
+    python3 .claude/skills/grm-dependency-audit/dependency_channel_conformance.py --root . {{full}}

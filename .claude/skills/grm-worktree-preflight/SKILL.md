@@ -33,6 +33,60 @@ Any hit means release-only commits are reachable from the branch tip — stop
 and remediate. Adjust the pattern to match your project's release commit
 conventions.
 
+## Step 0.5 — parent sync (staleness check)
+
+Run this **only after** both checks above pass (root check + release-only-commit
+grep). Merging the parent into a branch that is still mis-rooted is exactly the
+Case C anti-pattern below — it papers over a wrong root by dragging the
+parent's history in on top of it. The identical merge is *correct* on a
+well-rooted branch and *wrong* on a mis-rooted one, so order matters: root
+first, sync second. If either check above failed, remediate (Case A or B)
+before running this step.
+
+Run it at the start of every work-item session **and every time you resume
+work on an existing branch**, not just at branch creation — a session paused
+for hours or days is exactly the case where the parent has moved furthest.
+
+1. **Resolve the parent ref** — the same resolution the branch-in-place rule
+   uses: `version/{X.Y}` if it exists for the in-flight release, else `dev`.
+2. **Measure staleness:**
+
+   ```bash
+   git rev-list --count HEAD..<parent>
+   ```
+
+   `0` → up to date; proceed silently, no report needed.
+3. **Sync-merge if behind:**
+
+   ```bash
+   git merge --no-ff <parent>
+   ```
+
+   Forward merge only — never rebase (git-protocol governance, unchanged); no
+   auto-conflict-resolution.
+   - **Clean merge** → report one line, e.g. "was 14 commits behind
+     `version/3.78` — synced, clean", and continue.
+   - **Conflict** → **STOP immediately** and surface it. That early conflict,
+     caught against a small diff at session start, is precisely the point of
+     this check — the alternative is hitting the same conflict at merge time
+     against a much larger diff, after the work is already sunk.
+
+**Guard interplay.** This merge is *into* the unprotected work branch, sourced
+*from* a protected ref (`version/{X.Y}` / `dev`). `protected-branch-guard.sh`
+only blocks merges that *target* a protected branch, so a work-branch-as-target
+merge is permitted unchanged — no `ALLOW_PROTECTED` override needed.
+
+**Real-world motivating case.** A worktree spawned at `main`'s tip can pass a
+*bare* `git merge-base HEAD dev` root check whenever `main` already contains
+`dev` (routine right after a release: `dev` is an ancestor of `main`, so
+`merge-base(HEAD, dev)` still equals `dev`'s tip even though the branch is
+actually rooted on `main`, ahead of `dev`). The release-only-commit grep above
+is what actually catches that case — it flags the release commits reachable
+from the tip. This staleness step composes with the grep rather than replacing
+it, and it must run only after both the merge-base check and the grep have
+been satisfied, which is why Step 0.5 comes after, not instead of, the
+existing checks.
+
 ## Remediation
 
 Pick the case that matches.
@@ -163,7 +217,7 @@ export GRIMOIRE_APP_PORT=$(python3 .claude/skills/grm-worktree-preflight/claim_p
   (deterministic `range-start + index` — pass `--index` the worktree's dispatch
   index). Exit 1 = no free port → **abort the launch**, do not fall back to a
   default port.
-- The launching skill (e.g. `grm-environment-manager`) reads the env var
+- The launching skill (e.g. `grm-agent-environment-manager`) reads the env var
   (`worktree-ports.env-var`, default `GRIMOIRE_APP_PORT`) instead of hardcoding a
   port. When the worktree is removed after merge, its cache rows are cleared with
   the worktree.

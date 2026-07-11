@@ -107,12 +107,20 @@ Optionally refresh `grm-component-registry` first.
 - Create the staging branch `version/{X.Y}` off `dev`, then a **lane branch per
   lane** `version/{X.Y}/<lane>` off it. The `version/.*` shape keeps lane
   branches inside `protected-branch-guard.sh`'s protected set.
-- **One IM per lane, isolated worktree.** Under Noir, dispatch each lane IM as a
-  subagent — a write-capable Workflow (each agent gets its own worktree) or the
-  `Agent` tool with `isolation:"worktree"` — chip-free; Noir does not use
-  `spawn_task` chips. Each IM runs on its lane branch and merges its task agents'
-  work into it via
-  `grm-release-phase-merge` — unchanged mechanics, scoped to the lane branch.
+- **One IM per lane.** Dispatch via `spawn_task` chips after user confirmation
+  of the dispatch. Each IM runs on its lane branch and merges its task agents'
+  work into it via `grm-release-phase-merge`.
+- **Lane-IM model = `orchestrate` band.** Resolve the active profile's
+  `orchestrate` band via the `grm-repo-reference` resolver (Sonnet in every
+  starter profile) and pass the `{model, effort}` pair on each lane-IM dispatch.
+  Each IM escalates judgment calls per its guide §Model & escalation.
+- **Parent sync on session start and resume.** Each lane IM (and its dispatched
+  task agents) runs `grm-worktree-preflight` — root check first, then its
+  Step 0.5 parent sync against the lane's parent (`version/{X.Y}/<lane>`, or
+  `version/{X.Y}` before the lane branch exists). Re-run it on every session
+  resume, not just at dispatch — a paused IM is exactly the case Step 0.5
+  catches, since sibling lanes may have advanced `version/{X.Y}` in the
+  meantime.
 - **Lane ledger.** Track lane status in the plan (lane → features → IM status →
   integrated?) — the `grm-release-agent-tracker` view, one tier up.
 - **Lane integration.** As lanes complete, merge each lane branch into

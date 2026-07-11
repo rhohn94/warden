@@ -42,8 +42,8 @@ worktree automatically, with no additional configuration:
     - Agents stay inside their own worktree (this guard).
     - Agents cannot touch protected branches (protected-branch-guard.sh).
     - Only the marker-blessed master may merge to staging (both guards).
-  See docs/design/write-capable-workflow-design.md §3 (Safety rails) and
-  §5.3 (Guard model implications).
+  Safety-rails and guard-model rationale (§3, §5.3) are framework-internal
+  design specs — see the upstream Grimoire repository for that rationale.
 
 Cross-worktree branch hijack (v1.7, item A3)
 ============================================
