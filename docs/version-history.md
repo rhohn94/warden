@@ -1,5 +1,13 @@
 # Version history
 
+## v1.3.4 (2026-07-11)
+
+- Grimoire framework sync v3.55 → v3.77: refreshed skill set and git-guard hooks — including the paradigm-aware push guard that Warden's Noir + autonomous-push configuration opts into (hand-resolved during the sync, security-reviewed against a fresh upstream clone, both guard self-test suites passing), plus new clean-release-boundary and branch-hygiene commit guards
+- Aura design language pin bumped v3.541.0 → v3.554.0 (vendored tokens re-synced with full checksum verification; values flow through obsidian's bindings as before)
+- Release plumbing overhaul: `recipes.json` moved to its standard home at `.claude/recipes.json` and wired to the justfile vocabulary; new `just release` changelog-derived ceremony and `just package` asset builder
+- GitHub Releases now ship installable assets — a binary tarball + `release.json` manifest + `SHA256SUMS`, published with a post-publish assertion (fixes the zero-asset release class flagged fleet-wide in grimoire#286)
+- No changes to Warden's runtime behavior
+
 ## v1.3.3 (2026-07-09)
 
 - Development tooling upgraded to Grimoire framework v3.55 (from v3.36): refreshed skill set, standard project-doc structure, and workspace-hygiene housekeeping — no change to Warden's runtime behavior
