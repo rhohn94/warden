@@ -1,0 +1,70 @@
+{
+  "interface-version": 6,
+  "stack": "rust",
+  "targets": {
+    "build": {
+      "command": "just build",
+      "implemented": true
+    },
+    "server": {
+      "command": "just run",
+      "implemented": true
+    },
+    "test": {
+      "command": "just test",
+      "implemented": true
+    },
+    "lint": {
+      "command": "just lint",
+      "implemented": true
+    },
+    "clean": {
+      "command": "just clean",
+      "implemented": true
+    },
+    "package": {
+      "command": "just package ${version} ${target}",
+      "implemented": true,
+      "params": {
+        "version": { "default": "" },
+        "target": { "default": "" }
+      }
+    },
+    "deploy": {
+      "command": "just deploy",
+      "implemented": true
+    },
+    "release": {
+      "command": "just release",
+      "implemented": true
+    },
+    "check": {
+      "command": "cargo check",
+      "implemented": true
+    },
+    "seed": {
+      "command": null,
+      "implemented": false
+    },
+    "migrate": {
+      "command": null,
+      "implemented": false
+    },
+    "smoke": {
+      "command": null,
+      "implemented": false
+    },
+    "stop": {
+      "command": null,
+      "implemented": false
+    },
+    "sync-deps": {
+      "command": null,
+      "implemented": false
+    },
+    "vendor-check": {
+      "command": null,
+      "implemented": false
+    }
+  }
+}
