@@ -36,28 +36,55 @@ import textwrap
 from datetime import datetime, timezone
 from typing import Any
 
+# issue_tracker.py is a sibling module in this same skill directory, so a
+# plain import resolves via sys.path[0] (the script's own dir) when this
+# script is run standalone. Shares its find_repo_root()/CONFIG_FILE — single
+# body of truth (#335) — instead of carrying a byte-identical copy.
+import issue_tracker
+
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
 
 ROADMAP_FILE = "docs/roadmap.md"
 BACKLOG_HEADER = "## Backlog"
-CONFIG_FILE = ".claude/grimoire-config.json"
+CONFIG_FILE = issue_tracker.CONFIG_FILE
 CACHE_DIR = ".claude/cache"
 STATE_FILE = ".claude/cache/roadmap-migration-state.json"
 
+# Truncation lengths used throughout this script. Kept as named constants
+# (issue #349) rather than repeated magic numbers, since several serve
+# distinct purposes despite similar-looking values:
+#   - BULLET_KEY_LEN: how much of a bullet's normalised text seeds its
+#     dedup key in the migration-state file — long enough to avoid
+#     collisions between distinct bullets, short enough to keep state
+#     files small.
+#   - GH_TITLE_MAX_LEN: guards against pathologically long first lines
+#     becoming the issue title; chosen well under GitHub's hard 256-char
+#     issue-title limit so the tracker backend never rejects a title.
+#   - ERROR_OUTPUT_PREVIEW_LEN: cap on how much of a failed subprocess's
+#     stdout is echoed into a RuntimeError, so a runaway/garbled response
+#     doesn't flood the console.
+#   - BULLET_MATCH_PREFIX_LEN: the prefix length used to MATCH a roadmap
+#     bullet for removal (both where the caller truncates the title it
+#     passes in, and inside remove_bullet_from_roadmap's own key
+#     truncation) — the two must agree or a bullet could fail to match.
+#   - TITLE_DISPLAY_LEN: a separate, purely cosmetic console-preview width
+#     used only when echoing a filed issue's title back to the user. It is
+#     intentionally NOT the same constant as BULLET_MATCH_PREFIX_LEN: this
+#     one has no effect on roadmap matching, so its value is free to differ
+#     (60 vs. 70 is coincidental, not a bug).
+BULLET_KEY_LEN = 120
+GH_TITLE_MAX_LEN = 200
+ERROR_OUTPUT_PREVIEW_LEN = 500
+BULLET_MATCH_PREFIX_LEN = 60
+TITLE_DISPLAY_LEN = 70
+
 # ---------------------------------------------------------------------------
-# Repo-root detection (mirrors issue_tracker.py pattern)
+# Repo-root detection (shared with issue_tracker.py — single body of truth)
 # ---------------------------------------------------------------------------
 
-
-def find_repo_root(start: pathlib.Path | None = None) -> pathlib.Path:
-    """Walk up from start (or cwd) to find the repo root containing CONFIG_FILE."""
-    current = (start or pathlib.Path.cwd()).resolve()
-    for candidate in [current, *current.parents]:
-        if (candidate / CONFIG_FILE).exists():
-            return candidate
-    return pathlib.Path.cwd().resolve()
+find_repo_root = issue_tracker.find_repo_root
 
 
 # ---------------------------------------------------------------------------
@@ -143,8 +170,8 @@ def save_state(state_path: pathlib.Path, state: dict[str, Any]) -> None:
 
 
 def bullet_key(text: str) -> str:
-    """Stable key for a bullet (first 120 chars lowercased, whitespace-normalised)."""
-    return re.sub(r"\s+", " ", text.strip().lower())[:120]
+    """Stable key for a bullet (first BULLET_KEY_LEN chars lowercased, whitespace-normalised)."""
+    return re.sub(r"\s+", " ", text.strip().lower())[:BULLET_KEY_LEN]
 
 
 # ---------------------------------------------------------------------------
@@ -196,7 +223,7 @@ def file_issue(repo_root: pathlib.Path, title: str, body: str,
         "--json",
         *(["--config", str(config_path)] if config_path else []),
         "create",
-        "--title", title[:200],   # guard against very long first lines
+        "--title", title[:GH_TITLE_MAX_LEN],   # guard against very long first lines
         "--body", body,
         "--audience", "internal",
     ]
@@ -214,7 +241,7 @@ def file_issue(repo_root: pathlib.Path, title: str, body: str,
     end = out.rfind("}")
     if start == -1 or end == -1 or end < start:
         raise RuntimeError(
-            f"No JSON object in issue_tracker.py output:\n{out[:500]}"
+            f"No JSON object in issue_tracker.py output:\n{out[:ERROR_OUTPUT_PREVIEW_LEN]}"
         )
     return json.loads(out[start:end + 1])
 
@@ -238,7 +265,7 @@ def remove_bullet_from_roadmap(roadmap_path: pathlib.Path, title_prefix: str) ->
 
     # Match on the FIRST line of the prefix only — the caller may pass a key
     # that spans the bullet's wrapped continuation (which contains newlines).
-    key = title_prefix.splitlines()[0].strip()[:60] if title_prefix.strip() else ""
+    key = title_prefix.splitlines()[0].strip()[:BULLET_MATCH_PREFIX_LEN] if title_prefix.strip() else ""
 
     for line in lines:
         # A section heading always ends an in-progress removal and is kept.
@@ -377,7 +404,7 @@ def run_migrate(
             issue_id = issue.get("id", "?")
             issue_url = issue.get("url") or "(roadmap — no URL)"
             tracker_name = issue.get("tracker", "?")
-            print(f"  Filed #{issue_id} in '{tracker_name}': {title[:70]}")
+            print(f"  Filed #{issue_id} in '{tracker_name}': {title[:TITLE_DISPLAY_LEN]}")
             if issue_url != "(roadmap — no URL)":
                 print(f"    URL: {issue_url}")
             state["migrated"][key] = {
@@ -389,10 +416,10 @@ def run_migrate(
             save_state(state_path, state)
             filed_count += 1
             # Remove the bullet from roadmap
-            remove_bullet_from_roadmap(roadmap_path, title[:60])
+            remove_bullet_from_roadmap(roadmap_path, title[:BULLET_MATCH_PREFIX_LEN])
         except RuntimeError as exc:
-            print(f"  ERROR filing '{title[:60]}': {exc}", file=sys.stderr)
-            errors.append(f"{title[:60]}: {exc}")
+            print(f"  ERROR filing '{title[:BULLET_MATCH_PREFIX_LEN]}': {exc}", file=sys.stderr)
+            errors.append(f"{title[:BULLET_MATCH_PREFIX_LEN]}: {exc}")
 
     print(f"\nMigration complete: {filed_count} filed, {len(errors)} error(s).")
     if errors:
@@ -519,7 +546,7 @@ def main(argv: list[str] | None = None) -> int:
         config_path = pathlib.Path(args.config).resolve()
         repo_root = config_path.parent.parent
     else:
-        repo_root = find_repo_root()
+        repo_root = find_repo_root() or pathlib.Path.cwd().resolve()
         config_path = None
 
     if args.restore:

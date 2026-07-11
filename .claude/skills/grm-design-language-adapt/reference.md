@@ -42,6 +42,13 @@ ERROR (BMI-3): design-language-adapt refused — not at a clean release boundary
 **Rule 3c — separate commit reminder.** When this skill writes changes, include
 in the final summary: "Commit this Aura vendoring as a standalone commit, separate
 from any sync-from-upstream (framework-sync) commit. Never bundle both."
+**Mechanically enforced** (v3.67, #126 criterion 3) by
+`.claude/hooks/bundled-sync-guard.sh` — a PreToolUse(Bash) hook on `git commit`
+that denies a commit whose staged changes span both this skill's touch-set
+(`docs/design/ux/`, `vendor/aura/`, `static/aura/`, `templates/base.html`) and
+`grm-sync-from-upstream`'s touch-set at once. This reminder is the
+operator-facing half; the hook is the mechanical backstop that fires even if
+the reminder is ignored.
 
 ---
 

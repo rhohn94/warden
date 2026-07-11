@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "grimoire_version": "3.41",
+  "grimoire_version": "3.77",
   "flavor": "claude-code",
   "generated_by": "CR-4 (clean-room-design.md §1)",
   "description": "Authoritative enumeration of every Grimoire-owned file in the claude-code flavor. Used by CR-5 regenerate to partition files into delete+restore (pure-framework), split/merge (mixed), or preserve (project-owned). Cross-referenced with .claude/skills/grm-workflow-bootstrap/manifest.md — that file enumerates restorable skills; this manifest extends it with class tagging and covers ALL framework-owned paths, not only the restorable subset.",
@@ -129,6 +129,20 @@
       "regenerate_disposition": "delete+restore from golden"
     },
     {
+      "path": ".claude/hooks/autonomy-allow.sh",
+      "class": "pure-framework",
+      "ships": true,
+      "regenerate_disposition": "delete+restore from golden",
+      "notes": "Paradigm-aware prompt suppression (Noir) — pure framework logic."
+    },
+    {
+      "path": ".claude/hooks/worktree-brief.sh",
+      "class": "pure-framework",
+      "ships": true,
+      "regenerate_disposition": "delete+restore from golden",
+      "notes": "SessionStart isolation brief — pure framework logic."
+    },
+    {
       "path": ".claude/hooks/release-plan-guard.sh",
       "class": "pure-framework",
       "ships": true,
@@ -142,6 +156,12 @@
     },
     {
       "path": ".claude/hooks/worktree-guard.sh",
+      "class": "pure-framework",
+      "ships": true,
+      "regenerate_disposition": "delete+restore from golden"
+    },
+    {
+      "path": ".claude/hooks/bundled-sync-guard.sh",
       "class": "pure-framework",
       "ships": true,
       "regenerate_disposition": "delete+restore from golden"
@@ -349,6 +369,18 @@
       "regenerate_disposition": "delete+restore from golden"
     },
     {
+      "path": ".claude/skills/grm-design-doc-placement/SKILL.md",
+      "class": "pure-framework",
+      "ships": true,
+      "regenerate_disposition": "delete+restore from golden"
+    },
+    {
+      "path": ".claude/skills/grm-design-doc-placement/design_doc_placement.py",
+      "class": "pure-framework",
+      "ships": true,
+      "regenerate_disposition": "delete+restore from golden"
+    },
+    {
       "path": ".claude/skills/grm-design-doc-scaffold/SKILL.md",
       "class": "pure-framework",
       "ships": true,
@@ -397,13 +429,13 @@
       "regenerate_disposition": "delete+restore from golden"
     },
     {
-      "path": ".claude/skills/grm-environment-manager/SKILL.md",
+      "path": ".claude/skills/grm-agent-environment-manager/SKILL.md",
       "class": "pure-framework",
       "ships": true,
       "regenerate_disposition": "delete+restore from golden"
     },
     {
-      "path": ".claude/skills/grm-environment-manager/env_probe.py",
+      "path": ".claude/skills/grm-agent-environment-manager/env_probe.py",
       "class": "pure-framework",
       "ships": true,
       "regenerate_disposition": "delete+restore from golden"
@@ -416,6 +448,18 @@
     },
     {
       "path": ".claude/skills/grm-feedback-to-issue/SKILL.md",
+      "class": "pure-framework",
+      "ships": true,
+      "regenerate_disposition": "delete+restore from golden"
+    },
+    {
+      "path": ".claude/skills/grm-fleet-audit/SKILL.md",
+      "class": "pure-framework",
+      "ships": true,
+      "regenerate_disposition": "delete+restore from golden"
+    },
+    {
+      "path": ".claude/skills/grm-fleet-audit/reference.md",
       "class": "pure-framework",
       "ships": true,
       "regenerate_disposition": "delete+restore from golden"
@@ -567,6 +611,18 @@
       "regenerate_disposition": "delete+restore from golden"
     },
     {
+      "path": ".claude/skills/grm-orchestrate-release/SKILL.md",
+      "class": "pure-framework",
+      "ships": true,
+      "regenerate_disposition": "delete+restore from golden"
+    },
+    {
+      "path": ".claude/skills/grm-orchestrate-release/orchestrate_preflight.py",
+      "class": "pure-framework",
+      "ships": true,
+      "regenerate_disposition": "delete+restore from golden"
+    },
+    {
       "path": ".claude/skills/grm-onboarding/SKILL.md",
       "class": "pure-framework",
       "ships": true,
@@ -615,13 +671,13 @@
       "regenerate_disposition": "delete+restore from golden"
     },
     {
-      "path": ".claude/skills/grm-qa-agent/SKILL.md",
+      "path": ".claude/skills/grm-agent-qa/SKILL.md",
       "class": "pure-framework",
       "ships": true,
       "regenerate_disposition": "delete+restore from golden"
     },
     {
-      "path": ".claude/skills/grm-qa-agent/qa_select.py",
+      "path": ".claude/skills/grm-agent-qa/qa_select.py",
       "class": "pure-framework",
       "ships": true,
       "regenerate_disposition": "delete+restore from golden"
@@ -693,25 +749,25 @@
       "regenerate_disposition": "delete+restore from golden"
     },
     {
-      "path": ".claude/skills/grm-reporter/SKILL.md",
+      "path": ".claude/skills/grm-agent-reporter/SKILL.md",
       "class": "pure-framework",
       "ships": true,
       "regenerate_disposition": "delete+restore from golden"
     },
     {
-      "path": ".claude/skills/grm-researcher/SKILL.md",
+      "path": ".claude/skills/grm-agent-researcher/SKILL.md",
       "class": "pure-framework",
       "ships": true,
       "regenerate_disposition": "delete+restore from golden"
     },
     {
-      "path": ".claude/skills/grm-reviewer/SKILL.md",
+      "path": ".claude/skills/grm-agent-reviewer/SKILL.md",
       "class": "pure-framework",
       "ships": true,
       "regenerate_disposition": "delete+restore from golden"
     },
     {
-      "path": ".claude/skills/grm-scout/SKILL.md",
+      "path": ".claude/skills/grm-agent-scout/SKILL.md",
       "class": "pure-framework",
       "ships": true,
       "regenerate_disposition": "delete+restore from golden"
@@ -723,13 +779,13 @@
       "regenerate_disposition": "delete+restore from golden"
     },
     {
-      "path": ".claude/skills/grm-status-broker/SKILL.md",
+      "path": ".claude/skills/grm-agent-status-broker/SKILL.md",
       "class": "pure-framework",
       "ships": true,
       "regenerate_disposition": "delete+restore from golden"
     },
     {
-      "path": ".claude/skills/grm-status-broker/project_status.py",
+      "path": ".claude/skills/grm-agent-status-broker/project_status.py",
       "class": "pure-framework",
       "ships": true,
       "regenerate_disposition": "delete+restore from golden"
@@ -808,13 +864,19 @@
       "regenerate_disposition": "delete+restore from golden"
     },
     {
+      "path": ".claude/skills/grm-token-measure/telemetry_entry.py",
+      "class": "pure-framework",
+      "ships": true,
+      "regenerate_disposition": "delete+restore from golden"
+    },
+    {
       "path": ".claude/skills/grm-token-measure/.gitignore",
       "class": "pure-framework",
       "ships": true,
       "regenerate_disposition": "delete+restore from golden"
     },
     {
-      "path": ".claude/skills/grm-triager/SKILL.md",
+      "path": ".claude/skills/grm-agent-triager/SKILL.md",
       "class": "pure-framework",
       "ships": true,
       "regenerate_disposition": "delete+restore from golden"
@@ -844,7 +906,7 @@
       "regenerate_disposition": "delete+restore from golden"
     },
     {
-      "path": ".claude/skills/grm-verifier/SKILL.md",
+      "path": ".claude/skills/grm-agent-verifier/SKILL.md",
       "class": "pure-framework",
       "ships": true,
       "regenerate_disposition": "delete+restore from golden"
@@ -926,12 +988,6 @@
       "regenerate_disposition": "delete+restore from golden"
     },
     {
-      "path": ".claude/skills/grm-workflow-snapshot/SKILL.md",
-      "class": "pure-framework",
-      "ships": true,
-      "regenerate_disposition": "delete+restore from golden"
-    },
-    {
       "path": ".claude/skills/grm-workflow-variant-switch/SKILL.md",
       "class": "pure-framework",
       "ships": true,
@@ -977,20 +1033,6 @@
       "notes": "Whole framework design subtree. Excluded from distributables (EXCLUDED_PATH_PREFIXES + is_excluded). Post-CR-2/CR-3 end-state."
     },
     {
-      "path": "docs/grimoire/docs-organization-design.md",
-      "class": "pure-framework",
-      "ships": false,
-      "regenerate_disposition": "delete+restore",
-      "notes": "Now internal (DS-1 §6). Excluded from distributables."
-    },
-    {
-      "path": "docs/grimoire/integration-workflow.md",
-      "class": "pure-framework",
-      "ships": false,
-      "regenerate_disposition": "delete+restore from golden (excluded; relocated to docs/grimoire/ by v3.41 CR-2)",
-      "notes": "Operational doc — relocate per §4. Currently ships from top-level docs/; post-CR-3 will be excluded. CR-2 assumed prefix applied."
-    },
-    {
       "path": "docs/grimoire/version-design.md",
       "class": "pure-framework",
       "ships": false,
@@ -1010,6 +1052,12 @@
       "ships": false,
       "regenerate_disposition": "seed-only (consumer gets empty version-history template restored from golden; Grimoire's own log excluded)",
       "notes": "Consumer gets seeded empty template from golden. Grimoire root keeps its own release log (not seeded there)."
+    },
+    {
+      "path": "docs/project-structure.md",
+      "class": "pure-framework",
+      "ships": true,
+      "regenerate_disposition": "delete+restore from golden"
     },
     {
       "path": "docs/quickstart.md",

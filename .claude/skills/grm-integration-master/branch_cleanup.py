@@ -11,6 +11,8 @@ Usage:
     (default: dry-run — print the classification + plan)
     --apply : run only the safe `-d` deletions; print `-D` candidates to confirm
 """
+from __future__ import annotations
+
 import re, subprocess, sys
 
 PROTECTED = {"main", "dev"}
@@ -19,25 +21,25 @@ PROTECTED_RE = re.compile(r"^(version/|release/)")
 THROWAWAY_RE = re.compile(r"(^worktree-agent-|^worker-|^wf-|-[0-9a-f]{4,}$|^agent[-/])")
 
 
-def git(*args):
+def git(*args: str) -> subprocess.CompletedProcess:
     return subprocess.run(["git", *args], capture_output=True, text=True)
 
 
-def branch_list():
+def branch_list() -> list:
     out = git("branch", "--format=%(refname:short)")
     return [b.strip() for b in out.stdout.splitlines() if b.strip()]
 
 
-def merged_into(integration):
+def merged_into(integration: str) -> set:
     out = git("branch", "--merged", integration, "--format=%(refname:short)")
     return {b.strip() for b in out.stdout.splitlines() if b.strip()}
 
 
-def current():
+def current() -> str:
     return git("rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
 
 
-def classify(integration):
+def classify(integration: str) -> tuple:
     cur = current()
     merged = merged_into(integration)
     safe_d, force_candidates, protected, unmerged = [], [], [], []
@@ -53,7 +55,7 @@ def classify(integration):
     return cur, safe_d, force_candidates, protected, unmerged
 
 
-def main():
+def main() -> None:
     args = sys.argv[1:]
     integration = "dev"
     if "--integration" in args:

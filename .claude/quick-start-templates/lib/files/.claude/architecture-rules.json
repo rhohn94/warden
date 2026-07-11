@@ -1,0 +1,34 @@
+{
+  "schema-version": 1,
+  "_comment": "Starter architecture-fitness ruleset for the lib/toolkit quick-start family (grm-quick-start-template, #314). Encodes the 'api-seam stays engine/host-free' convention (the obsidian-api pattern): the public API surface (src/lib.*, src/api/**, src/seam/**) may depend on internal engine code, but nothing outside the seam reaches into internal/_private modules directly. Adapt the layer globs and the 'no-host-in-api-seam' pattern to the project's real engine/host module names. To decline enforcement entirely, replace this file's contents with { \"schema-version\": 1, \"opt_out\": true, \"opt_out-reason\": \"...\" } — grm-architecture-audit surfaces that decision explicitly instead of silently passing. Design: docs/grimoire/design/architecture-fitness-design.md §Scaffold defaults.",
+  "structure": {
+    "spec": "docs/project-structure.md",
+    "required": ["src", "docs", "tests"],
+    "aliases": {
+      "vendor": "lib/third-party",
+      "deps": "lib/third-party",
+      "third_party": "lib/third-party",
+      "test": "tests",
+      "spec": "tests",
+      "script": "scripts",
+      "source": "src",
+      "build": "dist",
+      "out": "dist",
+      "static": "assets",
+      "resources": "assets"
+    },
+    "gitignored": ["dist", "build"]
+  },
+  "layers": {
+    "api": ["src/lib.*", "src/api/**", "src/seam/**"],
+    "internal": ["src/internal/**", "src/_private/**", "src/engine/**"]
+  },
+  "allowed-edges": [
+    ["api", "internal"]
+  ],
+  "forbidden-imports": [
+    { "id": "no-internal-reach", "pattern": "/internal/|/_private/", "severity": "warn" },
+    { "id": "no-host-in-api-seam", "from": "api", "pattern": "engine::host|host_bindings|platform_impl", "severity": "warn" }
+  ],
+  "forbid-cycles": true
+}

@@ -94,3 +94,12 @@ into the relevant `release-planning-v{X.Y}.md` ledger.
   delete it if there are none.
 * **Do not use bare backtick paths** (`docs/design/foo.md`) to cross-reference
   other docs — always use a markdown relative link (`[foo design](foo.md)`).
+
+## See also
+
+* **`grm-design-doc-placement`** — this skill only *creates* a new doc; it
+  never decides where an *existing* doc (or group of docs) should live once
+  the topic accumulates siblings. Once the new doc (or a sibling) makes its
+  topic multi-doc, run `grm-design-doc-placement` to detect and perform the
+  flat-to-subtree promotion (or the reverse) and keep the README indexes and
+  breadcrumbs in sync.

@@ -30,7 +30,7 @@ the right sequence of steps.
 | Skill | Purpose |
 |---|---|
 | `grm-release-planning` | Generate a work-items report for the next release. Reads design docs, the roadmap, and carryovers; produces a sized, structured list. |
-| `grm-release-agreement` | Finalise and lock a release plan after the user approves the report. Creates `docs/release-planning-vX.Y.md`, creates the `version/X.Y` staging branch, and sets up the §5 ledger. |
+| `grm-release-agreement` | Finalise and lock a release plan after the user approves the report. Creates `docs/release-planning/release-planning-vX.Y.md`, creates the `version/X.Y` staging branch, and sets up the §5 ledger. |
 | `grm-release-phase` | Spawn work-item sessions (via `spawn_task`) for the next open phase. Groups work by dependency, sizes each item by token estimate, and assigns model/effort. |
 | `grm-release-phase-merge` | Merge completed subagent branches into the staging branch, run tests after each merge, and tick §5 ledger rows. When all phases are done, merges `version/X.Y` into `dev` and cleans up. |
 | `grm-project-release` | Promote `dev` to `main` and tag a new version. The final step in the release cycle. |
@@ -41,13 +41,14 @@ the right sequence of steps.
 |---|---|
 | `grm-repo-init` | Initialize the branch model (`main`, `dev`) and install guard hooks into a fresh project. Safe to re-run — skips steps that are already complete. |
 | `grm-workflow-bootstrap` | Fill in project-specific settings after `grm-repo-init`: test command, build command, release command, doc-location map, and more. Also restores `.claude/workflows/` scripts. |
-| `grm-onboarding` | Run (or re-run) the first-run interview. Captures the project name, the active work paradigm, and the workflow-variant preview, writes `.claude/grimoire-config.json`, then calls `grm-repo-init` + `grm-workflow-bootstrap` and bridges into first-release planning. |
+| `grm-onboarding` | Run (or re-run) the first-run interview. Captures the project name, the three execution dials (work paradigm, execution strategy, model/effort profile), and the issue-tracker choice, writes `.claude/grimoire-config.json`, then calls `grm-repo-init` + `grm-workflow-bootstrap` and bridges into first-release planning. |
 
 ### Design and standards skills
 
 | Skill | Purpose |
 |---|---|
 | `grm-design-doc-scaffold` | Create a new feature design doc under `docs/design/` using the house layout and wire it into the index. |
+| `grm-design-doc-placement` | Detect and fix design docs sitting in the wrong flat/subtree home per `docs/design/README.md`'s Subtrees rule; report-only by default, `--apply` relocates and updates indexes. |
 | `grm-repo-reference` | Look up the doc-location map and the subagent model/effort assignment table for this project. |
 | `grm-source-to-design-docs` | Analyse existing source code and synthesise design docs from what is already built. |
 | `grm-sync-from-upstream` | Pull framework updates from the Grimoire upstream into a project that adopted an earlier version. |
@@ -64,7 +65,6 @@ the right sequence of steps.
 | Skill | Purpose |
 |---|---|
 | `grm-workflow-scaffold` | Add a new `.claude/workflows/` script to the project, encoding token-efficiency lessons (model tiering, batched reads, structured output, read-only contract). |
-| `grm-workflow-snapshot` | Snapshot the current state of a running Workflow for review or resume. |
 
 ### Integration and safety skills
 
@@ -72,7 +72,7 @@ the right sequence of steps.
 |---|---|
 | `grm-worktree-preflight` | Verify a fresh or spawned worktree is rooted on its staging ref before any commit or merge. Run this before `git switch -c` or any branch operation. |
 | `grm-release-agent-tracker` | Track and report on active subagent sessions during a multi-phase release. |
-| `grm-ledger-tick` | Tick a row in the §5 status ledger in `docs/release-planning-vX.Y.md`. |
+| `grm-ledger-tick` | Tick a row in the §5 status ledger in `docs/release-planning/release-planning-vX.Y.md`. |
 
 ---
 
@@ -200,7 +200,7 @@ worktree's checkout.
 
 ### `release-plan-guard.sh`
 
-Blocks edits to `docs/release-planning-vX.Y.md` from task-agent worktrees.
+Blocks edits to `docs/release-planning/release-planning-vX.Y.md` from task-agent worktrees.
 Only the integration master may update the release plan document (specifically
 the §5 status ledger). Task agents should never need to edit this file.
 
@@ -208,45 +208,49 @@ the §5 status ledger). Task agents should never need to edit this file.
 
 ## 5. Project Configuration — `.claude/grimoire-config.json`
 
-After onboarding, your project preferences live in `.claude/grimoire-config.json`:
+After onboarding, your project preferences live in `.claude/grimoire-config.json`.
+The schema is additive — `grm-config-validate --migrate` fills in any block
+you don't have yet with its default, so an older config keeps working as new
+dials are introduced. Current schema version: `4`.
 
 ```json
 {
-  "schema-version": 2,
+  "schema-version": 4,
   "name": "Your Project Name",
-  "work-paradigm": {
-    "value": "Supervised"
-  },
-  "workflow-variant": {
-    "value": "Efficient",
-    "in-development": true
-  }
+  "framework-version": "vX.Y",
+  "work-paradigm": { "value": "Supervised" },
+  "workflow-variant": { "value": "Efficient" },
+  "model-effort-profile": { "value": "Medium" },
+  "release-phase-model": { "value": "Default" },
+  "issue-tracker": { "trackers": [ { "name": "default", "provider": "roadmap" } ] }
 }
 ```
 
-### Fields
+### Core fields
 
 | Field | Type | Description |
 |---|---|---|
-| `schema-version` | integer | Config schema version. `2` once the Work Paradigm is active (migrated from `1` by `grm-work-paradigm-switch`). Used for migration. |
+| `schema-version` | integer | Config schema version, migrated forward additively by `grm-config-validate --migrate`. |
 | `name` | string | Your project's product name (set during onboarding). |
+| `framework-version` | string | The Grimoire framework version this project last synced against. |
 | `work-paradigm.value` | enum | `Supervised` / `Weiss` / `Noir` — how much autonomy the integration master is granted. (Input aliases: `Collaborative`→Weiss, `Autonomous`→Noir.) |
-| `workflow-variant.value` | enum | `Efficient` / `Fast` / `Careful-Serial` — the cost/latency/collision-risk trade-off for write-capable Workflow runs. |
-| `workflow-variant.in-development` | boolean | `true` while the variant feature is not yet active. |
+| `workflow-variant.value` | enum | `Fast` / `Efficient` / `Cheap-Slow` — the execution-strategy dial: fan-out width and isolation mode for dispatched work (legacy `Careful-Serial` is migrated to `Cheap-Slow`). See `grm-workflow-variant-switch`. |
+| `model-effort-profile.value` | enum | The active model/effort distribution profile (e.g. `Medium`, `High Effort`, `Eco/Budget`). See `grm-model-effort-profile-switch`. |
+| `release-phase-model.value` | enum | `Default` / `Auto` — whether phase dispatch uses `spawn_task` chips or a write-capable Workflow (`Auto` is Noir-only). |
+| `issue-tracker.trackers` | array | Named issue-tracker configs (`roadmap` / `github` / `grimoire` provider). See `grm-issue-tracker-switch`. |
 
-### Active vs. preview preferences
+Additional optional blocks (`code-quality`, `stealth-mode`, `autonomous-push`,
+`project-manager`, `github-pr`, `qa`, `worktree-ports`, `iterate`, `mcp`,
+`doc-hierarchy`, and others as the framework grows) are additive and default
+sensibly when absent — each is documented by the skill that reads it rather
+than restated here, so this list doesn't go stale as new dials land.
 
-The **Work Paradigm is active**: it is installed during onboarding (the
-`grm-work-paradigm-switch` skill swaps the selected paradigm's content into the
-active files) and the config is migrated to `schema-version: 2`, dropping
-`work-paradigm.in-development`. Switch paradigms later via the
-`grm-work-paradigm-switch` skill.
+### Switching a dial later
 
-The `workflow-variant` field is still **captured but not yet behaviorally
-active** (`in-development: true`). Grimoire stores it so that when the variant
-selector lands it can read your preference without re-asking. Until
-`in-development` is removed from that field, changing its value has no effect
-on framework behavior.
+Each dial has its own switch skill (`grm-work-paradigm-switch`,
+`grm-workflow-variant-switch`, `grm-model-effort-profile-switch`,
+`grm-release-phase-model-switch`, `grm-issue-tracker-switch`, …) — use those
+rather than hand-editing the file, so validation and any needed migration run.
 
 ---
 
@@ -254,8 +258,6 @@ on framework behavior.
 
 These features are designed or planned but not yet active:
 
-- **Workflow variants** — the `workflow-variant` setting is captured but the
-  three variants (Efficient / Fast / Careful-Serial) are not yet implemented.
 - **GitHub Releases** — `grm-project-release` tags `main` but does not yet publish
   a GitHub Release. Planned for a future release.
 - **Auto-maintained `ux-demo/`** — `grm-ux-demo-build` is on-demand only; no

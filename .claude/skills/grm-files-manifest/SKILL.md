@@ -28,6 +28,11 @@ Detects:
   (stale entries or post-CR-3 relocations not yet applied).
 - **MISTAG** — entries whose `class` disagrees with manifest.md's restorable-
   skill list (pure-framework expected; other classes flagged for review).
+- **VERSION_STALE** — the manifest's `grimoire_version` disagrees with
+  `.claude/grimoire-config.json`'s `framework-version` (leading `v` stripped
+  from both before comparing). Catches the manifest silently drifting behind
+  a release bump (#218). No finding when the config is missing/unreadable
+  (cannot compare).
 
 `--strict` exits 1 on any finding; default is informational exit 0.
 
@@ -63,6 +68,6 @@ Detects:
 
 ## Design reference
 
-`docs/grimoire/design/clean-room-design.md` §1 (taxonomy), §2 (mixed-file
-split/merge contract), §3 (surgical-regenerate contract), §4 (operational-doc
-disposition).
+Design rationale (§1 taxonomy, §2 mixed-file split/merge contract, §3
+surgical-regenerate contract, §4 operational-doc disposition) lives in the
+upstream Grimoire repository (framework-internal — not shipped).

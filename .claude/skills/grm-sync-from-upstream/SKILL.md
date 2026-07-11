@@ -1,9 +1,13 @@
 ---
 name: grm-sync-from-upstream
-description: Pull workflow updates FROM the published upstream scaffolding distribution INTO this project, without destroying local customizations. Uses a 3-way merge against a recorded base so clean upstream changes apply automatically while your edits are preserved; genuine collisions surface as git conflict markers. Use to update a project that was bootstrapped from this scaffolding, or to pull the latest skills from upstream.
+description: Direction — this repo's upstream scaffolding → a bootstrapped project (opposite of grm-sync-from-source: dev project → this repo). Pull workflow updates from the published upstream distribution into this project without destroying local customizations. Uses a 3-way merge against a recorded base; collisions surface as git conflict markers. Use to update a project bootstrapped from this scaffolding, or to pull the latest skills from upstream.
 ---
 
 # Sync-from-upstream
+
+**Direction: upstream scaffolding → your bootstrapped project.** The mirror
+image is `grm-sync-from-source` (a dev project → this scaffolding repo); don't
+confuse the two by name — this one only ever pulls inbound to *your* project.
 
 Brings workflow improvements **from** the published upstream scaffolding (this
 starter kit, hosted on GitHub) **into** a project that was bootstrapped from it
@@ -20,6 +24,13 @@ placeholders in newly-added generic files, and deciding what to keep.
 > a file you have customized: clean upstream changes auto-apply, collisions
 > become git conflict markers (both sides preserved), and a differing file with
 > no recorded base is reported, not overwritten. Every rewrite is backed up.
+
+> **Upgrading a pre-v3.42 project?** Every skill name below is written with its
+> current `grm-` prefix. A project whose `framework-version` is below `v3.42`
+> (or has none) only has the OLD bare names on disk — invoke skills bare
+> (`sync-from-upstream`, `config-validate`, `install-doctor`, …) until the
+> `skill-namespacing` adopt step completes in Step 4.5, then switch to `grm-*`.
+> Full rule: `reference.md` "Pre-v3.42 projects: use bare skill names…" (#200).
 
 ---
 
@@ -216,6 +227,7 @@ No commits from this skill.
 ## Reference (load on demand)
 
 - `When to use this skill` — see `reference.md`
+- `Pre-v3.42 projects: use bare skill names until the sync completes (#200)` — see `reference.md`
 - `Anti-patterns` — see `reference.md`
 - `Stale-upstream rename detection (non-destructive)` — see `reference.md`
 - `Recognized sync artifact — `.claude/component-registry.json`` — see `reference.md`

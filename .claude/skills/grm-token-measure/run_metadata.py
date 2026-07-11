@@ -23,6 +23,16 @@ Artifact (`.claude/cache/runs/<run_id>.json`, gitignored):
   items, items_passed, outcome in {pass,fail,partial},
   wall_clock_secs, started_at (ISO-8601 UTC).
 
+SCHEMA IS A PUBLISHED CONTRACT (v3.70, #202). This artifact shape is the input
+contract of the `token-bookkeeper` standard package (rhohn94/token-bookkeeper) —
+the fleet-wide promotion of Mission Control's `mc-pulse` crate — as well as
+Mission Control's own `GrimoireRunSource`. The authoritative schema is
+run-metadata-artifact-design.md §A; the producer obligation (do NOT drift the
+field set, types, or the `outcome` enum — additive nullable fields are safe, but
+renaming/retyping/removing a field is a breaking change to a published contract)
+is §F. Catalog registration: required-feature catalog Entry 3
+(`key: adopt-token-bookkeeper`) / web-app-support-design.md §5.5.
+
 Usage:
   run_metadata.py --emit --outcome pass [--release 3.14] [--transcript T]
                   [--config grimoire-config.json] [--run-id ID] [...] [--root DIR]
@@ -31,6 +41,8 @@ Usage:
 Exit 0 on success; 2 on bad input / validation failure. Graceful by design:
 absent inputs degrade to null/zero — an emit never crashes a release.
 """
+from __future__ import annotations
+
 import argparse
 import datetime
 import hashlib
@@ -304,7 +316,7 @@ def _config_value(config_path, *keys):
 
 
 # ── record validation (used by save + --validate) ───────────────────────────
-def validate_record(record):
+def validate_record(record: dict) -> bool:
     """Validate an artifact dict against the schema + outcome enum.
 
     Raises RunMetadataError on any violation. Reusable by both the writer (on
@@ -337,7 +349,7 @@ def validate_record(record):
 
 
 # ── command handlers ────────────────────────────────────────────────────────
-def cmd_emit(args, helper_dir):
+def cmd_emit(args: argparse.Namespace, helper_dir: str) -> str:
     """Build + write a run artifact from args; return the written path."""
     tokens, derived_model = TokenSplit.from_transcript(args.transcript, helper_dir)
     if tokens.input == 0 and tokens.output == 0 \
@@ -356,7 +368,7 @@ def cmd_emit(args, helper_dir):
     return record.save(args.root)
 
 
-def cmd_validate(path):
+def cmd_validate(path: str) -> dict:
     """Validate an existing artifact file. Raises RunMetadataError on failure."""
     try:
         with open(path, encoding="utf-8") as fh:
@@ -502,7 +514,7 @@ def _self_test():
     return 0
 
 
-def main(argv=None):
+def main(argv: list[str] | None = None) -> int:
     helper_dir = os.path.dirname(os.path.abspath(__file__))
     ap = argparse.ArgumentParser(
         description="Emit a per-run metadata telemetry artifact (#82).")

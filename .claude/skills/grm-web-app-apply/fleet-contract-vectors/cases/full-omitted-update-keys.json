@@ -1,0 +1,13 @@
+{
+  "schema_version": "1",
+  "app": "familiar",
+  "instance": {"id": "x", "name": "y", "env": "local"},
+  "build": {"version": "1.20.0", "git_sha": "abc", "built_at": "2026-01-01T00:00:00Z"},
+  "runtime": {"status": "up", "bind": "0.0.0.0:3000", "started_at": "2026-01-01T00:00:00Z"},
+  "dependencies": [],
+  "update": {
+    "channel": "stable",
+    "verdict": "NotConfigured",
+    "current": "1.20.0"
+  }
+}

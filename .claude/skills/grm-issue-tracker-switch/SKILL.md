@@ -10,7 +10,8 @@ Validates inputs, writes the minimal change, confirms. Idempotent and safe to
 re-run. Preserves all other config fields (`schema-version`, `work-paradigm`,
 `workflow-variant`, `model-effort-profile`). Schema-version stays at 3.
 
-Design authority: `docs/grimoire/design/issue-tracker-design.md §10`.
+Design rationale (§10) lives in the upstream Grimoire repository
+(framework-internal — not shipped).
 
 > Like `grm-model-effort-profile-switch` and `grm-workflow-variant-switch`, this skill
 > performs **no file-swap**. The `grm-issue-tracker` block is pure data the
@@ -212,6 +213,14 @@ scratch copy; omit it in production (auto-detects from cwd up).
   additive at this version (no bump needed).
 
 ---
+
+## Cross-skill dependency
+
+`issue_tracker_switch.py` imports `CONFIG_FILE` directly from the sibling
+`grm-issue-tracker/issue_tracker.py` rather than duplicating the config path
+constant. `issue_tracker.py` declares `CONFIG_FILE` in its `__all__` and marks
+it as consumed by this skill — do not rename it in either file without
+updating the other (#351).
 
 ## Anti-patterns
 

@@ -6,7 +6,7 @@
 Generic architectural principles for projects built on this scaffolding — *how*
 to think about structure, boundaries, and dependencies.
 
-> **Distinct from `docs/design/architecture-design.md`.** This document holds
+> **Distinct from `docs/design/architecture/architecture-design.md`.** This document holds
 > general guidelines that apply to any project; `architecture-design.md`
 > captures *this* project's actual architecture. Guidelines = how we build;
 > the design doc = what we built. Link between them rather than restating.
@@ -52,7 +52,7 @@ Subsystems (auth, data access, notification, billing, …) are self-contained
 modules with explicit interfaces. No subsystem reaches into another's internals.
 
 *Rationale:* a module can be extracted, replaced, or reused across projects
-without surgery — and it feeds clean component-catalog entries (see #30).
+without surgery — and it feeds clean component-catalog entries.
 
 ```
 billing/        exposes: BillingService (interface)
@@ -104,7 +104,8 @@ SQL in services or domain objects leaking into controllers.
 These two rules have a **deterministic** counterpart: declare the project's
 layers and allowed dependency edges in `.claude/architecture-rules.json` and run
 the **`grm-architecture-audit`** skill to check them as fitness functions over the
-import graph. See `docs/grimoire/design/architecture-fitness-design.md`.
+import graph. (Design rationale in the upstream Grimoire repository,
+framework-internal.)
 
 ## Modularization metrics
 
@@ -124,7 +125,7 @@ instability `I = Ce/(Ca+Ce)`, and module size. Use them to steer structure:
 <!-- audit: id="arch-module-instability" check="core/shared modules trend stable (low instability I); no module is both widely depended-upon and unstable" severity="info" applies="all" -->
 <!-- audit: id="arch-module-size" check="modules stay within the language size budget; split before growing past it" severity="info" applies="all" -->
 
-See `docs/grimoire/design/modularization-metrics-design.md`.
+(Design rationale in the upstream Grimoire repository, framework-internal.)
 
 ## Standard project structure
 - Every project follows the canonical top-level layout in

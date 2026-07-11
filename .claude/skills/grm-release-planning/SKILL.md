@@ -46,7 +46,7 @@ Read these documents in order. Do not skip; carryovers live across all of them.
 | Any feature design doc named in the roadmap §`v{X.Y}` entry | Existing spec depth; what's already designed vs. still open |
 
 Also skim the last 2–3 versions to calibrate scope and velocity — use
-`python3 .claude/skills/grm-status-broker/version_history.py --list` to pick them,
+`python3 .claude/skills/grm-agent-status-broker/version_history.py --list` to pick them,
 then `--release vX.Y` per version, rather than reading the whole
 `docs/version-history.md` (>100 KB).
 
@@ -109,6 +109,23 @@ For each work item, estimate the total subagent token budget: input context
 Provide a point estimate (e.g. `~30K`) not a range. Add a one-line rationale
 so the estimate is reviewable: name the files that dominate the read phase and
 the output type that dominates the write phase.
+
+### Release-size standard
+
+Two release classes calibrate total scope:
+
+- **Standard release** — plan to a **~1M-token total budget**. The budget
+  covers the whole release, not just the planned items: commit roughly
+  600–700K of §3 point estimates and leave the remainder as headroom for
+  review fixes, Pass-2 follow-ups, and integration overhead (historically
+  30–50% on top of planned estimates).
+- **Patch release** — a small release with a deliberately **narrow scope**: a
+  handful of XS/S items (bugfixes, doc corrections, one contained feature),
+  typically ≤150K planned tokens. A patch release skips nothing — same
+  planning → agreement → merge → release pipeline — it is simply scoped small.
+
+If a plan's item total pushes the release past the 1M budget, flag it in §5
+Observations and propose a split rather than silently overcommitting.
 
 ---
 

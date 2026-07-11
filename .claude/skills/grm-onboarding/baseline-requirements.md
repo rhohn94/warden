@@ -1,4 +1,4 @@
-baseline-version: 3
+baseline-version: 4
 
 # Baseline requirements (framework-required capabilities)
 
@@ -50,6 +50,7 @@ human-readable roadmap line, the shape condition, and a one-line rationale.
 
 | key | shape | roadmap line | rationale |
 |-----|-------|--------------|-----------|
+| `product-readme-conformance` | all shapes | Product README (front-door doc conformance) — root `README.md` describes the actual product, is not the unmodified generic scaffold README, and README/changelog version claims stay current — see `grm-doc-assurance` `product-readme-present` / `version-claim-freshness` checks | A framework-required capability (#317): a front-door doc mismatch — no README, an unmodified scaffold README, or a rotted version claim — misleads every visitor and every fresh agent session before either reads a single design doc. Filed as a ticket for existing repos so pre-#317 projects get a scheduled remediation item rather than the gap going unnoticed. |
 | `test-command` | all shapes | Runnable test command | A framework-required capability: the workflow asserts a runnable test command exists (or scaffolds a test-harness target) so every branch can be tested before merge. |
 | `smoke-build-command` | all shapes | Smoke/build command | A framework-required capability: a smoke/build command lets an agent confirm the project compiles/builds cleanly before reporting a branch done. |
 | `non-interactive-launch` | all shapes | Non-interactive launch path | A framework-required capability: the project can be started/exercised without an interactive prompt, which is required for agent self-verification. |

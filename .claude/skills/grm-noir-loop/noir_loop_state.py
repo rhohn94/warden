@@ -24,11 +24,18 @@ Usage:
   noir_loop_state.py --self-test
 Exit 0 on success; 2 on bad input / validation / budget violation.
 """
+from __future__ import annotations
+
 import argparse
 import datetime
 import json
 import os
 import sys
+
+# Import parse_releases from the sibling project_status module (#342).
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                 "..", "grm-agent-status-broker"))
+from project_status import parse_releases  # noqa: E402  (path set above)
 
 # ── Constants (no magic numbers inline) ────────────────────────────────────
 SCHEMA_VERSION = 1
@@ -171,8 +178,39 @@ def _state_path(root):
     return os.path.join(root, STATE_REL)
 
 
+def _warn_on_continuity_loss(root):
+    """Warn on stderr if a fresh state coexists with releases already shipped.
+
+    Called only from `cmd_read`'s fresh-state branch, where the state is
+    always at INITIAL_ITERATION by construction — no state param needed.
+    Cross-checks docs/version-history.md via the canonical `parse_releases()`
+    (#342) for shipped releases; if any exist, emits a non-fatal warning
+    about likely cross-worktree continuity loss. This is a known limitation
+    of gitignored cache files across isolated worktrees.
+    """
+    version_history_path = os.path.join(root, "docs", "version-history.md")
+    if not os.path.exists(version_history_path):
+        return  # no version history file to check
+
+    try:
+        with open(version_history_path, encoding="utf-8") as fh:
+            content = fh.read()
+    except (OSError, UnicodeDecodeError):
+        return  # cannot read; skip warning (not fatal)
+
+    shipped_releases = parse_releases(content)
+
+    if shipped_releases:
+        print(
+            "WARNING: loop state reset to iteration 0 but %d releases already shipped "
+            "— continuity likely lost (gitignored cache files do not cross git worktrees; "
+            "this is a known cross-worktree isolation limitation)" % len(shipped_releases),
+            file=sys.stderr
+        )
+
+
 # ── Command handlers ────────────────────────────────────────────────────────
-def cmd_init(root, force):
+def cmd_init(root: str, force: bool) -> NoirLoopState:
     path = _state_path(root)
     if os.path.exists(path) and not force:
         # Idempotent: refuse to clobber existing state unless --force.
@@ -182,14 +220,19 @@ def cmd_init(root, force):
     return state
 
 
-def cmd_read(root):
+def cmd_read(root: str) -> NoirLoopState:
     path = _state_path(root)
     if not os.path.exists(path):
-        return NoirLoopState.fresh()  # near-empty when uninitialized
+        state = NoirLoopState.fresh()  # near-empty when uninitialized
+        # Self-detect continuity loss: if state is fresh but releases exist,
+        # warn about potential cross-worktree isolation issue.
+        _warn_on_continuity_loss(root)
+        return state
     return NoirLoopState.load(path)
 
 
-def cmd_advance(root, summary, open_work=None, next_steps=None):
+def cmd_advance(root: str, summary: str, open_work: list | None = None,
+                 next_steps: list | None = None) -> NoirLoopState:
     path = _state_path(root)
     state = cmd_read(root)
     state.advance(summary, open_work, next_steps)
@@ -197,7 +240,7 @@ def cmd_advance(root, summary, open_work=None, next_steps=None):
     return state
 
 
-def cmd_validate(root):
+def cmd_validate(root: str) -> NoirLoopState:
     return NoirLoopState.load(_state_path(root))
 
 
@@ -292,6 +335,32 @@ def _self_test():
             except StateError:
                 pass
 
+        # Fresh state with shipped releases triggers a warning (non-fatal).
+        # Capture stderr to verify the warning was emitted.
+        import io
+        with tempfile.TemporaryDirectory() as d:
+            # Create a version-history.md with shipped releases.
+            os.makedirs(os.path.join(d, "docs"), exist_ok=True)
+            version_history = os.path.join(d, "docs", "version-history.md")
+            with open(version_history, "w", encoding="utf-8") as fh:
+                fh.write("# Version History\n\n"
+                         "## v3.75 — First release\n\nSome content.\n\n"
+                         "## v3.76 — Second release\n\nMore content.\n")
+            # Capture stderr and verify warning is emitted.
+            old_stderr = sys.stderr
+            try:
+                sys.stderr = io.StringIO()
+                state_fresh = cmd_read(d)
+                warning_text = sys.stderr.getvalue()
+                if state_fresh.as_dict()["iteration"] != INITIAL_ITERATION:
+                    failures.append("fresh state should have iteration 0")
+                if "loop state reset to iteration 0" not in warning_text:
+                    failures.append("fresh state with releases should warn: got %r" % warning_text)
+                if "2 releases already shipped" not in warning_text:
+                    failures.append("warning should mention count of releases: got %r" % warning_text)
+            finally:
+                sys.stderr = old_stderr
+
     if failures:
         print("SELF-TEST FAILED:")
         for f in failures:
@@ -300,11 +369,11 @@ def _self_test():
     print("noir_loop_state self-test: OK (fresh defaults, init idempotency, "
           "advance bump+replace+restamp, read round-trip, empty-summary raise, "
           "schema-version raise, over-budget refusal+intact-file, type validation, "
-          "determinism, missing-file raise)")
+          "determinism, missing-file raise, continuity-loss warning)")
     return 0
 
 
-def main(argv=None):
+def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(
         description="Cross-iteration state for the Noir iterative release loop (#83).")
     ap.add_argument("--root", default=".")

@@ -187,6 +187,9 @@
   --aura-nav-header-tint-intensity: 1;
   --aura-nav-header-height-current: var(--aura-nav-header-height);
   --aura-scroll-progress: 0;
+  --aura-user-fmb-size: var(--aura-nav-header-height-shrunk);
+  --aura-user-fmb-duration: var(--aura-nav-header-duration);
+  --aura-user-fmb-easing: var(--aura-nav-header-easing);
 
   /* ---- Site footer (reveal-on-scroll-end, v3.4) [semantic] */
   /* Single source of truth for the <aura-footer> reveal footer (v3.4, space-economy). The footer is summoned chrome: it stays translated off the bottom edge while the user reads, and reveals when an end-of-content sentinel comes within reveal-offset of the viewport bottom (js/footer.js sets data-aura-revealed; CSS owns the translate). Sized to its content — pad-block is a single minimal band, NOT the old decorative --aura-space-5 ring. translate is the resting off-screen distance (100% = fully below its own box); duration/easing reference the shared motion primitives so a theme re-tunes globally and reduced-motion can null the transition. reveal-offset is the IntersectionObserver rootMargin slack (negative, shrinks the detection zone upward) so the footer eases in just before the true bottom. footer-z-index is one tier below --aura-z-sticky so the nav-header always wins (#817). All lengths/scalars; JS reads reveal-offset via a probe element (resolves var() chains, #744) and otherwise only flips data-aura-revealed, so no layout writes. See docs/design/space-economy-design.md. v3.23 glass dials (#400): the reveal footer overlays scrolling content, so like the other chrome-over-content surfaces it carries -blur / -saturate / -shadow / -surface-solid seams (the menu/tooltip/toast pattern) — override one to re-skin the footer alone. footer-shadow is the tier-2 shadow recipe cast UPWARD (negative y) because the footer's content neighbour is above it; -surface-solid is the opaque fallback where backdrop-filter is unsupported and under [data-aura-effects="lite"]. */
@@ -229,12 +232,21 @@
   --aura-fmb-column-duration: var(--aura-nav-header-duration);
   --aura-fmb-column-easing: var(--aura-nav-header-easing);
   --aura-fmb-column-breakpoint: 640px;
+  /* FMB column (v3.549 ITEM-2, #1046): gap between multiple FMBs stacked at
+     the same column+anchor, in registration order. Defaults to --aura-space-3
+     (0.75rem). */
+  --aura-fmb-column-gap: var(--aura-space-3);
+  /* FMB column (v3.549 ITEM-3, #1046): the mobile reveal control's tap-target
+     size. Forwards to --aura-tap-min (44px) so it can never be dialled below
+     the standard tap-target minimum. */
+  --aura-fmb-column-reveal-size: var(--aura-tap-min);
   --aura-sidebar-width: 16rem;
   --aura-sidebar-pad-inline: var(--aura-space-4);
   --aura-sidebar-pad-block: var(--aura-space-3);
   --aura-sidebar-duration: var(--aura-dur-base);
   --aura-sidebar-easing: var(--aura-ease-out);
-  --aura-sidebar-surface: var(--aura-surface-4);
+  --aura-sidebar-z: calc(var(--aura-z-sticky) - 1);
+  --aura-sidebar-surface: color-mix(in oklch, var(--aura-primary-a10) 30%, var(--aura-surface-4));
   --aura-sidebar-blur: var(--aura-blur-4);
   --aura-sidebar-saturate: var(--aura-glass-saturate);
   --aura-sidebar-surface-solid: var(--aura-surface-solid);
@@ -348,6 +360,14 @@
   --aura-z-modal: 1200;
   --aura-z-toast: 1300;
   --aura-z-tooltip: 1400;
+
+  /* ---- FMB active z-index bump (shared, v3.549 review-fix) [semantic] */
+  /* One shared derived token for the 'raise this FMB host one tier above the column's z-overlay while Opened/Pinned/hovered/focused' bump, previously hand-written as the identical literal calc(var(--aura-z-overlay, 1000) + 1) independently in css/nav-header.css (twice), css/sidebar.css, and css/footer.css. Consumers keep the var(--aura-z-overlay, 1000) fallback pattern at their OWN call sites only where they already had one; this token itself always resolves through the real --aura-z-overlay primitive. */
+  --aura-z-fmb-active: calc(var(--aura-z-overlay) + 1);
+
+  /* ---- FMB reveal-control z-index bump (shared, #1067 fix) [semantic] */
+  /* The mobile [data-fmb-reveal] control (css/fmb-column.css) is the ONE affordance that must never be covered by any FMB host's own expanded surface -- including a footer/sidebar/nav-header/user-FMB host sitting in --aura-z-fmb-active's Opened/Pinned/Revealed tier in the same bottom-left corner on mobile (#1067: <aura-footer>'s reveal-mode expansion could occlude the reveal button, confirmed via elementFromPoint). Derived one tier above --aura-z-fmb-active (never a hand-written literal) so it always wins regardless of which FMB host is currently active. */
+  --aura-z-fmb-reveal: calc(var(--aura-z-fmb-active) + 1);
 
   /* ---- Motion [primitive] */
   /* dur-* are also @property-registered <time> (see typed[]) so JS reads a resolved value. */
@@ -537,6 +557,23 @@
   initial-value: 0px;
 }
 @property --aura-fmb-column-active-width {
+  syntax: "<length>";
+  inherits: true;
+  initial-value: 0px;
+}
+
+/* ==========================================================================
+   Typed sidebar push-mode offset token (@property registration, v3.542, #1014) —
+   enables typed CSS interpolation for the genuine sidebar FMB engine's push mode.
+   Set (CSS-only, via :root:has()) to --aura-sidebar-width while a
+   data-sidebar-mode="push" sidebar is data-fmb-pinned; 0px otherwise.
+   inherits:true — read as padding-inline-start by shell-level content.
+   See docs/design/sidebar-fmb-design.md §Push mode.
+   ========================================================================== */
+/* Push-mode inline offset — mirrors --aura-fmb-column-active-offset-block-start's
+   CSS-only :has() derivation pattern, but for the inline axis and driven purely by
+   selector state (no JS setProperty call needed). */
+@property --aura-sidebar-push-inline {
   syntax: "<length>";
   inherits: true;
   initial-value: 0px;

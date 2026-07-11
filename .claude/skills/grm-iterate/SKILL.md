@@ -11,10 +11,11 @@ A structured improvement loop for one **facet** (a free-form lens — `ux`,
 critically, **files** issues to a size quota, runs a **full release** on them,
 and **repeats**. Improvement stops being ad-hoc and becomes measurable.
 
-Design authority: `docs/design/iterate-on-facet-design.md`. The deterministic
-quota + state live in `iterate_quota.py` (script-first, #75); the audit / filing
-/ release are agent-driven, **composing existing skills** — `grm-iterate` never
-reimplements the release machinery.
+Design rationale lives in the upstream Grimoire repository (framework-internal
+— not shipped). The deterministic quota + state live in `iterate_quota.py`
+(script-first, #75); the audit / filing / release are agent-driven,
+**composing existing skills** — `grm-iterate` never reimplements the release
+machinery.
 
 ## Invocation
 

@@ -29,7 +29,7 @@ version.
 1. **Locate the active plan.** `ls docs/release-planning/release-planning-v*.md` — pick the
    highest unreleased version. If you are unsure which is active, find the most
    recently *released* version with
-   `python3 .claude/skills/grm-status-broker/version_history.py --latest` (or
+   `python3 .claude/skills/grm-agent-status-broker/version_history.py --latest` (or
    `--list`) rather than reading `docs/version-history.md` whole; the active
    plan is the next one up.
 

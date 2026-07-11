@@ -6,7 +6,8 @@ description: Validate .claude/grimoire-config.json against the declared schema (
 # config-validate
 
 Schema validation + idempotent migration for `.claude/grimoire-config.json`.
-Design: `docs/design/defaults-quickstart-design.md`.
+Design rationale lives in the upstream Grimoire repository (framework-internal
+— not shipped).
 
 ## Run
 

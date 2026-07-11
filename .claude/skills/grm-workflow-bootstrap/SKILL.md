@@ -137,6 +137,30 @@ present `grimoire-issue-tracker` entry is left unchanged).
 
 ---
 
+## Step 2.7.1 — Provision issue-filing authority (opt-in, idempotent, v3.74)
+
+If the Step 3 interview recorded a **Yes** to the issue-filing-authority
+question (`issue-filing-authority.enabled: true` in
+`.claude/grimoire-config.json`), run the provisioning helper to merge the
+filing permission allowlist into `.claude/settings.json`:
+
+```bash
+python3 .claude/skills/grm-issue-tracker/provision_filing_authority.py .
+```
+
+This adds the issue-tracker MCP tool names (namespaced from `.mcp.json`) and
+the CLI-fallback `Bash(...)` rules for `issue_tracker.py` — additively, never
+removing or reordering existing `permissions.allow` entries. If the dial is
+absent or `false`, skip this step entirely — filing authority is never
+provisioned without the explicit opt-in. See
+`docs/grimoire/design/issue-filing-authority-design.md`.
+
+**On `--restore`:** re-run unconditionally; the helper is opt-in gated (skips
+when the dial is absent/false) and idempotent (a re-run over an
+already-provisioned `settings.json` is a no-op).
+
+---
+
 ## Step 4.5 — Always-deliver the paradigm breadcrumb (idempotent)
 
 Regardless of selected paradigm and independent of `--restore`, ensure the
@@ -205,5 +229,7 @@ No git operations. The user reviews and commits.
 - `Aura design language URL (`docs/design/ux/design-language.md`)` — see `reference.md`
 - `Step 2 — Restore missing / confirmed files` — see `reference.md`
 - `Step 2.8 — Seed the dependency channel (idempotent, never-clobber)` — see `reference.md`
+- `Step 2.8.1 — Seed the dependency-channel PRODUCER intent (library stacks only)` — see `reference.md`
+- `Step 2.9 — Seed architecture-fitness rules (idempotent, never-clobber, #314)` — see `reference.md`
 - `Step 3 — Guided interview` — see `reference.md`
 - `Step 4 — Patch placeholders` — see `reference.md`

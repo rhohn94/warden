@@ -9,6 +9,10 @@ Validates .claude/grimoire-files.json against the real tree to detect:
   - MISTAG:          entries whose 'class' disagrees with the manifest.md
     restorable-skill list (pure-framework expected; mixed/project-owned flagged
     as likely mis-tag).
+  - VERSION_STALE:   the manifest's 'grimoire_version' disagrees with
+    .claude/grimoire-config.json's 'framework-version' (leading 'v' stripped
+    from both before comparing). Catches the manifest silently drifting behind
+    a release bump (#218).
 
 Usage:
     python3 validate_files_manifest.py [--root ROOT] [--flavor FLAVOR] [--strict]
@@ -269,6 +273,41 @@ def _check_mistag(manifest_entries: list[dict], manifest_md_skills: set[str]) ->
     return findings
 
 
+def _read_framework_version(root: Path) -> str:
+    """Read 'framework-version' from .claude/grimoire-config.json, 'v'-stripped.
+
+    Returns '' if the config is missing, unreadable, or lacks the field —
+    callers should treat that as "cannot compare" rather than a mismatch.
+    """
+    cfg_path = root / ".claude" / "grimoire-config.json"
+    if not cfg_path.exists():
+        return ""
+    try:
+        cfg = json.loads(cfg_path.read_text())
+    except (ValueError, OSError):
+        return ""
+    return str(cfg.get("framework-version", "")).lstrip("vV")
+
+
+def _check_version_stale(manifest_version: str, framework_version: str) -> list[str]:
+    """Flag when the manifest's grimoire_version disagrees with framework-version.
+
+    Both are compared with any leading 'v'/'V' stripped. Empty framework_version
+    (config missing/unreadable/field absent) means "cannot compare" — no finding.
+    """
+    if not framework_version:
+        return []
+    mv = str(manifest_version).lstrip("vV")
+    fv = framework_version.lstrip("vV")
+    if mv != fv:
+        return [
+            f"VERSION_STALE: grimoire_version '{mv}' != framework-version '{fv}' "
+            f"(.claude/grimoire-config.json) — bump grimoire_version in "
+            f"grimoire-files.json to match"
+        ]
+    return []
+
+
 def validate(root: Path, flavor: str, strict: bool) -> int:
     """Run all checks. Return 0 if no findings (or strict=False), 1 on findings+strict."""
     data = _load_manifest(root, flavor)
@@ -295,6 +334,11 @@ def validate(root: Path, flavor: str, strict: bool) -> int:
     manifest_md_skills = _load_manifest_md_skills(root)
     mistagged = _check_mistag(entries, manifest_md_skills)
     findings.extend(mistagged)
+
+    # Check 4: version-stale (manifest's grimoire_version vs live framework-version)
+    framework_version = _read_framework_version(root)
+    stale = _check_version_stale(data.get("grimoire_version", ""), framework_version)
+    findings.extend(stale)
 
     if findings:
         print(f"\n{len(findings)} finding(s):")
@@ -408,6 +452,15 @@ def _run_self_test() -> int:
     assert_false("onboarding ok", any("onboarding" in f for f in mt))
     assert_false("unknown-skill not in manifest.md → not flagged", any("unknown-skill" in f for f in mt))
 
+    print("\n--- Self-test: _check_version_stale (#218) ---")
+    assert_true("matching versions clean", not _check_version_stale("3.63", "3.63"))
+    assert_true("leading-v on framework side stripped", not _check_version_stale("3.63", "v3.63"))
+    assert_true("leading-v on manifest side stripped", not _check_version_stale("v3.63", "3.63"))
+    mismatch = _check_version_stale("3.41", "3.63")
+    assert_true("mismatched versions flagged", any("VERSION_STALE" in f for f in mismatch))
+    assert_true("empty framework_version means cannot-compare (no finding)",
+                not _check_version_stale("3.41", ""))
+
     print(f"\n{'PASS' if fails == 0 else 'FAIL'} — {fails} failure(s)")
     return 0 if fails == 0 else 1
 
@@ -416,7 +469,7 @@ def _run_self_test() -> int:
 # Main
 # ---------------------------------------------------------------------------
 
-def main(argv=None):
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Validate .claude/grimoire-files.json against the real tree.",
         formatter_class=argparse.RawDescriptionHelpFormatter,

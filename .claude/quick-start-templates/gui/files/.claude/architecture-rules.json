@@ -1,0 +1,37 @@
+{
+  "schema-version": 1,
+  "_comment": "Starter architecture-fitness ruleset for the gui quick-start family (grm-quick-start-template, #314). Desktop/GUI shape: ui/ (views/components) talks to state/ (view-models/store), which talks to domain/ (core logic) — the view layer never reaches persistence directly. Adapt the layer globs to the project's real module layout. To decline enforcement entirely, replace this file's contents with { \"schema-version\": 1, \"opt_out\": true, \"opt_out-reason\": \"...\" } — grm-architecture-audit surfaces that decision explicitly instead of silently passing. Design: docs/grimoire/design/architecture-fitness-design.md §Scaffold defaults.",
+  "structure": {
+    "spec": "docs/project-structure.md",
+    "required": ["src", "docs", "tests"],
+    "aliases": {
+      "vendor": "lib/third-party",
+      "deps": "lib/third-party",
+      "third_party": "lib/third-party",
+      "test": "tests",
+      "spec": "tests",
+      "script": "scripts",
+      "source": "src",
+      "build": "dist",
+      "out": "dist",
+      "static": "assets",
+      "resources": "assets"
+    },
+    "gitignored": ["dist", "build"]
+  },
+  "layers": {
+    "ui": ["src/ui/**", "src/views/**", "src/components/**"],
+    "state": ["src/state/**", "src/store/**", "src/viewmodels/**"],
+    "domain": ["src/domain/**", "src/core/**"]
+  },
+  "allowed-edges": [
+    ["ui", "state"],
+    ["state", "domain"],
+    ["ui", "domain"]
+  ],
+  "forbidden-imports": [
+    { "id": "no-persistence-in-ui", "from": "ui", "pattern": "sql|sqlite|prisma|sqlx|indexeddb", "severity": "warn" },
+    { "id": "no-internal-reach", "pattern": "/internal/|/_private/", "severity": "warn" }
+  ],
+  "forbid-cycles": true
+}

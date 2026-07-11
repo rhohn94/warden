@@ -10,7 +10,8 @@ scripting standard). Read/inspect subcommands are safe; `open` and `merge` are
 `autonomous-push.enabled`) — this helper performs the gh call; it does not decide
 the gate.
 
-Design authority: docs/grimoire/design/github-pr-integration-design.md.
+Design rationale lives in the upstream Grimoire repository (framework-internal
+-- not shipped).
 
 Subcommands:
   open   --base B --head H [--title T] [--body-file F] [--plan PATH]
@@ -21,6 +22,8 @@ Subcommands:
 
 JSON to stdout. Exit 0 ok, 2 bad input/degraded, 3 gh failure.
 """
+from __future__ import annotations
+
 import argparse
 import json
 import os
@@ -41,7 +44,7 @@ def _gh(args, timeout=30):
     return p.returncode, p.stdout, p.stderr
 
 
-def gh_degraded():
+def gh_degraded() -> str | None:
     """Return a reason string if gh/GitHub is unusable, else None."""
     if not shutil.which("gh"):
         return "gh CLI not found on PATH"
@@ -55,7 +58,7 @@ def gh_degraded():
 
 # ── pure, testable builders / parsers ───────────────────────────────────
 
-def plan_version_theme(plan_text):
+def plan_version_theme(plan_text: str | None) -> tuple:
     """Extract (version, theme) from a release-planning doc, best-effort."""
     if not plan_text:
         return None, None
@@ -68,13 +71,13 @@ def plan_version_theme(plan_text):
     return version, theme
 
 
-def build_title(base, head, version=None):
+def build_title(base: str, head: str, version: str | None = None) -> str:
     if version:
         return f"{version}: {head} → {base}"
     return f"{head} → {base}"
 
 
-def build_body(base, head, version=None, theme=None):
+def build_body(base: str, head: str, version: str | None = None, theme: str | None = None) -> str:
     lines = [f"Integration PR: `{head}` → `{base}`.", ""]
     if version:
         lines.append(f"**Release:** {version}")
@@ -89,7 +92,7 @@ def build_body(base, head, version=None, theme=None):
     return "\n".join(lines)
 
 
-def parse_pr_list(json_text):
+def parse_pr_list(json_text: str) -> list:
     """gh pr list --json number,url,headRefName,baseRefName → list of dicts."""
     try:
         return json.loads(json_text) if json_text.strip() else []
@@ -97,7 +100,7 @@ def parse_pr_list(json_text):
         return []
 
 
-def parse_pr_view(json_text):
+def parse_pr_view(json_text: str) -> dict:
     try:
         return json.loads(json_text) if json_text.strip() else {}
     except json.JSONDecodeError:
@@ -106,7 +109,7 @@ def parse_pr_view(json_text):
 
 # ── network subcommands ─────────────────────────────────────────────────
 
-def find_open_pr(head, base):
+def find_open_pr(head: str, base: str) -> dict | None:
     rc, out, _err = _gh(["pr", "list", "--head", head, "--base", base,
                          "--state", "open", "--json", "number,url,headRefName,baseRefName"])
     if rc != 0:
@@ -115,7 +118,7 @@ def find_open_pr(head, base):
     return prs[0] if prs else None
 
 
-def cmd_open(args):
+def cmd_open(args: argparse.Namespace) -> int:
     deg = gh_degraded()
     if deg:
         print(json.dumps({"degraded": deg}, sort_keys=True)); return 2
@@ -145,7 +148,7 @@ def cmd_open(args):
     return 0
 
 
-def cmd_status(args):
+def cmd_status(args: argparse.Namespace) -> int:
     deg = gh_degraded()
     if deg:
         print(json.dumps({"degraded": deg}, sort_keys=True)); return 2
@@ -156,7 +159,7 @@ def cmd_status(args):
     print(json.dumps(parse_pr_view(out), sort_keys=True)); return 0
 
 
-def cmd_merge(args):
+def cmd_merge(args: argparse.Namespace) -> int:
     deg = gh_degraded()
     if deg:
         print(json.dumps({"degraded": deg}, sort_keys=True)); return 2
@@ -168,7 +171,7 @@ def cmd_merge(args):
                      sort_keys=True)); return 0
 
 
-def cmd_diff(args):
+def cmd_diff(args: argparse.Namespace) -> int:
     deg = gh_degraded()
     if deg:
         print(json.dumps({"degraded": deg}, sort_keys=True)); return 2
@@ -223,7 +226,7 @@ def _self_test():
     return 0
 
 
-def main(argv=None):
+def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Open / inspect / merge GitHub PRs.")
     ap.add_argument("--self-test", action="store_true")
     sub = ap.add_subparsers(dest="cmd")

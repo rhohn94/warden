@@ -649,7 +649,7 @@ def self_test() -> int:
 
 # ── CLI ───────────────────────────────────────────────────────────────────────
 
-def main(argv=None):
+def main(argv: list[str] | None = None) -> int:
     """CLI entry point. Returns process exit code."""
     args = argv if argv is not None else sys.argv[1:]
 

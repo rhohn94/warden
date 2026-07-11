@@ -67,8 +67,16 @@ Telemetry splits into two tiers:
 - **Application startup** — process/app start, version, and config fingerprint.
   <!-- audit: id="telemetry-startup" check="application startup is instrumented (start event with version)" severity="warn" applies="all" -->
 - **Unhandled exceptions & fatal errors** — every uncaught error path emits an
-  event with enough context to triage.
-  <!-- audit: id="telemetry-errors" check="unhandled exceptions and fatal errors emit telemetry events" severity="error" applies="all" -->
+  event with enough context to triage. **Boundary (#345):** this rule applies
+  to *release-boundary-invoked* skills — the ones a release pipeline itself
+  runs unattended, where a silent failure would otherwise go unnoticed (e.g.
+  `grm-release-phase-merge`, `grm-project-release`; see those SKILL.mds'
+  Telemetry sections). A standalone skill script invoked directly by an agent
+  or a human is not a release boundary and is exempt by default — it opts in
+  with one line via the shared `telemetry_entry.py` helper (`.claude/skills/
+  grm-token-measure/telemetry_entry.py`, `@instrument` decorator around
+  `main()`), rather than every script hand-rolling exception telemetry.
+  <!-- audit: id="telemetry-errors" check="unhandled exceptions and fatal errors emit telemetry events at release boundaries; standalone skill scripts opt in via telemetry_entry.py" severity="error" applies="all" -->
 
 **Instrument when relevant (by project type):** use `grm-workflow-bootstrap`'s
 detected project type to pick the surface, and confirm with the team which
@@ -78,7 +86,7 @@ events are business-critical.
 |---|---|
 | **Web / GUI** | page/screen visits, navigation events, meaningful interactions (button clicks, form submissions, feature engagement) <br><!-- audit: id="telemetry-web-interactions" check="page/screen visits, navigation, and key user interactions are instrumented" severity="info" applies="web,gui" --> |
 | **API / service** | request hits per endpoint, error rates, latency percentiles, downstream-call traces <br><!-- audit: id="telemetry-api-requests" check="per-endpoint request counts, error rates, latency, and downstream traces are instrumented" severity="info" applies="api,service" --> |
-| **CLI** | command invocations, flags used, exit codes, fatal-error events <br><!-- audit: id="telemetry-cli-invocations" check="command invocations, flags, and exit codes are instrumented" severity="info" applies="cli" --> |
+| **CLI** | command invocations, flags used, exit codes, fatal-error events <br>**Boundary (#346):** same split as `telemetry-errors` above — required at release boundaries, opt-in elsewhere via `telemetry_entry.py`'s `@instrument(record_success=True)`, which also records a clean invocation's argv/flags/exit code. <br><!-- audit: id="telemetry-cli-invocations" check="command invocations, flags, and exit codes are instrumented at release boundaries; standalone skill scripts opt in via telemetry_entry.py" severity="info" applies="cli" --> |
 
 **"What is relevant" heuristic.** Start from the project-type row above, then add
 any event the team identifies as a business-critical signal (a conversion, a
@@ -95,6 +103,63 @@ config), data retention / PII / privacy policy, and dashboard/alerting setup.
 Per-language sub-docs note *where* telemetry hooks integrate idiomatically in
 that language.
 
+## Content & UI copy (no context leakage)
+
+The app is the app; the documentation is the documentation. Anything a project
+ships — page copy, code comments, and changelog entries — carries only the
+content its own audience needs, and never a trace of the process that produced
+it. Apply this every time UI copy, a comment, or a changelog entry is written,
+not just when explicitly asked.
+
+- **No marketing/explanatory copy in the product.** A page ships functional
+  copy only: labels, actions, statuses, error messages, empty states. It does
+  not lead with a paragraph selling or explaining what the page does — that
+  belongs in `docs/`, not in the shipped UI.
+  <!-- audit: id="ui-no-marketing-copy" check="pages/screens carry only functional copy (labels, actions, status, errors); no explanatory or marketing prose framing the page's purpose" severity="warn" applies="web,gui" -->
+- **No process leakage in comments.** A comment explains a non-obvious WHY (a
+  constraint, an invariant, a workaround) — never the task, ticket, prompt, or
+  session that produced the change. "Added per issue #123" or "per the user's
+  request" does not belong in source.
+  <!-- audit: id="no-context-leakage-comments" check="comments contain no references to tasks, ticket/issue numbers, prompts, or session context — only durable rationale about the code itself" severity="warn" applies="all" -->
+- **No process leakage in front-facing docs.** `changelog.md` entries, design
+  docs, and any other *user-facing* project documentation describe
+  user-visible outcomes in the project's own voice — never a ticket ID, an
+  internal task name, or a restated prompt/instruction.
+  <!-- audit: id="no-context-leakage-docs" check="changelog.md entries and user-facing project docs (design docs, README) contain no ticket/issue IDs, task names, or prompt/session references — user-facing language only" severity="warn" applies="all" -->
+- **Exception — internal engineering ledgers.** `version-history.md` (the
+  complete internal release record) and `roadmap.md`/`release-planning/*.md`
+  (project-management ledgers) are explicitly **exempt** from the rule above —
+  they are never shown to end users, and ticket/issue cross-references are
+  doing real traceability work there. This exemption is conditional: it holds
+  only as long as a genuinely clean, front-facing `changelog.md` exists
+  alongside `version-history.md`. A project with no `changelog.md` (or one
+  that itself leaks process context) is not covered by this exception.
+- **Exception — the framework-internal "Bulkhead" tier.** `docs/grimoire/`
+  (design specs, integration workflow, and related framework-internal docs) is
+  likewise **exempt**: it's excluded from every distributable build
+  (`is_excluded()`/`EXCLUDED_PATH_PREFIXES` in `build_distributables.py`) and
+  never shown to an end user, so ticket/issue cross-references there are
+  internal traceability, not leakage — consistent with `docs/grimoire/`'s
+  existing Bulkhead treatment elsewhere in doc-assurance (lean-index,
+  monolith-cap). `docs/design/` stays fully covered by the rule.
+- **Exception — issue-number traceability in *this* framework repo's source
+  comments (#348).** `no-context-leakage-comments` targets comments that
+  narrate the *task* (a ticket, a prompt, a session) instead of the *code*'s
+  durable rationale. A bare issue-number cross-reference in a framework repo
+  that dogfoods its own tooling is different: this repo's own skills, scripts,
+  and docs are the product, its issue tracker is the durable spec/design
+  record for *why* a given line exists (not a throwaway task descriptor), and
+  the comment convention is deliberate and consistent (this repo's 393-hit
+  `#NNN`-style comment-cross-reference convention as of v3.87 audit is
+  intentional, not drift to clean up). Such
+  cross-references are **permitted** here, provided the comment still carries
+  the durable WHY alongside the number (e.g. "dedup by requestId (#82)", not
+  a bare "#82"). This exception is scoped to source comments in *this*
+  grimoire-framework repo; it does not relax the rule for projects built on
+  this scaffolding, where `#NNN` in a comment is still process leakage into a
+  product that isn't itself the issue-tracked artifact. No existing comment is
+  swept or rewritten as part of recording this exception.
+
 ## Merge-gate quality enforcement (v1.26)
 
 Under the autonomous release pipeline, `grm-release-phase-merge` runs a **quality
@@ -106,7 +171,7 @@ design: the merge-gate quality spec, maintained in the upstream Grimoire repo.
 | Dial | Values (default **bold**) | Effect |
 |------|---------------------------|--------|
 | `audit-gate` | `off` / **`warn`** / `block` | Runs `grm-coding-practices-audit` on the branch diff. `warn` files new gaps + proceeds; `block` rolls the merge back. |
-| `auto-reviewer` | `off` / **`noir`** / `always` | Auto-spawns a `grm-reviewer`; blocking findings stop the merge. `noir` = Noir paradigm only. |
+| `auto-reviewer` | `off` / **`noir`** / `always` | Auto-spawns a `grm-agent-reviewer`; blocking findings stop the merge. `noir` = Noir paradigm only. |
 | `coverage-threshold` | **`null`** / `0-100` / `"delta"` | Floor (or no-drop) on test coverage; a miss stops the merge. |
 | `typecheck` | `off` / **`build`** | Folds `{typecheck-command}` into the build gate so "build passes" implies "types check". |
 
@@ -162,5 +227,6 @@ skill change**. Current coverage by dimension:
 | One class/module per file | 1 | `coding-standards.md` |
 | Dependency hygiene | 1 | per-language |
 | Per-language idioms | ≥1 each | `python.md`, `javascript.md`, `rust.md` |
+| Content / process leakage | 3 | `coding-standards.md` |
 
 Add a row and a hint when a new dimension or language is introduced.

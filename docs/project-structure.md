@@ -84,6 +84,23 @@ The tree above is the universal spine; extend it per application profile:
 - **CLI** — `man/` and/or `completions/`.
 - **Library** — `examples/` becomes required; `benchmarks/` optional.
 
+## Standard patterns new projects inherit
+
+Some capabilities are standard enough that a scaffolded project should get them
+by default rather than re-discovering them. They are not directories, so they do
+not appear in the tree above, but they are part of the standard shape:
+
+- **In-app version/dependency query.** Every app should be able to report its
+  own framework version, active dials, and vendored-dependency versions at
+  runtime — for an "about" page, a `--version` flag, or a health-check surface.
+  The contract reads the existing canonical files only
+  (`.claude/grimoire-config.json`, `vendor.toml`, `vendor.lock`), needs no
+  network, and degrades per-field rather than failing when a source is absent.
+  It is ecosystem-agnostic — any language can implement a conforming reader — and
+  the web quick-start template ships a working Rust reference
+  (`src/version_report.rs`). (Design rationale in the upstream Grimoire
+  repository, framework-internal.)
+
 ## Nonstandard names (relocate these)
 
 If a project uses one of these, bring it to the standard home:

@@ -50,6 +50,17 @@ none is a `repair` target):
   file is *ahead*, so a repair would revert a correct sync. Re-freeze the
   baseline (`generate_golden.py --freeze .`); do **not** `repair`.
 
+**Freezing mid-migration is safe (#313).** A project can be synced past a
+migration-shipping release (namespacing, clean-room docs) but not yet have run
+the migration itself, so the live tree briefly carries both the old form and
+the new form (e.g. `skills/architecture-audit/` beside
+`skills/grm-architecture-audit/`). `generate_golden.py`'s `GoldenGenerator`
+detects that overlap and excludes the stale old-form duplicate from the frozen
+golden, so freezing at that moment — then running the migration — does not
+turn the migration's own archive+remove step into false MISSING findings. A
+bare-name skill with no `grm-` sibling yet (a genuinely unmigrated pre-v3.42
+install) is unaffected and still audits normally.
+
 **Missing golden archive is a WARN, not a FAIL.** Immediately after adopting the
 generated-golden-image feature (which deletes the legacy committed `golden/`
 tree) there may be no frozen archive yet. The helper reports the
@@ -84,11 +95,12 @@ The helper validates the inputs `grm-sync-from-upstream` consumes:
   finding (not broken — syncs still work, they just re-prompt), repaired in
   Step 3 §6.
 
-### 1c — Justfile contract (required recipes)
+### 1c — Justfile contract (full recipe vocabulary, RSS-3 #321)
 
-The helper checks that the three required Grimoire recipes are present in the
-project `justfile` and implemented (not placeholder stubs). Each recipe is
-classified as:
+The helper audits the **full build-recipe vocabulary** in the project `justfile`
+(`build run test seed migrate lint clean package deploy smoke release`, plus
+`sync-deps`/`vendor-check`; INTERFACE `server` surfaces as `run`), reporting per
+recipe:
 
 - **OK** — recipe line found at start-of-line AND the body does not contain
   `# grimoire:placeholder`.
@@ -97,10 +109,17 @@ classified as:
 - **MISSING** — no recipe line found, or no `justfile` exists at the repo root.
   See `docs/design/justfile-standard-design.md` for the contract.
 
-**Required recipes:** `build`, `run`, `deploy`.
-
-Any `MISSING` or `PARTIAL` result is a **problem** (exit 1). All three `OK`
-contributes no failure. The repair plan names the specific recipe(s) to fix.
+**Required vs advisory.** MISSING/PARTIAL is a **problem** (exit 1) only for
+**required** recipes; every other vocabulary recipe is **advisory**
+(`ADVISORY-MISSING` / `ADVISORY-PARTIAL`, never a failure). A recipe is required
+when it is in the **core trio** (`build`, `run`, `deploy`) — unless
+`.claude/recipes.json` explicitly declares that target absent
+(`implemented:false`, `command:null`) — **or** `.claude/recipes.json` marks its
+target implemented and routes it to `just <recipe>` (enforcing `recipe.py <t>` ≡
+`just <t>`; the justfile `run` recipe maps to the `server` target key). A target
+implemented via a raw (non-`just`) command is advisory. The repair plan names the
+specific required recipe(s) to fix and lists advisory recipes as optional
+coverage recommendations.
 
 ### 1d — Feature adoption (agent-run; NOT mechanical)
 
@@ -152,17 +171,20 @@ As part of the read-only health audit, run `grm-config-validate` on
 `.claude/grimoire-config.json` — it checks required fields, dial value-sets,
 cross-rules (e.g. `Auto` requires Noir), and surfaces unknown/stale fields. During
 a repair, offer `config-validate --migrate` to fill additive defaults atomically.
-A malformed/stale config is surfaced here instead of failing late. See
-`docs/design/defaults-quickstart-design.md`.
+A malformed/stale config is surfaced here instead of failing late (design
+rationale in the upstream Grimoire repository, framework-internal).
 
-## Justfile contract check (v3.53, #196)
+## Justfile contract check (v3.53, #196; full vocabulary v3.78, RSS-3 #321)
 
-The script audits three required Grimoire recipes in the repo's `justfile`:
-`build`, `run`, and `deploy`. Each is classified as **OK**, **PARTIAL**, or
-**MISSING** (see §1c above). Any `MISSING` or `PARTIAL` causes the audit to
-exit non-zero; the repair plan names the specific recipe(s) to fix. The project
-owner must implement or complete the recipe body — install-doctor never writes
-the justfile itself.
+The script audits the full build-recipe vocabulary in the repo's `justfile`
+(`build run test seed migrate lint clean package deploy smoke release` +
+`sync-deps`/`vendor-check`; INTERFACE `server` surfaces as `run`). Each is
+classified **OK**, **PARTIAL**, or **MISSING** (see §1c above). MISSING/PARTIAL on
+a **required** recipe causes the audit to exit non-zero; advisory recipes are
+reported (`ADVISORY-MISSING` / `ADVISORY-PARTIAL`) but never fail. The repair plan
+names the required recipe(s) to fix and lists advisory recipes as optional. The
+project owner must implement or complete the recipe body — install-doctor never
+writes the justfile itself.
 
 Full contract and per-recipe body expectations:
 `docs/design/justfile-standard-design.md`.

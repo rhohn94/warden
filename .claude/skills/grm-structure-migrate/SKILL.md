@@ -17,6 +17,21 @@ is nothing to enforce — report `structure-migrate: no structure declared` and
 exit clean. Downstream-safe: uses `.claude/grimoire-config.json` for root
 detection; never requires `claude-code/`.
 
+> **Preferred interface — `structure_migrate.py` (#320).** The algorithm below
+> is now a real, stdlib-only script: `python3
+> .claude/skills/grm-structure-migrate/structure_migrate.py --root .` (add
+> `--apply` to perform the remedies, `--json` for machine output). It
+> **imports** — never re-derives — the `structure`-block detection from
+> `grm-architecture-audit/architecture_fitness.py`'s `check_structure()` (the
+> same cross-skill import pattern `grm-code-health` uses for that module's
+> `build_import_graph()`: one shared scan feeding two skills, not a second
+> implementation), extended with the two migrate-only findings below
+> (`VENDOR_DEST`, `SUBMODULE_NONSTANDARD_DIR`). Its detect-mode findings are
+> therefore identical, by construction, to `grm-architecture-audit`'s Step 3a
+> findings on the same tree. The sections below are the fallback procedure (and
+> the conceptual model the script implements) for when the script can't run in
+> the current environment.
+
 ## When to run
 
 - When **`grm-architecture-audit`** reports `structure-required`,
@@ -127,3 +142,7 @@ rewrite `vendor.toml`'s `dest` to match after the move.
 - **`grm-architecture-audit`** — reports the same drift as fitness functions.
 - **`grm-sync-deps`** — vendors dependencies into `lib/third-party/` (the new
   default `dest`).
+- **`grm-design-doc-placement`** — the design-doc-specific complement: this
+  skill deliberately excludes `docs/design/` internals (subtree vs. flat
+  placement of individual design docs is a different rule than the top-level
+  structure this skill enforces); use that skill for design-doc placement.

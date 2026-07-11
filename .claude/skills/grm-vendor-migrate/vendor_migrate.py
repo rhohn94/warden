@@ -37,6 +37,8 @@ stdlib-only; `tomllib` (Python 3.11+) is pulled in transitively by the engine.
 Design: docs/grimoire/design/dependency-channel-design.md §7 (+ §3 for the produced shapes).
 """
 
+from __future__ import annotations
+
 import argparse
 import os
 import re
@@ -161,7 +163,7 @@ class GitModules:
             return cls(fh.read())
 
 
-def derive_slug(url):
+def derive_slug(url: str) -> str:
     """Derive an `owner/repo` GitHub slug from a remote URL.
 
     Reuses GhReleaseFetcher._slug (the same normalization sync-deps uses), so a
@@ -518,7 +520,7 @@ class VendorMigrator:
 
 # ── CLI ──────────────────────────────────────────────────────────────────────
 
-def build_parser():
+def build_parser() -> argparse.ArgumentParser:
     """Construct the argparse CLI surface."""
     p = argparse.ArgumentParser(
         prog="vendor_migrate.py",
@@ -546,7 +548,7 @@ def build_parser():
     return p
 
 
-def main(argv=None):
+def main(argv: list[str] | None = None) -> int:
     """CLI entry point. Returns a process exit code."""
     args = build_parser().parse_args(argv)
 
@@ -608,7 +610,7 @@ def _seed_submodule_fixture(root, dirpath, files, commit_sha, url, strip=0):
     return git_runner
 
 
-def run_self_test():
+def run_self_test() -> bool:
     """Deterministic, offline, stdlib-only regression suite. Returns True/False."""
     import datetime
     failures = []

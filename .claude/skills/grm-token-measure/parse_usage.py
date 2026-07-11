@@ -22,6 +22,8 @@ stdout to capture the report into a file.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+
 import argparse
 import glob
 import json
@@ -58,6 +60,9 @@ TIER_MULTIPLIER = {
 }
 DEFAULT_TIER_MULTIPLIER = TIER_MULTIPLIER["sonnet"]
 
+# Max characters kept when deriving a short display label from a prompt's text.
+PROMPT_LABEL_PREVIEW_LEN = 60
+
 
 # Claude Code stores per-project transcripts under this root, in a directory
 # whose name is the project's absolute path with EACH non-alphanumeric
@@ -66,6 +71,23 @@ DEFAULT_TIER_MULTIPLIER = TIER_MULTIPLIER["sonnet"]
 # `--claude` — slash and dot are two characters, hence two dashes).
 TRANSCRIPTS_ROOT = os.path.expanduser(os.path.join("~", ".claude", "projects"))
 _NON_ALNUM_RE = re.compile(r"[^A-Za-z0-9]")
+
+# Public surface. `parse_transcript` and `TranscriptError` are consumed
+# cross-skill by grm-cost-budget/cost_budget.py (#363) — do not rename
+# without updating that consumer (see cost_budget.py's sys.path/import
+# comment).
+__all__ = [
+    "TranscriptError",
+    "encode_project_dir",
+    "locate_transcript",
+    "ClassTotals",
+    "Operation",
+    "estimate_cost",
+    "iter_records",
+    "parse_transcript",
+    "render_table",
+    "main",
+]
 
 
 class TranscriptError(Exception):
@@ -84,7 +106,7 @@ def encode_project_dir(cwd: str) -> str:
     return _NON_ALNUM_RE.sub("-", cwd)
 
 
-def locate_transcript(cwd: str | None = None, root: str | None = None):
+def locate_transcript(cwd: str | None = None, root: str | None = None) -> str:
     """Resolve the most recent session transcript for `cwd` (default: real cwd).
 
     Returns the path to the newest `*.jsonl` under
@@ -187,10 +209,11 @@ def _prompt_label(record: dict, index: int) -> str:
     text = " ".join(text.split())
     if not text:
         return f"op {index}"
-    return text[:60] + ("..." if len(text) > 60 else "")
+    return text[:PROMPT_LABEL_PREVIEW_LEN] + (
+        "..." if len(text) > PROMPT_LABEL_PREVIEW_LEN else "")
 
 
-def iter_records(path: str):
+def iter_records(path: str) -> Iterator[dict]:
     """Yield parsed JSON records from a .jsonl file, skipping blank/garbled lines.
 
     Raises TranscriptError if the file cannot be opened. Malformed individual
@@ -216,7 +239,7 @@ def iter_records(path: str):
         print(f"warning: skipped {bad} malformed line(s) in {path}", file=sys.stderr)
 
 
-def parse_transcript(path: str, by_operation: bool = True):
+def parse_transcript(path: str, by_operation: bool = True) -> tuple:
     """Parse a transcript into (operations, session_totals, session_tier).
 
     Dedups usage by requestId. Returns a list of Operation objects (empty if
@@ -285,7 +308,7 @@ def _fmt(n: int) -> str:
     return f"{n:,}"
 
 
-def render_table(operations, session, session_tier, path) -> str:
+def render_table(operations: list, session: ClassTotals, session_tier: float, path: str) -> str:
     """Render the per-operation token-class report table (markdown)."""
     lines = []
     lines.append(f"### Token usage — `{path}`")
@@ -396,7 +419,7 @@ def _self_test() -> int:
     return 0
 
 
-def main(argv=None) -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Sum Claude Code transcript token usage by class per operation."
     )

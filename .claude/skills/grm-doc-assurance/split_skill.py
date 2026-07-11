@@ -30,6 +30,8 @@ Re-running with additional `--move` headings extends reference.md.
 Writes atomically (temp + os.replace). Errors out writing nothing if a heading
 is missing or ambiguous.
 """
+from __future__ import annotations
+
 import os, re, sys, tempfile
 
 REFERENCE_HEADING = "Reference (load on demand)"
@@ -218,7 +220,7 @@ def _head_has_reference_index(head):
     )
 
 
-def plan_split(src, skill_title, move_headings, existing_reference=None):
+def plan_split(src: str, skill_title: str, move_headings: list, existing_reference: str | None = None) -> dict:
     """Compute the new (head, reference) pair for a SKILL.md *src*.
 
     Returns a dict:
@@ -325,7 +327,7 @@ def _skill_paths(root, skill, flavor_prefix=""):
     return os.path.join(base, "SKILL.md"), os.path.join(base, "reference.md")
 
 
-def run(root, skill, move_headings):
+def run(root: str, skill: str, move_headings: list) -> int:
     """Split a real skill's SKILL.md in `root` (and mirror to claude-code/).
 
     Returns 0 on success, non-zero on error. Prints before/after head bytes for
@@ -382,7 +384,7 @@ def _print_budget(skill, head_bytes, budget):
 
 
 # ── Self-test ────────────────────────────────────────────────────────────
-def self_test():
+def self_test() -> tuple:
     """Fixture-driven tests for the splitter. Returns (passed, failed, lines)."""
     import shutil
 
@@ -619,7 +621,7 @@ def self_test():
     return passed, failed, lines
 
 
-def main():
+def main() -> None:
     args = sys.argv[1:]
     if "--self-test" in args:
         passed, failed, lines = self_test()

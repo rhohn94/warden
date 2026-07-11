@@ -20,8 +20,8 @@ schema_version = 1
 [deps.aura]
 repo = "rhohn94/design-language"
 channel = "stable"
-version = "3.541.0"
-artifact = "aura-v3.541.0.tar.gz"
+version = "3.554.0"
+artifact = "aura-v3.554.0.tar.gz"
 dest = "vendor/aura"
 kind = "asset-bundle"
 strip_components = 1

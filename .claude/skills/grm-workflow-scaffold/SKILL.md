@@ -84,16 +84,15 @@ convention** — point there rather than restating it.
 ## After scaffolding
 
 Per the `.claude/workflows/` convention W4 established, a new workflow is a
-restorable artifact — register and baseline it:
+restorable artifact. Golden is **generated, not committed** (v3.49) —
+`generate_golden.py` derives it from the live flavor files on demand, so a
+workflow saved under `claude-code/.claude/workflows/` is already restorable;
+there is no golden directory to copy into and no snapshot step to run.
 
-1. **Register it** in `grm-workflow-bootstrap`'s manifest under
-   **## Restorable workflows (`golden/workflows/`)** — add a `{name}.js` row with
-   a one-line purpose.
-2. **Golden-snapshot it**: copy the finished script to
-   `claude-code/.claude/skills/grm-workflow-bootstrap/golden/workflows/{name}.js`,
-   then verify byte-identity with `cmp` against the live file. (Or run the
-   **`grm-workflow-snapshot`** skill to re-baseline.)
-3. Cross-link the design doc / `workflow-candidates.md` if this build came from
+1. **Register it** in `grm-workflow-bootstrap`'s `manifest.md` under
+   **## Restorable workflows** — add a `{name}.js` row with a one-line purpose,
+   for discoverability.
+2. Cross-link the design doc / `workflow-candidates.md` if this build came from
    a planned candidate.
 
 ---

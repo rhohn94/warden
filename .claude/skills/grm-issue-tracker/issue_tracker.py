@@ -20,8 +20,8 @@ an issue with issue_type="epic" auto-applies the "epic" label and validates the
 one-level nesting rule (Epics cannot be children of other Epics). list() accepts
 an issue_type filter to return only Epics or only plain issues.
 
-Authoritative design: docs/grimoire/design/issue-tracker-design.md
-Cost rationale: docs/grimoire/issue-tracker-cost-spike.md
+Design rationale and cost analysis live in the upstream Grimoire repository
+(framework-internal -- not shipped).
 
 CLI:  python3 issue_tracker.py <operation> [options]
       python3 issue_tracker.py --help
@@ -53,6 +53,27 @@ ROADMAP_SECTION = "## Backlog"
 CLOSED_SECTION = "## Closed"
 ROADMAP_FILE = "docs/roadmap.md"
 CONFIG_FILE = ".claude/grimoire-config.json"
+
+# Public surface. `CONFIG_FILE` is consumed cross-skill by
+# grm-issue-tracker-switch/issue_tracker_switch.py — do not rename without
+# updating that consumer (see issue_tracker_switch.py's import comment).
+__all__ = [
+    "CONFIG_FILE",
+    "Issue",
+    "TrackerError",
+    "Backend",
+    "RoadmapBackend",
+    "GitHubBackend",
+    "IssueTracker",
+    "find_repo_root",
+    "load_config",
+    "get_tracker_entry",
+    "trackers_for_audience",
+    "slugify",
+    "filter_hash",
+    "cache_key",
+    "main",
+]
 
 # ---------------------------------------------------------------------------
 # Normalized Issue object
@@ -113,14 +134,20 @@ class TrackerError(Exception):
 # ---------------------------------------------------------------------------
 
 
-def find_repo_root(start: pathlib.Path | None = None) -> pathlib.Path:
-    """Walk up from start (or cwd) to find the repo root containing CONFIG_FILE."""
+def find_repo_root(start: pathlib.Path | None = None) -> pathlib.Path | None:
+    """Walk up from start (or cwd) to find the repo root containing CONFIG_FILE.
+
+    Returns None on a miss — the caller decides the fallback (most callers
+    want `find_repo_root() or pathlib.Path.cwd().resolve()`; a caller with a
+    different fallback, e.g. install-doctor's broken-install detection,
+    branches on the unambiguous None instead of re-deriving "did it find
+    anything" from the returned path).
+    """
     current = (start or pathlib.Path.cwd()).resolve()
     for candidate in [current, *current.parents]:
         if (candidate / CONFIG_FILE).exists():
             return candidate
-    # Fallback: return cwd (caller will surface the error when config is read)
-    return pathlib.Path.cwd().resolve()
+    return None
 
 
 DEFAULT_TRACKER_CONFIG = {
@@ -144,7 +171,7 @@ def load_config(config_path: pathlib.Path | None = None) -> dict:
     design doc). This ensures roadmap-only projects need zero config changes.
     """
     if config_path is None:
-        repo_root = find_repo_root()
+        repo_root = find_repo_root() or pathlib.Path.cwd().resolve()
         config_path = repo_root / CONFIG_FILE
 
     if not config_path.exists():
@@ -212,7 +239,7 @@ def cache_key(provider: str, repo: str | None, state: str,
 class Backend:
     """Abstract base class for issue-tracker backends.
 
-    Subclasses implement the seven operations for a SINGLE tracker. Routing,
+    Subclasses implement the nine operations for a SINGLE tracker. Routing,
     aggregation, and caching live in the IssueTracker abstraction layer above.
     """
 
@@ -1957,7 +1984,7 @@ def _self_test() -> int:
     return 0 if failed == 0 else 1
 
 
-def main(argv=None) -> int:
+def main(argv: list[str] | None = None) -> int:
     # Intercept --self-test before argparse (it is not a subcommand)
     effective_argv = argv if argv is not None else sys.argv[1:]
     if "--self-test" in effective_argv:
@@ -1971,7 +1998,7 @@ def main(argv=None) -> int:
         config_path = pathlib.Path(args.config).resolve()
         repo_root = config_path.parent.parent  # .claude/grimoire-config.json → repo root
     else:
-        repo_root = find_repo_root()
+        repo_root = find_repo_root() or pathlib.Path.cwd().resolve()
         config_path = None
 
     try:

@@ -1,6 +1,18 @@
 # Hard-reset — reference
 Loaded on demand by `SKILL.md`.
 
+## Recovering from an archive
+
+`hard_reset.py --restore TIMESTAMP [--root DIR] [--force] [--dry-run]` reads
+`.grimoire-archive/<TIMESTAMP>/MANIFEST.md` and copies every archived file back
+to its original repo-relative location — the automated counterpart to Step 5.1's
+archive. Loud-fail-on-ambiguity: a missing/unreadable `MANIFEST.md` refuses
+outright; a listed file whose on-disk content has changed since the archive was
+taken also refuses unless `--force` is passed (never a silent clobber). A file
+identical to its archived copy, or absent on disk, restores without `--force`.
+`--dry-run` reports what would be restored without writing. Filesystem-only —
+no git operations. Run `hard_reset.py --self-test` to verify the restorer logic.
+
 ## What this skill does NOT do
 
 - It does **not** touch git history. No `git reset --hard`, `git clean`,

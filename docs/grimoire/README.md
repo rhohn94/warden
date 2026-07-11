@@ -6,6 +6,12 @@ This tier holds the canonical wiki-doc conventions every project document
 follows. Grimoire's own framework-internal design specs are **not** part of a
 distributed project — they live only in the upstream Grimoire repository.
 
+## Index
+
+| Document | Area |
+|---|---|
+| [`version-design.md`](version-design.md) | Versioning scheme + release procedure (customise then delete the note) |
+
 ## Wiki hierarchy & relative links
 
 This is the canonical convention authority for all wiki-doc conventions in

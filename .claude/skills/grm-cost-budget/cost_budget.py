@@ -46,7 +46,7 @@ from datetime import datetime, timedelta, timezone
 # two skills are siblings under .claude/skills/; add token-measure to the path
 # so `parse_usage` imports cleanly whether run from the repo root or elsewhere.
 _THIS_DIR = os.path.dirname(os.path.abspath(__file__))
-_TOKEN_MEASURE_DIR = os.path.join(_THIS_DIR, os.pardir, "token-measure")
+_TOKEN_MEASURE_DIR = os.path.join(_THIS_DIR, os.pardir, "grm-token-measure")
 if _TOKEN_MEASURE_DIR not in sys.path:
     sys.path.insert(0, os.path.abspath(_TOKEN_MEASURE_DIR))
 
@@ -273,8 +273,9 @@ def _abbrev_decimal(amount):
     return str(int(amount))
 
 
-def threshold_warning(pct, threshold, amount, accumulated, period, mode,
-                      is_top, unit=DEFAULT_UNIT):
+def threshold_warning(pct: float, threshold: float, amount: float, accumulated: float,
+                      period: str, mode: str | None, is_top: bool,
+                      unit: str = DEFAULT_UNIT) -> str:
     """Build the one-line §5 threshold warning string.
 
     `Budget: 80% of 5M-token daily budget used (4.0M/5.0M). Mode: <mode> now active.`
@@ -577,7 +578,7 @@ def _parse_thresholds(raw):
         raise BudgetError("malformed --thresholds %r: %s" % (raw, exc)) from exc
 
 
-def main(argv=None):
+def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(
         description="Deterministic engine for the cost-governance budget (#GOV-1).")
     ap.add_argument("verb", nargs="?", help="measure|evaluate")

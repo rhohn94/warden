@@ -23,9 +23,17 @@ golden = the flavor (e.g. `claude-code/`) with:
   1. the `.claude/` wrapper flattened (`.claude/skills/` -> `skills/`, etc.);
   2. the authoring-only skills dropped (cannot run in a scaffolded project);
   3. junk stripped (`__pycache__/`, `*.pyc`, `.DS_Store`, empty stale dirs);
-  4. per-project config and flavor/example markers dropped; and
+  4. per-project config and flavor/example markers dropped;
   5. a small operational seed supplement (`seed/`) added for files the flavor
-     snapshot does not carry (version-history seed, vendor.toml, upstream conf).
+     snapshot does not carry (version-history seed, vendor.toml, upstream conf);
+     and
+  6. stale pre-migration duplicates dropped when frozen from a LIVE, mid-
+     migration install (`freeze_from_install`): a bare-name skill dir that
+     coexists with its `grm-<name>` sibling, or a top-level `docs/<name>.md`
+     that coexists with its migrated `docs/grimoire/<name>.md` counterpart —
+     both are about to be archived+removed by the migration itself, so baking
+     them into golden would turn that cleanup into false MISSING findings
+     (#313).
 
 The flavor is already genericized for distribution (placeholder-laden, sentinel
 armed), so no genericization step is performed here.
@@ -49,7 +57,6 @@ AUTHORING_SKILLS = frozenset({
     "grm-regenerate-grimoire",
     "grm-sync-from-source",
     "grm-workflow-bootstrap",
-    "grm-workflow-snapshot",
 })
 
 # Files that map under the layout but must not seed a fresh project:
@@ -65,6 +72,17 @@ EXCLUDE_REPO_FILES = frozenset({
 # Junk never included regardless of where it sits.
 JUNK_NAMES = frozenset({".DS_Store"})
 JUNK_DIR_NAMES = frozenset({"__pycache__"})
+
+# Framework-operational docs the v3.41 "Clean-Room" migration relocates from
+# top-level docs/ to docs/grimoire/ (clean-room-design.md §4). A project mid
+# upgrade can carry BOTH the stale top-level copy and the migrated
+# docs/grimoire/ copy at once; see STALE_RELOCATION_PAIRS below (#313).
+CLEAN_ROOM_RELOCATED_DOCS = (
+    "integration-workflow.md",
+    "version-design.md",
+    "qa-ledger.md",
+    "execution-profile-spike-s1.md",
+)
 
 
 class FlavorLayout:
@@ -150,6 +168,58 @@ class GoldenGenerator:
         self.flavor_root = flavor_root
         self.seed_root = seed_root
         self.layout = FlavorLayout()
+        # Transitional-state detection (#313): when the golden is derived from a
+        # LIVE install (freeze_from_install) rather than the canonical flavor
+        # source, the tree can be caught mid-migration — a pending framework
+        # migration (namespacing, clean-room docs) has delivered its new form
+        # alongside the old form it is about to archive+remove. Baking the
+        # stale old form into golden means the migration's own cleanup then
+        # reads back as false MISSING findings. Both sets below are computed
+        # once from the live tree so a golden frozen pre- or post-migration
+        # always reflects only the current/target form.
+        self._stale_bare_skill_names = self._find_stale_bare_skill_names()
+        self._stale_clean_room_docs = self._find_stale_clean_room_docs()
+
+    # -- transitional-state detection (#313) -----------------------------------
+
+    def _find_stale_bare_skill_names(self) -> frozenset[str]:
+        """Bare (pre-namespacing) skill dir names that coexist with a
+        grm-<name> sibling under the same skills/ parent -- e.g.
+        skills/architecture-audit/ beside skills/grm-architecture-audit/. This
+        is the exact post-sync/pre-namespacing-migration overlap
+        grm_namespacing.py's discover_skill_names() detects and then
+        archives+removes; mirrored here (read-only) so golden never bakes in a
+        dir the migration is about to delete."""
+        stale: set[str] = set()
+        for skills_dir in self.flavor_root.rglob("skills"):
+            if not skills_dir.is_dir() or self._is_junk(
+                str(skills_dir.relative_to(self.flavor_root))
+            ):
+                continue
+            try:
+                children = {c.name for c in skills_dir.iterdir() if c.is_dir()}
+            except OSError:
+                continue
+            for name in children:
+                if name.startswith("grm-") or name in JUNK_DIR_NAMES:
+                    continue
+                if f"grm-{name}" in children:
+                    stale.add(name)
+        return frozenset(stale)
+
+    def _find_stale_clean_room_docs(self) -> frozenset[str]:
+        """Top-level docs/<name>.md paths that coexist with their migrated
+        docs/grimoire/<name>.md counterpart -- the post-sync/pre-clean-room-
+        docs-migration overlap for the fixed set of relocated framework
+        operational docs (clean-room-design.md §4, #313)."""
+        stale: set[str] = set()
+        docs_root = self.flavor_root / "docs"
+        if not docs_root.is_dir():
+            return frozenset()
+        for name in CLEAN_ROOM_RELOCATED_DOCS:
+            if (docs_root / name).is_file() and (docs_root / "grimoire" / name).is_file():
+                stale.add(f"docs/{name}")
+        return frozenset(stale)
 
     # -- exclusion predicates -------------------------------------------------
 
@@ -168,12 +238,26 @@ class GoldenGenerator:
             return parts[2] in AUTHORING_SKILLS
         return False
 
+    def _is_stale_bare_skill(self, repo_rel: str) -> bool:
+        parts = repo_rel.split("/")
+        for i, p in enumerate(parts[:-1]):
+            if p == "skills" and parts[i + 1] in self._stale_bare_skill_names:
+                return True
+        return False
+
+    def _is_stale_clean_room_doc(self, repo_rel: str) -> bool:
+        return repo_rel in self._stale_clean_room_docs
+
     def _excluded(self, repo_rel: str) -> bool:
         if repo_rel in EXCLUDE_REPO_FILES:
             return True
         if self._is_junk(repo_rel):
             return True
         if self._is_authoring_skill(repo_rel):
+            return True
+        if self._is_stale_bare_skill(repo_rel):
+            return True
+        if self._is_stale_clean_room_doc(repo_rel):
             return True
         return False
 
@@ -491,6 +575,42 @@ def _self_test() -> int:
         check(archn.name == "golden-v3.38.tar.gz", f"unprefixed-version freeze name: {archn.name}")
         check(sorted((projn / GOLDEN_CACHE_DIR).glob(GOLDEN_ARCHIVE_GLOB)) == [archn],
               "frozen archive not matched by the consumer glob")
+        # #313 regression: a live install frozen mid-migration (both the stale
+        # bare-name skill dir AND its grm- sibling present, plus a top-level
+        # clean-room doc alongside its already-migrated docs/grimoire/ copy)
+        # must NOT bake the stale duplicates into golden -- otherwise the
+        # migration's own archive+remove step reads back as false MISSING.
+        transitional = tmp / "transitional"
+        (transitional / ".claude/skills/grm-build-recipe").mkdir(parents=True)
+        (transitional / ".claude/skills/grm-build-recipe/SKILL.md").write_text("recipe")
+        # Post-sync, pre-namespacing-migration overlap.
+        (transitional / ".claude/skills/architecture-audit").mkdir(parents=True)
+        (transitional / ".claude/skills/architecture-audit/SKILL.md").write_text("old")
+        (transitional / ".claude/skills/grm-architecture-audit").mkdir(parents=True)
+        (transitional / ".claude/skills/grm-architecture-audit/SKILL.md").write_text("new")
+        # A bare-name skill with NO grm- sibling yet is a legitimate pre-v3.42
+        # install, not a migration overlap -- must still be included.
+        (transitional / ".claude/skills/scout").mkdir(parents=True)
+        (transitional / ".claude/skills/scout/SKILL.md").write_text("unmigrated")
+        # Post-sync, pre-clean-room-docs-migration overlap.
+        (transitional / "docs/grimoire").mkdir(parents=True)
+        (transitional / "docs/integration-workflow.md").write_text("old")
+        (transitional / "docs/grimoire/integration-workflow.md").write_text("new")
+        (transitional / "CLAUDE.md").write_text("contract")
+
+        tgen = GoldenGenerator(transitional, seed)
+        tplan = set(tgen.plan())
+        check("skills/architecture-audit/SKILL.md" not in tplan,
+              "#313: stale bare-name skill dir leaked into golden")
+        check("skills/grm-architecture-audit/SKILL.md" in tplan,
+              "#313: migrated grm- skill dir missing from golden")
+        check("skills/scout/SKILL.md" in tplan,
+              "#313: unmigrated bare-name skill (no grm- sibling) wrongly excluded")
+        check("docs/integration-workflow.md" not in tplan,
+              "#313: stale top-level clean-room doc leaked into golden")
+        check("docs/grimoire/integration-workflow.md" in tplan,
+              "#313: migrated clean-room doc missing from golden")
+
         # No flavor present -> resolve must come from the archive, not generation.
         resolved = resolve_golden(proj, allow_generate=False)
         check((resolved / "skills/grm-build-recipe/SKILL.md").exists(),
@@ -525,7 +645,7 @@ def _default_seed(script_dir: Path) -> Path | None:
     return seed if seed.is_dir() else None
 
 
-def main(argv=None) -> int:
+def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Generate the golden image from a flavor tree.")
     ap.add_argument("--flavor", help="Flavor root to derive from (default: auto-detect).")
     ap.add_argument("--out", help="Write the golden tree to this directory.")

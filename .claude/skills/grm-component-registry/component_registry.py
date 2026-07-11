@@ -20,8 +20,10 @@ Documented behavior this engine CODIFIES (it invents no new semantics):
     (version-source=content-hash) as `sha256:<hex>`.
   - Taxonomy validation (Step 4 + component-taxonomy.md §5): every profiles /
     provides / requires tag is checked against the vocabulary read live from
-    docs/design/component-taxonomy.md (§2 profiles, §3 capabilities). An unknown
-    tag is SURFACED under `unknown-tags` and kept in the entry — neither silently
+    docs/grimoire/design/component-taxonomy.md (§2 profiles, §3 capabilities) —
+    a framework-internal doc not shipped under claude-code/; if absent,
+    validation degrades to a no-op (see TAXONOMY_PATH). An unknown tag is
+    SURFACED under `unknown-tags` and kept in the entry — neither silently
     accepted into a clean entry nor silently dropped.
   - Registry object (Step 5) + diff vs prior (Step 6): added/changed/removed/
     unchanged by id + version.
@@ -54,7 +56,13 @@ import sys
 
 # ── Constants (no magic numbers / strings inline) ───────────────────────────
 REGISTRY_PATH = os.path.join(".claude", "component-registry.json")
-TAXONOMY_PATH = os.path.join("docs", "design", "component-taxonomy.md")
+# component-taxonomy.md is a framework-internal design doc (Grimoire's own
+# component vocabulary spec) and is never shipped under claude-code/ — see
+# docs/grimoire/design/documentation-separation-design.md §4. A managed
+# project MAY supply its own copy at this project-relative path to opt into
+# taxonomy validation; when absent, Taxonomy.load() degrades gracefully
+# (empty vocabulary, validation skipped) rather than failing the build.
+TAXONOMY_PATH = os.path.join("docs", "grimoire", "design", "component-taxonomy.md")
 CONFIG_PATH = os.path.join(".claude", "grimoire-config.json")
 DEFAULT_SCAN_PATHS = ("components/", "lib/")
 REGISTRY_VERSION = 1
@@ -83,12 +91,17 @@ class RegistryError(Exception):
 
 # ── Taxonomy authority ──────────────────────────────────────────────────────
 class Taxonomy:
-    """Allowed-term sets read live from docs/design/component-taxonomy.md.
+    """Allowed-term sets read live from docs/grimoire/design/component-taxonomy.md.
 
     §2 lists the `profiles` vocabulary; §3 the shared provides/requires
     capability vocabulary. Reading the doc at build time (not a hard-coded
     table) keeps the vocabulary extensible per the doc's §4 contract — adding a
     row to the doc is recognized on the next build with no script change.
+
+    The taxonomy doc is framework-internal and not shipped under claude-code/
+    (see TAXONOMY_PATH comment); a managed project that has not supplied its
+    own copy gets an EMPTY taxonomy (`load()` degrades gracefully rather than
+    raising), so tag validation is simply skipped — the registry still builds.
     """
 
     def __init__(self, profiles, capabilities):
@@ -102,13 +115,20 @@ class Taxonomy:
         return cls(profiles, capabilities)
 
     @classmethod
+    def empty(cls):
+        """No vocabulary loaded — allowed_for() short-circuits (no rejection)."""
+        return cls(profiles=None, capabilities=None)
+
+    @classmethod
     def load(cls, root="."):
         path = os.path.join(root, TAXONOMY_PATH)
         try:
             with open(path, encoding="utf-8") as fh:
                 return cls.from_text(fh.read())
-        except OSError as exc:
-            raise RegistryError("taxonomy unreadable: %s" % exc)
+        except OSError:
+            # Framework-internal doc genuinely absent from this install —
+            # degrade to no validation rather than failing the whole build.
+            return cls.empty()
 
     @staticmethod
     def _terms_in_section(text, start_re):
@@ -488,7 +508,7 @@ class RegistryDiff:
 
 
 # ── Serialization + atomic, idempotent write ────────────────────────────────
-def serialize(registry):
+def serialize(registry: dict) -> str:
     """Deterministic JSON: sorted keys, fixed indent, single trailing newline."""
     return json.dumps(registry, sort_keys=True, indent=JSON_INDENT,
                       ensure_ascii=False) + "\n"
@@ -525,7 +545,7 @@ class RegistryWriter:
 
 
 # ── Config-aware scan-path resolution ───────────────────────────────────────
-def resolve_scan_paths(root="."):
+def resolve_scan_paths(root: str = ".") -> list:
     """Default paths plus any `.claude/grimoire-config.json` extras (dedup)."""
     paths = list(DEFAULT_SCAN_PATHS)
     cfg = os.path.join(root, CONFIG_PATH)
@@ -596,7 +616,7 @@ def _self_test():
     failures = []
     with tempfile.TemporaryDirectory() as root:
         # taxonomy authority.
-        os.makedirs(os.path.join(root, "docs", "design"))
+        os.makedirs(os.path.join(root, "docs", "grimoire", "design"))
         with open(os.path.join(root, TAXONOMY_PATH), "w", encoding="utf-8") as fh:
             fh.write(_fixture_taxonomy())
 
@@ -711,7 +731,7 @@ def _self_test():
 
     # 8) malformed component.json raises RegistryError (exit 2 path).
     with tempfile.TemporaryDirectory() as root2:
-        os.makedirs(os.path.join(root2, "docs", "design"))
+        os.makedirs(os.path.join(root2, "docs", "grimoire", "design"))
         with open(os.path.join(root2, TAXONOMY_PATH), "w", encoding="utf-8") as fh:
             fh.write(_fixture_taxonomy())
         bad = os.path.join(root2, "components", "broken")
@@ -724,6 +744,25 @@ def _self_test():
         except RegistryError:
             pass
 
+    # 9) missing taxonomy doc (framework-internal, not shipped) degrades
+    #    gracefully -> build succeeds, no tags are flagged unknown.
+    with tempfile.TemporaryDirectory() as root3:
+        c_dir = os.path.join(root3, "components", "widget")
+        os.makedirs(c_dir)
+        with open(os.path.join(c_dir, "component.json"), "w", encoding="utf-8") as fh:
+            json.dump({"id": "widget", "version": "v1.0.0",
+                       "summary": "A widget.", "profiles": ["anything-goes"],
+                       "provides": ["whatever"], "stability": "stable",
+                       "source": "components/widget/"}, fh)
+        try:
+            res = RegistryEngine(root3).build(write=False)
+        except RegistryError as exc:
+            failures.append("missing taxonomy should degrade, not raise: %r" % exc)
+        else:
+            if res["registry"]["unknown-tags"]:
+                failures.append("missing taxonomy should skip validation: %r" %
+                                 res["registry"]["unknown-tags"])
+
     if failures:
         print("SELF-TEST FAILED:")
         for f in failures:
@@ -733,7 +772,8 @@ def _self_test():
           "declared + sha256 content-hash versioning, hash stability, taxonomy "
           "reject surfaced-and-retained, byte-identical idempotent write + "
           "trailing-newline + content-derived build id, added/changed/unchanged "
-          "diff, dry-run no-write, malformed-source raise)")
+          "diff, dry-run no-write, malformed-source raise, missing-taxonomy "
+          "graceful degrade)")
     return 0
 
 
@@ -743,7 +783,7 @@ def _read(path):
 
 
 # ── CLI ─────────────────────────────────────────────────────────────────────
-def main(argv=None):
+def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(
         description="Deterministic component-registry build engine (#REG-1).")
     ap.add_argument("verb", nargs="?", help="build|dry-run")

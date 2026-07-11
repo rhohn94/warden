@@ -1,12 +1,14 @@
 # Workflow skill manifest
 
 The canonical set of skills this workflow depends on. `grm-workflow-bootstrap`
-restores any of these from `golden/` when missing; `grm-workflow-snapshot`
-re-captures live edits back into `golden/`.
+restores any of these from the golden baseline when missing; the baseline
+itself is generated on demand from the live/flavor files (v3.49) via
+`generate_golden.py`, so there is nothing to hand-snapshot back.
 
 > This is a point-in-time baseline, **not** a perpetually-synced mirror.
-> Future projects are not expected to keep `golden/` in lock-step with
-> their live skills — re-snapshot deliberately when you want a new baseline.
+> Future projects are not expected to keep the golden image in lock-step with
+> their live skills — freeze a new offline baseline deliberately with
+> `generate_golden.py --freeze .` when you want one.
 
 ## Restorable skills (`golden/skills/`)
 
@@ -23,6 +25,7 @@ re-captures live edits back into `golden/`.
 | `grm-release-phase-merge`     | Merge completed agent branches in conflict-map order. |
 | `grm-ledger-tick`             | Tick / roll-forward the §5 implementation ledger. |
 | `grm-project-release`         | Promote `dev` → `main` and tag the release. |
+| `grm-orchestrate-release`     | Autonomous end-to-end release driver (Noir-only): preflight the autonomy dials, then chain planning → agreement → phase → phase-merge → project-release → cleanup with zero prompts. Restores with its companion `orchestrate_preflight.py`. |
 | `grm-repo-reference`          | Doc-location map + subagent model/effort table. |
 | `grm-source-to-design-docs`   | Generate `docs/design/` from existing source code. |
 | `grm-design-language-adapt`   | Adopt/refresh the UX design language: pull upstream (or honour strict-local), produce the local adaptation, record source SHA. (GUI projects only.) |
@@ -39,17 +42,17 @@ re-captures live edits back into `golden/`.
 | `grm-issue-tracker`           | Manage the project's issue tracker connection — configure provider (GitHub/Linear/Jira), list, view, create, update, and close issues via the configured API. Restores with its companions `issue_tracker.py` and `migrate_roadmap_issues.py`. |
 | `grm-issue-tracker-switch`    | Switch or reconfigure the active issue tracker provider: validate provider name, update `grimoire-config.json`, and verify connectivity. Restores with its companion `issue_tracker_switch.py`. |
 | `grm-feedback-to-issue`       | Convert a piece of feedback (bug, idea, UX note) into a well-formed issue and file it to the configured tracker via `grm-issue-tracker`. |
-| `grm-reporter`                | Narrow-context own-session agent: receive a feedback payload, classify it via the taxonomy in `docs/grimoire/integration-workflow.md`, and file it through `grm-feedback-to-issue`. No git writes. |
-| `grm-reviewer`                | Narrow-context own-session pre-merge auditor (RV1): reads a completed branch/diff and returns blocking/non-blocking findings. Wraps `code-review`; read-only, no git writes. Canonical contract: `docs/grimoire/design/agent-roles-design.md`. |
-| `grm-scout`                   | Narrow-context own-session research agent (SC1): investigates a bounded question and returns a condensed brief. Wraps `Explore`/`deep-research`; strictly read-only, no writes. Canonical contract: `docs/grimoire/design/agent-roles-design.md`. |
-| `grm-verifier`                | Narrow-context own-session QA agent (QA1): runs tests/build/release against a branch and checks acceptance criteria, returning a pass/fail verdict. No source edits, no git writes. Canonical contract: `docs/grimoire/design/agent-roles-design.md`. |
-| `grm-triager`                 | Narrow-context own-session backlog-groomer (TR1): dedupes, labels, prioritizes, and closes stale tracker items via `grm-issue-tracker`. Tracker-only write surface, no git writes. Canonical contract: `docs/grimoire/design/agent-roles-design.md`. |
-| `grm-researcher`              | Narrow-context own-session research-then-file agent: investigates an under-specified idea and files ONE scoped item, composing `grm-source-to-design-docs`/`grm-design-doc-scaffold`/`grm-feedback-to-issue`. Tracker-only write surface. Canonical contract: `docs/grimoire/design/agent-roles-design.md`. |
+| `grm-agent-reporter`                | Narrow-context own-session agent: receive a feedback payload, classify it via the taxonomy in `docs/grimoire/integration-workflow.md`, and file it through `grm-feedback-to-issue`. No git writes. |
+| `grm-agent-reviewer`                | Narrow-context own-session pre-merge auditor (RV1): reads a completed branch/diff and returns blocking/non-blocking findings. Wraps `code-review`; read-only, no git writes. Canonical contract: `docs/grimoire/design/agent-roles-design.md`. |
+| `grm-agent-scout`                   | Narrow-context own-session research agent (SC1): investigates a bounded question and returns a condensed brief. Wraps `Explore`/`deep-research`; strictly read-only, no writes. Canonical contract: `docs/grimoire/design/agent-roles-design.md`. |
+| `grm-agent-verifier`                | Narrow-context own-session QA agent (QA1): runs tests/build/release against a branch and checks acceptance criteria, returning a pass/fail verdict. No source edits, no git writes. Canonical contract: `docs/grimoire/design/agent-roles-design.md`. |
+| `grm-agent-triager`                 | Narrow-context own-session backlog-groomer (TR1): dedupes, labels, prioritizes, and closes stale tracker items via `grm-issue-tracker`. Tracker-only write surface, no git writes. Canonical contract: `docs/grimoire/design/agent-roles-design.md`. |
+| `grm-agent-researcher`              | Narrow-context own-session research-then-file agent: investigates an under-specified idea and files ONE scoped item, composing `grm-source-to-design-docs`/`grm-design-doc-scaffold`/`grm-feedback-to-issue`. Tracker-only write surface. Canonical contract: `docs/grimoire/design/agent-roles-design.md`. |
 | `grm-install-doctor`          | Idempotent, non-destructive-by-default framework health check: audits files vs golden, validates the upstream connection, and confirms feature adoption. Wraps `grm-workflow-bootstrap`/`grm-sync-from-upstream`. Restores with its companion `install_doctor.py`. |
 | `grm-cost-budget`             | Operate the cost-governance config cluster: token budget + utilization reporting, per-agent verbosity, and peak-hour scheduling policy. Reads `cost-governance` config; reuses `grm-token-measure` for utilization. Restores with its companion `cost_budget.py` (the stdlib budget engine: window rolling, once-per-window threshold-crossing detection, and `cost-utilization.json` ledger arithmetic; reuses `parse_usage.py` for transcript parsing). Design: `docs/grimoire/design/cost-governance-design.md`. |
 | `grm-priority-picker`         | Advisor skill: interview the user to rank speed/quality/cost, map the 2-of-3 trade-off to concrete dial values, and write them via the switch skills. Surfaces the Steady Steward preset. Design: `docs/grimoire/design/cost-governance-design.md`. |
 | `grm-coding-practices-audit`  | Agent-driven adherence audit: assembles a checklist from the audit-hints in `coding-standards.md`/`architecture-guidelines.md`/sub-docs, reports gaps, and optionally files one issue per gap via `grm-feedback-to-issue` (`--file-issues`). Read-only except tracker writes; no git writes. Design: `docs/design/coding-practices-audit-design.md`. |
-| `grm-architecture-audit`      | Deterministic architecture fitness functions: read the declarative `.claude/architecture-rules.json` (layers, allowed dependency edges, forbidden imports, no-cycles) and report every violation (`file:line — rule-id`) over the project's import graph — the deterministic complement to `grm-coding-practices-audit`'s narrative pass. Read-only by default; `--gate` escalates per the v1.26 `code-quality` dials; degrades clean when no rules file is declared. Design: `docs/grimoire/design/architecture-fitness-design.md`. |
+| `grm-architecture-audit`      | Deterministic architecture fitness functions: read the declarative `.claude/architecture-rules.json` (layers, allowed dependency edges, forbidden imports, no-cycles) and report every violation (`file:line — rule-id`) over the project's import graph — the deterministic complement to `grm-coding-practices-audit`'s narrative pass. Read-only by default; `--gate` escalates per the v1.26 `code-quality` dials; an absent rules file exits clean but emits a visible WARN pointing at the per-family starter rulesets (never silent, #314; explicit `opt_out` supported). Design: `docs/grimoire/design/architecture-fitness-design.md`. |
 | `grm-component-catalog-export`| Scan reusable components (`component.json`/front-matter) and emit a machine + human-readable catalog (id, profiles, provides/requires, compat, stability). Read-only; for downstream consumers to discover components + author templates. A *view* over `.claude/component-registry.json` when present, live scan otherwise. Design: `docs/design/quick-start-templates-design.md`. |
 | `grm-component-registry`      | Build/update the versioned registry `.claude/component-registry.json` from the same `component.json`/front-matter sources the export reads: versions each component (declared `version` or content-hash), diffs added/changed/removed/unchanged vs the prior registry, and validates tags against the `component-taxonomy` authority (unknown tags surfaced, never silently accepted/dropped). Idempotent — unchanged sources ⇒ byte-identical file. Restores with its companion `component_registry.py` (the stdlib discover/version/validate-taxonomy/diff/write-idempotently engine: sha256 content hashing, sorted-key serialization, content-derived build id, atomic temp+replace write; file-write-only). Design: `docs/design/component-catalog-architecture-design.md`; taxonomy: `docs/design/component-taxonomy.md`. |
 | `grm-config-validate`     | Validate `.claude/grimoire-config.json` against the declared schema (known blocks + value sets + cross-rules like Auto-requires-Noir), report unknown/missing fields, and run an idempotent `--migrate` that fills additive defaults atomically. Backed by `config_validate.py`; read-only by default. Called by `grm-install-doctor`. Design: `docs/design/defaults-quickstart-design.md`. |
@@ -96,7 +99,9 @@ Always-delivered alongside the content sets:
 | `push-guard.sh`             | Restricts `git push` to allowlisted refs from the marker-blessed integration worktree. |
 | `release-plan-guard.sh`     | Locks §§1–4 of an agreed release plan (only §5 editable). |
 | `worktree-guard.sh`         | Blocks tool calls targeting paths outside the worktree. |
-| `settings.json`             | Wires the four hooks as `PreToolUse` guards. |
+| `autonomy-allow.sh`         | Paradigm-aware prompt suppression: auto-approves guard-vetted pipeline commands under Noir (deny guards take precedence). |
+| `worktree-brief.sh`         | SessionStart brief: automatic isolation context + wrong-base warnings in every spawned worktree. |
+| `settings.json`             | Wires the guard + autonomy hooks (`PreToolUse`) and the worktree brief (`SessionStart`). |
 | `push-allowlist`            | Extends the `push-guard` default allowlist with project-specific refs. |
 | `model-effort-profiles.json` | Paradigm-invariant model/effort profile registry (`.claude/model-effort-profiles.json`) — the single source of truth for the band × profile matrix the `grm-repo-reference` resolver consumes. Restores to `.claude/` so fresh/restored scaffolds resolve subagent tiers. |
 | `.scaffold-upstream.conf`   | Default Grimoire upstream URL seed (`UPSTREAM_REPO=https://github.com/rhohn94/grimoire-framework.git`). Seeded by `grm-workflow-bootstrap` Step 2.5 (v1.13+); idempotent — never overwrites a non-empty `UPSTREAM_REPO`. Override by setting `UPSTREAM_REPO` to your fork's URL. |
@@ -150,7 +155,6 @@ alongside its engine keeps the MCP surface and the CLI fallback in lock-step.
 | Skill | Purpose |
 |---|---|
 | `grm-workflow-bootstrap` | Guided install/restore + project-specific interview. |
-| `grm-workflow-snapshot`  | Re-capture live skills/hooks into `golden/` (manual sync). |
 | `grm-sync-from-source`   | Pull skills/hooks/docs from a source project into this scaffolding. |
 
 ## Project-config placeholders set by the interview

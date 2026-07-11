@@ -1,0 +1,100 @@
+{
+  "_comment": "Shared Fleet Status Contract v1 validation vectors. Consumed today by fleet_conformance.py --self-test (Python, three copies: claude-code, root .claude, copilot/scripts). Intended as the same fixture set a future fleet-contract Rust crate self-tests against (docs/grimoire/design/fleet-status-contract.md §Crate spec pointer), so the Rust and Python validators are proven to agree byte-for-byte on the same payloads rather than drifting apart with hand-copied fixtures. Each case names a JSON payload under cases/, the shape it validates against ('full' or 'minimal'), and the expected outcome ('pass' or 'fail' with a minimum error count). Cases are additive-optional: a new field or rule adds a case here rather than editing an existing one, mirroring the contract's own additive-optional evolution rule (fleet-status-contract.md §3.3).",
+  "schema_version": "1",
+  "cases": [
+    {
+      "name": "full-valid",
+      "shape": "full",
+      "file": "cases/full-valid.json",
+      "expect": "pass"
+    },
+    {
+      "name": "full-omitted-update-keys",
+      "shape": "full",
+      "file": "cases/full-omitted-update-keys.json",
+      "expect": "pass",
+      "note": "update.available / update.last_checked keys absent entirely — absent key ≡ null per §1.3."
+    },
+    {
+      "name": "full-with-framework-sync-fields",
+      "shape": "full",
+      "file": "cases/full-with-framework-sync.json",
+      "expect": "pass",
+      "note": "additive-optional framework_version / last_synced present (§3.5)."
+    },
+    {
+      "name": "full-missing-fields",
+      "shape": "full",
+      "file": "cases/full-missing-fields.json",
+      "expect": "fail",
+      "min_errors": 1,
+      "note": "instance/update missing; build/runtime missing required sub-fields."
+    },
+    {
+      "name": "full-wrong-schema-version",
+      "shape": "full",
+      "file": "cases/full-wrong-schema-version.json",
+      "expect": "fail",
+      "min_errors": 1
+    },
+    {
+      "name": "full-invalid-verdict",
+      "shape": "full",
+      "file": "cases/full-invalid-verdict.json",
+      "expect": "fail",
+      "min_errors": 1,
+      "note": "update.verdict outside the VALID_UPDATE_VERDICTS vocabulary."
+    },
+    {
+      "name": "full-dep-missing-endpoint",
+      "shape": "full",
+      "file": "cases/full-dep-missing-endpoint.json",
+      "expect": "fail",
+      "min_errors": 1,
+      "note": "runtime-kind dependency missing endpoint/reachable."
+    },
+    {
+      "name": "full-bad-framework-version",
+      "shape": "full",
+      "file": "cases/full-bad-framework-version.json",
+      "expect": "fail",
+      "min_errors": 2,
+      "note": "empty framework_version + non-string last_synced — two distinct violations."
+    },
+    {
+      "name": "minimal-valid",
+      "shape": "minimal",
+      "file": "cases/minimal-valid.json",
+      "expect": "pass"
+    },
+    {
+      "name": "minimal-with-framework-sync-fields",
+      "shape": "minimal",
+      "file": "cases/minimal-with-framework-sync.json",
+      "expect": "pass",
+      "note": "framework_version/last_synced are non-sensitive and MAY appear in the minimal shape too (§1.4)."
+    },
+    {
+      "name": "minimal-with-forbidden-fields",
+      "shape": "minimal",
+      "file": "cases/minimal-with-forbidden-fields.json",
+      "expect": "fail",
+      "min_errors": 2,
+      "note": "build.git_sha and top-level instance MUST be absent from the minimal shape."
+    },
+    {
+      "name": "minimal-wrong-schema-version",
+      "shape": "minimal",
+      "file": "cases/minimal-wrong-schema-version.json",
+      "expect": "fail",
+      "min_errors": 1
+    },
+    {
+      "name": "minimal-invalid-status",
+      "shape": "minimal",
+      "file": "cases/minimal-invalid-status.json",
+      "expect": "fail",
+      "min_errors": 1
+    }
+  ]
+}

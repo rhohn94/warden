@@ -24,11 +24,14 @@ Usage:
   stealth_scrub.py branches [--baseline] [--strict]
   stealth_scrub.py --self-test
 """
+from __future__ import annotations
+
 import json
 import os
 import re
 import subprocess
 import sys
+from collections.abc import Iterator
 
 # ── Deny-list ────────────────────────────────────────────────────────────
 # Tells that must never appear in committed deliverable content / messages.
@@ -46,7 +49,7 @@ _PHRASES = [
 _LITERALS = ["🤖"]  # matched as plain substrings, no word boundary
 
 
-def build_pattern(extra=None):
+def build_pattern(extra: list | None = None) -> re.Pattern:
     """Compile one case-insensitive regex matching any deny-list entry.
 
     `extra` (from stealth-mode.comment-denylist) is treated as word tokens.
@@ -77,13 +80,13 @@ MANAGED_PREFIXES = (
 # index. Managed Grimoire docs, so Stealth Mode must still recognize them.
 
 
-def is_managed(path):
+def is_managed(path: str) -> bool:
     p = path[2:] if path.startswith("./") else path
     p = p.lstrip("/")  # strip leading slashes only, never the dot of ".claude"
     return any(p == m or p.startswith(m) for m in MANAGED_PREFIXES)
 
 
-def load_extra_denylist():
+def load_extra_denylist() -> list:
     try:
         cfg = json.load(open(".claude/grimoire-config.json"))
         return cfg.get("stealth-mode", {}).get("comment-denylist", []) or []
@@ -91,7 +94,7 @@ def load_extra_denylist():
         return []
 
 
-def git(args):
+def git(args: list) -> str | None:
     try:
         out = subprocess.run(["git"] + args, capture_output=True, text=True, timeout=15)
     except (OSError, subprocess.SubprocessError):
@@ -102,7 +105,7 @@ def git(args):
 
 
 # ── scan ────────────────────────────────────────────────────────────────
-def scan_staged(pat):
+def scan_staged(pat: re.Pattern) -> Iterator[tuple]:
     """Yield (file, lineno-or-None, matched, line) over added staged lines."""
     diff = git(["diff", "--cached", "--unified=0", "--no-color"])
     if diff is None:
@@ -121,7 +124,7 @@ def scan_staged(pat):
                 yield cur or "(staged)", None, m.group(0), line.strip()
 
 
-def scan_files(pat, paths):
+def scan_files(pat: re.Pattern, paths: list) -> Iterator[tuple]:
     for path in paths:
         if is_managed(path) or not os.path.isfile(path):
             continue
@@ -135,7 +138,7 @@ def scan_files(pat, paths):
             continue
 
 
-def cmd_scan(args):
+def cmd_scan(args: list) -> None:
     strict = "--strict" in args
     staged = "--staged" in args or not [a for a in args if not a.startswith("-")]
     paths = [a for a in args if not a.startswith("-")]
@@ -154,14 +157,14 @@ def cmd_scan(args):
 BASELINE = ".claude/cache/stealth-branch-baseline.json"
 
 
-def local_branches():
+def local_branches() -> list:
     out = git(["branch", "--format=%(refname:short)"])
     if out is None:
         return []
     return [b.strip() for b in out.splitlines() if b.strip()]
 
 
-def cmd_branches(args):
+def cmd_branches(args: list) -> None:
     strict = "--strict" in args
     branches = local_branches()
     if "--baseline" in args:
@@ -208,7 +211,7 @@ def _self_test():
     return 1 if fails else 0
 
 
-def main():
+def main() -> None:
     args = sys.argv[1:]
     if not args:
         print(__doc__); sys.exit(2)

@@ -56,13 +56,22 @@ python3 .claude/skills/grm-noir-loop/noir_loop_state.py --self-test
 
 ## Loop contract
 
+- **Release-master model = `orchestrate` band.** The orchestrator resolves the
+  active profile's `orchestrate` band (Sonnet in every starter profile) and
+  passes the `{model, effort}` pair on the spawn; the release-master escalates
+  judgment calls per the integration-master guide §Model & escalation.
 - One `/loop` firing = one release-master subagent = one logged summary. No
   reliance on `/clear` / `/compact` (neither is self-invocable anyway).
 - Composes with default Noir wakeup-scheduling and the token budget;
   see the design doc §D.
 - **Noir only** — Supervised / Weiss run releases in-session via the integration
   master and do not use this loop.
-- Push to origin stays **human-gated** in every paradigm; the loop never pushes.
+- Push to origin follows `grm-project-release` §push exactly like any other
+  Noir release: gated (`AskUserQuestion`, `Push now` / `Hold`) by default, or
+  ungated (immediate, no question) under `autonomous-push.enabled: true` —
+  the same contract applies to every iteration, not just the first. The
+  loop-state helper itself never pushes; the spawned release-master does, as
+  part of the existing release chain.
 - **Teardown each iteration.** Before returning its summary, the release-master
   runs `integration-workflow.md` §Run teardown (end-of-run) for that iteration's
   dispatched worktrees + schedules. When the loop's terminal condition

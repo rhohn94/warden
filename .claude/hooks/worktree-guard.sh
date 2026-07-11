@@ -11,7 +11,7 @@ Also a no-op when the active worktree carries the integration-allow marker
 (`.claude/integration-allow.local`). That worktree is the blessed
 integration master, trusted to cross worktree boundaries for housekeeping
 like removing a dead sibling worktree after verifying it's safe (see
-`docs/integration-workflow.md` §Dead-worktree cleanup). Symmetric with
+`docs/grimoire/integration-workflow.md` §Dead-worktree cleanup). Symmetric with
 `protected-branch-guard.sh`.
 
 Covers Edit / Write / NotebookEdit (structured file_path) and Bash (scan
@@ -42,8 +42,8 @@ worktree automatically, with no additional configuration:
     - Agents stay inside their own worktree (this guard).
     - Agents cannot touch protected branches (protected-branch-guard.sh).
     - Only the marker-blessed master may merge to staging (both guards).
-  See docs/design/write-capable-workflow-design.md §3 (Safety rails) and
-  §5.3 (Guard model implications).
+  Safety-rails and guard-model rationale (§3, §5.3) are framework-internal
+  design specs — see the upstream Grimoire repository for that rationale.
 
 Cross-worktree branch hijack (v1.7, item A3)
 ============================================
@@ -83,7 +83,7 @@ def main() -> None:
 
     # Blessed integration worktree — trusted to cross worktree boundaries
     # (e.g. dead-worktree cleanup). Symmetric with protected-branch-guard.sh;
-    # see docs/integration-workflow.md §Dead-worktree cleanup.
+    # see docs/grimoire/integration-workflow.md §Dead-worktree cleanup.
     marker = os.path.join(proj, ".claude", "integration-allow.local")
     if os.path.isfile(marker):
         sys.exit(0)

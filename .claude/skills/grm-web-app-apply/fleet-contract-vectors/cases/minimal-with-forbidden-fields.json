@@ -1,0 +1,7 @@
+{
+  "schema_version": "1",
+  "app": "familiar",
+  "build": {"version": "1.20.0", "git_sha": "abc123"},
+  "runtime": {"status": "up"},
+  "instance": {"id": "x", "name": "y", "env": "local"}
+}

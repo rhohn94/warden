@@ -113,7 +113,7 @@ def render_report(root: Path) -> tuple[str, int]:
     return "\n".join(lines), len(deletable)
 
 
-def main(argv=None):
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Tiered workspace cleanup for Grimoire artifacts.")
     parser.add_argument("--root", default=".", help="project root (default: cwd)")
     parser.add_argument("--apply", action="store_true",

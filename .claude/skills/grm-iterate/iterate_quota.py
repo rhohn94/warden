@@ -25,6 +25,8 @@ Usage:
   iterate_quota.py --self-test
 Exit 0 on success; 2 on bad input / missing state.
 """
+from __future__ import annotations
+
 import argparse
 import json
 import os
@@ -53,7 +55,7 @@ def _write_json(path, data):
     os.replace(tmp, path)
 
 
-def resolve_quota(root, facet):
+def resolve_quota(root: str, facet: str) -> dict:
     """Quota from config iterate.quota (+ per-facet override), else default."""
     cfg = _read_json(os.path.join(root, ".claude", "grimoire-config.json")) or {}
     itc = cfg.get("iterate") or {}
@@ -71,7 +73,7 @@ def resolve_quota(root, facet):
     return quota
 
 
-def resolve_scalar(root, key, default):
+def resolve_scalar(root: str, key: str, default: int) -> int:
     cfg = _read_json(os.path.join(root, ".claude", "grimoire-config.json")) or {}
     itc = cfg.get("iterate") or {}
     v = itc.get(key)
@@ -80,7 +82,7 @@ def resolve_scalar(root, key, default):
     return default
 
 
-def init_state(root, facet, run_id, iterations):
+def init_state(root: str, facet: str, run_id: str, iterations: int) -> dict:
     quota = resolve_quota(root, facet)
     floor = resolve_scalar(root, "min-issues-floor", DEFAULT_MIN_FLOOR)
     state = {
@@ -96,7 +98,7 @@ def init_state(root, facet, run_id, iterations):
     return state
 
 
-def load_state(root):
+def load_state(root: str) -> dict:
     state = _read_json(os.path.join(root, STATE_REL))
     if not state or "quota" not in state:
         raise SystemExit2("no iterate state at %s — run --init first" % STATE_REL)
@@ -107,7 +109,7 @@ class SystemExit2(Exception):
     pass
 
 
-def record(root, size, count):
+def record(root: str, size: str, count: int) -> dict:
     if size not in SIZES:
         raise SystemExit2("unknown size %r — valid: %s" % (size, ", ".join(SIZES)))
     state = load_state(root)
@@ -117,7 +119,7 @@ def record(root, size, count):
     return state
 
 
-def status(state):
+def status(state: dict) -> dict:
     quota = state.get("quota", {})
     filled = state.get("filled", {})
     remaining = {s: max(0, quota.get(s, 0) - filled.get(s, 0)) for s in SIZES}
@@ -136,7 +138,7 @@ def status(state):
     }
 
 
-def next_iteration(root):
+def next_iteration(root: str) -> dict:
     state = load_state(root)
     state["iterations_remaining"] = max(0, state.get("iterations_remaining", 1) - 1)
     state["iteration"] = state.get("iteration", 1) + 1
@@ -223,7 +225,7 @@ def _self_test():
     return 0
 
 
-def main(argv=None):
+def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Quota + iteration state for `iterate on {facet}`.")
     ap.add_argument("--root", default=".")
     ap.add_argument("--init", action="store_true")

@@ -24,12 +24,15 @@ path stay pure JSON.
 Design: docs/grimoire/design/dependency-channel-design.md §3-§4.
 """
 
+from __future__ import annotations
+
 import hashlib
 import json
 import os
 import re
 import shutil
 import subprocess
+import sys
 import tarfile
 import tempfile
 import datetime
@@ -41,6 +44,13 @@ except ModuleNotFoundError as _exc:  # pragma: no cover - explicit floor
         "sync_deps requires Python 3.11+ (tomllib). A <3.11 fallback parser is a "
         "non-goal this release."
     ) from _exc
+
+# Allow running both as a module and as a bare script from the skill dir (mirrors
+# sync_deps.py's own sys.path shim, needed since this module is also imported
+# directly by --self-test harnesses run from other cwds).
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+from minisign_verify import MinisignError, verify as minisign_verify  # noqa: E402
 
 
 # ── Constants ───────────────────────────────────────────────────────────────
@@ -61,6 +71,10 @@ VALID_KINDS = {"asset-bundle", "vendored-crate", "app-binary"}
 # release. Server-supplied names outside this set are refused (never trusted).
 RELEASE_JSON_NAME = "release.json"
 SHA256SUMS_NAME = "SHA256SUMS"
+MINISIG_NAME = "SHA256SUMS.minisig"
+
+# vendor.lock `signature_verified` tri-state (design §Signing / #318).
+SIG_UNSIGNED = "unsigned"  # no pubkey pinned, or producer has not signed (soft-fail)
 # A release artifact basename: letters/digits/dot/dash/underscore, ending in a
 # known archive suffix. No path separators, no leading dot, no traversal.
 _ARTIFACT_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*\.(?:tar\.gz|tgz)$")
@@ -76,7 +90,7 @@ class SyncDepsError(Exception):
 
 # ── Hashing helpers ─────────────────────────────────────────────────────────
 
-def sha256_of_file(path):
+def sha256_of_file(path: str) -> str:
     """Return the hex sha256 of a file, read in chunks."""
     h = hashlib.sha256()
     with open(path, "rb") as fh:
@@ -85,7 +99,27 @@ def sha256_of_file(path):
     return h.hexdigest()
 
 
-def tree_sha256(root):
+def tree_manifest(root: str) -> dict:
+    """Return {relpath: filesha} for every regular file under root.
+
+    The per-file breakdown backing `tree_sha256`'s rolled hash — recorded
+    additively in `vendor.lock` (`tree_manifest`) so the provenance verifier
+    (`vendor_verify.py --verify`, #315) can report a precise added/removed/
+    changed diff on drift instead of only a single opaque hash mismatch.
+    """
+    out = {}
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames.sort()
+        for name in sorted(filenames):
+            full = os.path.join(dirpath, name)
+            if os.path.islink(full) or not os.path.isfile(full):
+                continue
+            rel = os.path.relpath(full, root).replace(os.sep, "/")
+            out[rel] = sha256_of_file(full)
+    return out
+
+
+def tree_sha256(root: str) -> str:
     """Deterministic content hash over a placed file tree.
 
     Sorted relpaths, each contributing `"<relpath>\\0<filesha>\\n"`, hashed
@@ -115,7 +149,7 @@ def tree_sha256(root):
 
 # ── Security: asset-name allowlist ──────────────────────────────────────────
 
-def validate_artifact_name(name):
+def validate_artifact_name(name: str) -> str:
     """Refuse any artifact basename that is not a plain archive name.
 
     Guards against server-supplied names with path separators, traversal, or an
@@ -130,7 +164,7 @@ def validate_artifact_name(name):
 
 # ── SHA256SUMS parsing + verification ───────────────────────────────────────
 
-def parse_sha256sums(text):
+def parse_sha256sums(text: str) -> dict:
     """Parse `<hex>␠␠<basename>` lines into {basename: hex}. Format unchanged."""
     out = {}
     for line in text.splitlines():
@@ -204,6 +238,11 @@ class DepSpec:
         self.kind = data.get("kind", "asset-bundle")
         self.strip_components = int(data.get("strip_components", 0))
         self.extract = data.get("extract")  # optional subset allowlist (list[str])
+        # Optional minisign public-key blob (design §Signing / #318). When pinned,
+        # the engine verifies release.json.signature's SHA256SUMS.minisig sidecar
+        # against it and records signature_verified in vendor.lock. Absent =>
+        # signature_verified: "unsigned" (soft-fail — sync proceeds either way).
+        self.pubkey = data.get("pubkey")
         if self.channel not in VALID_CHANNELS:
             raise SyncDepsError(
                 f"[deps.{name}] channel must be one of {sorted(VALID_CHANNELS)}",
@@ -456,7 +495,7 @@ class VendoredCrateKind(ArtifactKind):
             self._extract_members(tf, members, staging_dir)
 
 
-def make_kind(spec):
+def make_kind(spec: DepSpec) -> ArtifactKind:
     """Factory: map a DepSpec.kind to its ArtifactKind handler."""
     if spec.kind == "vendored-crate":
         return VendoredCrateKind(spec)
@@ -470,13 +509,17 @@ class FetchedRelease:
     """A resolved release: the three local file paths + parsed metadata."""
 
     def __init__(self, version, artifact_path, release_json, sums_map,
-                 release_json_sha256, release_url):
+                 release_json_sha256, release_url, sums_raw=None, signature_text=None):
         self.version = version
         self.artifact_path = artifact_path
         self.release_json = release_json
         self.sums_map = sums_map
         self.release_json_sha256 = release_json_sha256
         self.release_url = release_url
+        # Raw SHA256SUMS bytes (the message a minisig actually signs) + the
+        # optional detached-signature sidecar text, when present (§Signing/#318).
+        self.sums_raw = sums_raw
+        self.signature_text = signature_text
 
 
 class ReleaseFetcher:
@@ -511,9 +554,16 @@ class ReleaseFetcher:
             rj_sha = HASH_PREFIX + sha256_of_file(rj_path)
         sums_path = os.path.join(staging_dir, SHA256SUMS_NAME)
         sums_map = None
+        sums_raw = None
         if os.path.isfile(sums_path):
             with open(sums_path, "r", encoding="utf-8") as fh:
-                sums_map = parse_sha256sums(fh.read())
+                sums_raw = fh.read()
+            sums_map = parse_sha256sums(sums_raw)
+        sig_path = os.path.join(staging_dir, MINISIG_NAME)
+        signature_text = None
+        if os.path.isfile(sig_path):
+            with open(sig_path, "r", encoding="utf-8") as fh:
+                signature_text = fh.read()
         return FetchedRelease(
             version=spec.version,
             artifact_path=artifact_path,
@@ -521,6 +571,8 @@ class ReleaseFetcher:
             sums_map=sums_map,
             release_json_sha256=rj_sha,
             release_url=release_url,
+            sums_raw=sums_raw,
+            signature_text=signature_text,
         )
 
 
@@ -585,6 +637,12 @@ class GhReleaseFetcher(ReleaseFetcher):
                 raise SyncDepsError(
                     f"gh release download failed for {slug}@{tag}: "
                     f"{(err or err2).strip()}", EXIT_VIOLATION)
+        if spec.pubkey:
+            # Best-effort: the sidecar is optional (producer may not sign yet).
+            # A miss here is never fatal — it degrades to signature_verified
+            # "unsigned", exactly like an absent release.json.signature.
+            self._run(["gh", "release", "download", tag, "--repo", slug,
+                       "--pattern", MINISIG_NAME, "--dir", staging_dir])
         release_url = f"https://github.com/{slug}/releases/tag/{tag}"
         return self._load_staged(spec, staging_dir, release_url)
 
@@ -626,7 +684,7 @@ class OfflineFetcher(ReleaseFetcher):
             raise SyncDepsError(
                 f"offline fixture missing for {spec.name}@{spec.release_tag}",
                 EXIT_VIOLATION)
-        for base in (spec.artifact, RELEASE_JSON_NAME, SHA256SUMS_NAME):
+        for base in (spec.artifact, RELEASE_JSON_NAME, SHA256SUMS_NAME, MINISIG_NAME):
             sp = os.path.join(src, base)
             if os.path.isfile(sp):
                 shutil.copyfile(sp, os.path.join(staging_dir, base))
@@ -725,10 +783,12 @@ class SyncDepsEngine:
             kind = make_kind(spec)
             kind.extract_into(fetched.artifact_path, extract_staging)
             placed_tree_sha = tree_sha256(extract_staging)
+            placed_tree_manifest = tree_manifest(extract_staging)
             # Atomic replace into place.
             self._atomic_place(extract_staging, spec.dest)
             extract_staging = None  # consumed by os.replace; don't rmtree it
             git_sha = fetched.release_json.get("git_sha")
+            sig_status = self._verify_signature(spec, fetched)
             return {
                 "version": spec.version,
                 "channel": spec.channel,
@@ -738,14 +798,58 @@ class SyncDepsEngine:
                 "artifact": spec.artifact,
                 "artifact_sha256": HASH_PREFIX + artifact_sha,
                 "tree_sha256": placed_tree_sha,
+                "tree_manifest": placed_tree_manifest,
                 "release_json_sha256": fetched.release_json_sha256,
-                "signature_verified": False,  # signing deferred (v3.29 non-goal)
+                "signature_verified": sig_status,
                 "synced_at": self._timestamp(),
             }
         finally:
             shutil.rmtree(dep_staging, ignore_errors=True)
             if extract_staging:
                 shutil.rmtree(extract_staging, ignore_errors=True)
+
+    def _verify_signature(self, spec, fetched):
+        """Resolve `signature_verified` for one dep (design §Signing / #318).
+
+        Tri-state, soft-fail by construction (never blocks the sync — the
+        SHA256SUMS check above is the hard-refuse integrity floor; signature
+        verification is an additive provenance layer the fleet migrates onto
+        producer-by-producer):
+
+          "unsigned" — no `pubkey` pinned in vendor.toml, OR the producer's own
+                       release.json.signature is null / the sidecar is absent
+                       (nothing to verify against).
+          True        — pubkey pinned, producer signed, verification succeeds.
+          False        — pubkey pinned, producer signed, verification FAILS
+                       (bad signature or a malformed blob) — a loud WARNING is
+                       printed, but the dep is still vendored (the sha256 floor
+                       already guarantees byte integrity); the conformance gate
+                       is where this becomes actionable (WARN escalation).
+        """
+        if not spec.pubkey:
+            return SIG_UNSIGNED
+        declared = (fetched.release_json or {}).get("signature")
+        if not declared or not fetched.signature_text or not fetched.sums_raw:
+            return SIG_UNSIGNED
+        try:
+            ok = minisign_verify(spec.pubkey, fetched.signature_text,
+                                  fetched.sums_raw.encode("utf-8"))
+        except MinisignError as exc:
+            print(
+                f"WARNING: {spec.name}: signature blob could not be parsed "
+                f"({exc}) — recording signature_verified=false.",
+                file=sys.stderr,
+            )
+            return False
+        if not ok:
+            print(
+                f"WARNING: {spec.name}: signature verification FAILED "
+                f"(pubkey pinned, producer signed) — recording "
+                f"signature_verified=false. SHA256SUMS integrity still holds; "
+                f"this is a provenance-layer failure, not a tamper refusal.",
+                file=sys.stderr,
+            )
+        return ok
 
     def _atomic_place(self, staged_tree, dest_rel):
         """Atomically replace `dest_rel` with the staged tree.
@@ -841,8 +945,16 @@ def _build_fixture_tarball(path, files):
 
 
 def _seed_release(fixture_root, slug, tag, artifact_name, files,
-                  git_sha="0a1b2c3", with_sums=True, tamper=False):
-    """Seed one offline release (artifact + release.json + SHA256SUMS)."""
+                  git_sha="0a1b2c3", with_sums=True, tamper=False,
+                  signer=None, tamper_signature=False):
+    """Seed one offline release (artifact + release.json + SHA256SUMS).
+
+    `signer`, when given, is a `(sk, pk, key_id)` tuple (from
+    `minisign_verify.generate_keypair`); the release then advertises
+    `signature` in `release.json` and ships a real `SHA256SUMS.minisig` sidecar
+    signed with it (§Signing / #318 self-test fixture). `tamper_signature`
+    flips one byte of the signature blob to exercise the verify-fails path.
+    """
     rel_dir = os.path.join(fixture_root, slug, tag)
     os.makedirs(rel_dir, exist_ok=True)
     artifact_path = os.path.join(rel_dir, artifact_name)
@@ -857,7 +969,9 @@ def _seed_release(fixture_root, slug, tag, artifact_name, files,
         "artifact_kind": "asset-bundle",
         "primary_artifact": artifact_name,
         "primary_artifact_sha256": art_sha,
-        "signature": None,
+        "signature": (
+            {"algo": "minisign", "file": MINISIG_NAME} if signer else None
+        ),
         "assets": [{"name": artifact_name, "sha256": art_sha,
                     "bytes": os.path.getsize(artifact_path)}],
     }
@@ -867,9 +981,22 @@ def _seed_release(fixture_root, slug, tag, artifact_name, files,
     if with_sums:
         recorded = art_sha if not tamper else ("0" * 64)
         rj_sha = sha256_of_file(rj_path)
+        sums_text = f"{recorded}  {artifact_name}\n{rj_sha}  {RELEASE_JSON_NAME}\n"
         with open(os.path.join(rel_dir, SHA256SUMS_NAME), "w", encoding="utf-8") as fh:
-            fh.write(f"{recorded}  {artifact_name}\n")
-            fh.write(f"{rj_sha}  {RELEASE_JSON_NAME}\n")
+            fh.write(sums_text)
+        if signer:
+            from minisign_verify import sign as minisign_sign
+            sk, pk, key_id = signer
+            _pub_text, sig_text = minisign_sign(
+                sk, pk, sums_text.encode("utf-8"), key_id)
+            if tamper_signature:
+                sig_text = sig_text.replace(
+                    "trusted comment: self-test signature",
+                    "trusted comment: TAMPERED",
+                )
+            with open(os.path.join(rel_dir, MINISIG_NAME), "w",
+                      encoding="utf-8") as fh:
+                fh.write(sig_text)
     return rel_dir
 
 
@@ -879,7 +1006,7 @@ def _write_vendor_toml(root, deps_block):
         fh.write(deps_block)
 
 
-def run_self_test():
+def run_self_test() -> bool:
     """Deterministic, offline, stdlib-only regression suite. Returns True/False."""
     failures = []
 
@@ -935,7 +1062,8 @@ def run_self_test():
         check(entry["version"] == "1.0.0" and entry["channel"] == "stable",
               "lock records version + channel")
         check(entry["git_sha"] == "0a1b2c3", "lock records git_sha from release.json")
-        check(entry["signature_verified"] is False, "signature_verified false (deferred)")
+        check(entry["signature_verified"] == SIG_UNSIGNED,
+              "signature_verified 'unsigned' (no pubkey pinned)")
         check(entry["synced_at"] == "2026-06-13T18:20:00Z", "synced_at deterministic")
 
         # 2) re-sync with unchanged pin is a byte-identical no-op.
@@ -1093,6 +1221,92 @@ def run_self_test():
         except SyncDepsError:
             traversal_refused = True
         check(traversal_refused, "tar member traversal refused on extract")
+
+        # 10) signed release + pinned pubkey => signature_verified True.
+        import base64 as _b64
+        from minisign_verify import generate_keypair
+        seed = hashlib.sha256(b"sync-deps-self-test-seed").digest()
+        sk, pk = generate_keypair(seed)
+        key_id = b"\x01\x02\x03\x04\x05\x06\x07\x08"
+        pk_b64 = _b64.b64encode(b"Ed" + key_id + pk).decode()
+        pubkey_blob = f"untrusted comment: test\n{pk_b64}\n"
+
+        repo7 = os.path.join(tmp, "repo7")
+        os.makedirs(repo7)
+        fixture7 = os.path.join(tmp, "fixtures7")
+        _seed_release(fixture7, slug, "v1.0.0", "widget-v1.0.0.tar.gz", files,
+                      signer=(sk, pk, key_id))
+        _write_vendor_toml(repo7,
+            '[deps.widget]\n'
+            'repo = "acme/widget"\nchannel = "stable"\nversion = "1.0.0"\n'
+            'artifact = "widget-v1.0.0.tar.gz"\ndest = "vendor/widget"\n'
+            'kind = "asset-bundle"\nstrip_components = 1\n'
+            f'pubkey = "{pubkey_blob.splitlines()[-1]}"\n')
+        eng7 = SyncDepsEngine(root=repo7, fetcher=OfflineFetcher(fixture7),
+                              clock=fixed_clock)
+        check(eng7.sync() == EXIT_OK, "signed sync exits 0")
+        lock7 = json.load(open(os.path.join(repo7, "vendor.lock")))
+        check(lock7["deps"]["widget"]["signature_verified"] is True,
+              "signature_verified true (pubkey pinned, valid signature)")
+
+        # 11) tampered signature => signature_verified False, sync still proceeds
+        #     (soft-fail: sha256 already guarantees byte integrity).
+        repo8 = os.path.join(tmp, "repo8")
+        os.makedirs(repo8)
+        fixture8 = os.path.join(tmp, "fixtures8")
+        _seed_release(fixture8, slug, "v1.0.0", "widget-v1.0.0.tar.gz", files,
+                      signer=(sk, pk, key_id), tamper_signature=True)
+        _write_vendor_toml(repo8,
+            '[deps.widget]\n'
+            'repo = "acme/widget"\nchannel = "stable"\nversion = "1.0.0"\n'
+            'artifact = "widget-v1.0.0.tar.gz"\ndest = "vendor/widget"\n'
+            'kind = "asset-bundle"\nstrip_components = 1\n'
+            f'pubkey = "{pubkey_blob.splitlines()[-1]}"\n')
+        eng8 = SyncDepsEngine(root=repo8, fetcher=OfflineFetcher(fixture8),
+                              clock=fixed_clock)
+        check(eng8.sync() == EXIT_OK,
+              "sync with a bad signature still exits 0 (soft-fail)")
+        lock8 = json.load(open(os.path.join(repo8, "vendor.lock")))
+        check(lock8["deps"]["widget"]["signature_verified"] is False,
+              "signature_verified false on a tampered/invalid signature")
+        check(os.path.isfile(os.path.join(repo8, "vendor", "widget", "README.md")),
+              "dep is still vendored despite a bad signature (soft-fail)")
+
+        # 12) unsigned release (no pubkey pinned) => "unsigned", never blocks.
+        repo9 = os.path.join(tmp, "repo9")
+        os.makedirs(repo9)
+        fixture9 = os.path.join(tmp, "fixtures9")
+        _seed_release(fixture9, slug, "v1.0.0", "widget-v1.0.0.tar.gz", files)
+        _write_vendor_toml(repo9,
+            '[deps.widget]\n'
+            'repo = "acme/widget"\nchannel = "stable"\nversion = "1.0.0"\n'
+            'artifact = "widget-v1.0.0.tar.gz"\ndest = "vendor/widget"\n'
+            'kind = "asset-bundle"\nstrip_components = 1\n')
+        eng9 = SyncDepsEngine(root=repo9, fetcher=OfflineFetcher(fixture9),
+                              clock=fixed_clock)
+        check(eng9.sync() == EXIT_OK, "unsigned sync exits 0")
+        lock9 = json.load(open(os.path.join(repo9, "vendor.lock")))
+        check(lock9["deps"]["widget"]["signature_verified"] == SIG_UNSIGNED,
+              "signature_verified 'unsigned' with no pubkey pinned (soft-fail)")
+
+        # 13) pubkey pinned but producer hasn't signed yet => still "unsigned".
+        repo10 = os.path.join(tmp, "repo10")
+        os.makedirs(repo10)
+        fixture10 = os.path.join(tmp, "fixtures10")
+        _seed_release(fixture10, slug, "v1.0.0", "widget-v1.0.0.tar.gz", files)
+        _write_vendor_toml(repo10,
+            '[deps.widget]\n'
+            'repo = "acme/widget"\nchannel = "stable"\nversion = "1.0.0"\n'
+            'artifact = "widget-v1.0.0.tar.gz"\ndest = "vendor/widget"\n'
+            'kind = "asset-bundle"\nstrip_components = 1\n'
+            f'pubkey = "{pubkey_blob.splitlines()[-1]}"\n')
+        eng10 = SyncDepsEngine(root=repo10, fetcher=OfflineFetcher(fixture10),
+                              clock=fixed_clock)
+        check(eng10.sync() == EXIT_OK,
+              "pubkey pinned but producer unsigned still exits 0")
+        lock10 = json.load(open(os.path.join(repo10, "vendor.lock")))
+        check(lock10["deps"]["widget"]["signature_verified"] == SIG_UNSIGNED,
+              "signature_verified 'unsigned' when producer hasn't signed yet")
 
     print(f"\n{len(failures)} failure(s)." if failures else "\nall checks passed.")
     return not failures

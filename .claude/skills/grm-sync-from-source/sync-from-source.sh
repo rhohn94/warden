@@ -11,7 +11,7 @@
 #     (unless --force)
 #   * backs up every file it overwrites to .sync-backup/<timestamp>/
 #   * additive only — never deletes scaffolding-only files (workflow-bootstrap,
-#     workflow-snapshot, sync-from-source, manifest.md, README, templates)
+#     sync-from-source, manifest.md, README, templates)
 #   * copies VERBATIM — it does NOT genericize. Files containing source-specific
 #     tokens are flagged "needs-genericize"; the sync-from-source SKILL handles
 #     re-inserting placeholders. (The golden image is generated on demand by
@@ -100,10 +100,10 @@ src_skill_name() {
 
 # ---------------------------------------------------------------------------
 # What to sync.  Keep the skill list aligned with workflow-bootstrap/manifest.md.
-# Scaffolding-only skills (workflow-bootstrap, workflow-snapshot,
-# sync-from-source) are intentionally absent — they have no source equivalent.
+# Scaffolding-only skills (workflow-bootstrap, sync-from-source) are
+# intentionally absent — they have no source equivalent.
 # ---------------------------------------------------------------------------
-SKILLS="design-doc-scaffold worktree-preflight release-planning release-agreement release-phase release-agent-tracker release-phase-merge ledger-tick project-release repo-reference source-to-design-docs"
+SKILLS="grm-design-doc-scaffold grm-worktree-preflight grm-release-planning grm-release-agreement grm-release-phase grm-release-agent-tracker grm-release-phase-merge grm-ledger-tick grm-project-release grm-repo-reference grm-source-to-design-docs"
 HOOKS="protected-branch-guard.sh release-plan-guard.sh worktree-guard.sh"
 # Structural workflow docs only. roadmap.md and docs/design/README.md are
 # scaffolding TEMPLATES and are deliberately NOT synced from a source's real

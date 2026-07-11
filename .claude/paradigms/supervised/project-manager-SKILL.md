@@ -107,6 +107,10 @@ low confidence. Surface the degrade to the user.
 - **One IM per lane.** Dispatch via `spawn_task` chips after user confirmation
   of the dispatch. Each IM runs on its lane branch and merges its task agents'
   work into it via `grm-release-phase-merge`.
+- **Lane-IM model = `orchestrate` band.** Resolve the active profile's
+  `orchestrate` band via the `grm-repo-reference` resolver (Sonnet in every
+  starter profile) and pass the `{model, effort}` pair on each lane-IM dispatch.
+  Each IM escalates judgment calls per its guide §Model & escalation.
 - **Lane ledger.** Track lane status in the plan (lane → features → IM status →
   integrated?) — the `grm-release-agent-tracker` view, one tier up.
 - **Lane integration.** As lanes complete, merge each lane branch into
@@ -141,7 +145,7 @@ and may mutate history only while HEAD is on its `version/{X.Y}/<lane>` branch
 (the HEAD-drift guard); the cross-worktree hijack guard refuses any op aimed at a
 sibling worktree. The PM worktree performs the lane→`version/{X.Y}`→dev→main
 merges. Place the marker per lane as you dispatch it. Detail:
-`docs/integration-workflow.md` §Multiple marked lane worktrees.
+`docs/grimoire/integration-workflow.md` §Multiple marked lane worktrees.
 
 ---
 

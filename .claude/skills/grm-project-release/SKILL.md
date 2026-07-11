@@ -6,209 +6,159 @@ description: Promote dev to main and tag a new version. Use when the user wants 
 # Project release procedure
 
 Promotes accumulated `dev` work to `main` and tags a version. Full branching
-and versioning conventions live in `docs/grimoire/version-design.md` — read it before
-acting. This skill is a checklist.
+and versioning conventions live in `docs/grimoire/version-design.md` — read it
+before acting.
 
-## Critical preflight (most-violated rules)
-
-1. **`version-history.md` entry must exist on `dev` BEFORE running the
-   release command.** Most release scripts verify this. Format: one heading
-   per release + 3–8 bullets aimed at end users, not developers. Commit on
-   `dev`.
-2. **Feature-manifest entries written for each new flagship capability.**
-   For every new capability shipped in this release that a downstream project
-   would need to adopt or configure after syncing, add an entry to
-   `.claude/skills/grm-sync-from-upstream/feature-manifest.md` (fields:
-   `feature-id`, `introduced-in: vX.Y`, `summary`, `detect`, `adopt`,
-   optional `migrate`). Same discipline as writing the `version-history.md`
-   entry. A capability is manifest-worthy if it has an idempotent `adopt`
-   step and did not exist in prior releases. Pure internal refactors do not
-   require an entry. Commit the manifest update on `dev` alongside the
-   version-history entry.
-3. **Merge `dev` → `main` first, then check out `main`, then run the release
-   script.** Releases only happen from `main`.
-4. **Pick the version:** MINOR for ordinary releases, MAJOR for breaking
-   changes.
-
-## The recipe
+The release splits into **judgment steps** (below — decisions only an
+agent/human can make) and the **mechanical ceremony**, which is one command:
 
 ```bash
-{release-command}   # e.g. `npm version minor`, `make release`, `just release X Y`
+python3 .claude/skills/grm-build-recipe/recipe.py release   # ≡ just release ≡ scripts/release.sh
 ```
 
-Replace `{release-command}` with your project's actual release tooling (see
-CLAUDE.md §Project commands and `docs/grimoire/version-design.md` §Release procedure).
+The `release` recipe target runs the entire mechanical pipeline: guards (on
+`main`, clean tree, tag unused, changelog entry present) → open the
+`.claude/release-in-progress.local` promotion window (trap-guarded — removed on
+ANY exit, success or failure, so a stale marker can never leave `main`
+boundary-exempt) → tests → build distributables → annotated tag → best-effort
+`run_metadata` telemetry → version-history notes slice → **asserting publish**
+(`publish_release.py`: every built asset must land on the GitHub Release and
+its sha256 must match `SHA256SUMS`, hard-fail otherwise) → channel signal. A
+mid-ceremony abort also emits `outcome=fail` via the sibling
+`telemetry_entry.py --emit` CLI mode from the same promotion-window trap
+(#345/#346 — `telemetry-errors` applied at this release boundary; see
+`docs/coding-standards.md` §Telemetry). Reference implementation:
+`scripts/release.sh` (`--dry-run` previews every
+mutating action).
 
-A well-written release command should:
-- Verify you are on `main` with a clean tree and an unused tag.
-- Bump the version in the project's version file and any lockfiles.
-- Run the test suite.
-- Build release artifacts.
-- Archive or publish artifacts.
-- Commit the version bump.
-- Tag the commit `v{MAJOR}.{MINOR}` (or your project's tag convention).
+## Judgment steps (do these BEFORE invoking the ceremony)
 
-## Emit the per-run telemetry artifact (best-effort, v3.14 #82)
+1. **Write the `version-history.md` entry on `dev`.** One heading per release
+   (`## vX.Y — Title`) + 3–8 bullets aimed at end users, not developers. The
+   ceremony derives the release version from this newest heading and refuses to
+   run without the entry. Also write the matching `changelog.md` entry — the
+   front-facing counterpart with no ticket IDs, task names, or prompt/session
+   references (`docs/coding-standards.md` §Content & UI copy); `version-history.md`
+   is the internal record and is exempt from that rule. Commit both on `dev`.
+2. **Write feature-manifest rows for each new flagship capability.** For every
+   capability a downstream project must adopt or configure after syncing, add an
+   entry to `.claude/skills/grm-sync-from-upstream/feature-manifest.md`
+   (fields: `feature-id`, `introduced-in: vX.Y`, `summary`, `detect`, `adopt`,
+   optional `migrate`). A capability is manifest-worthy if it has an idempotent
+   `adopt` step and did not exist in prior releases; pure internal refactors do
+   not need one. When in doubt, add the entry — false positives are filtered by
+   `detect`. Commit on `dev` alongside the version-history entry.
+3. **Pick the version: MINOR vs MAJOR.** MINOR for ordinary releases; MAJOR
+   only for breaking changes. The chosen `vX.Y` is what the version-history
+   heading (step 1) declares — the ceremony reads it from there.
+4. **Pick the channel.**
+   - **stable** — the normal `v{MAJOR}.{MINOR}` release on `main`. Default.
+   - **beta** — a `--prerelease` published off the `version/{X.Y}` staging
+     branch; assets carry a `-beta` suffix and `release.json` records
+     `channel: beta`. Invoke with `--channel beta`.
+5. **Merge `dev` → `main`, then check out `main`.** Releases only run from
+   `main` — the ceremony's guard enforces it.
 
-Immediately **after the version tag is created** (and before the human-gated
-push below), emit one per-run metadata artifact for the release (consumer:
-Mission Control's Pulse pillar). This is **write-only dev telemetry** — it
-writes one gitignored JSON file under `.claude/cache/runs/<run_id>.json` and
-**never gates, blocks, or rolls back the release**. Run it best-effort:
+## Run the ceremony
 
 ```bash
-python3 .claude/skills/grm-token-measure/run_metadata.py --emit \
-  --outcome pass \
-  --release {MAJOR}.{MINOR} \
-  --config .claude/grimoire-config.json \
-  --items <work-items in this release> --items-passed <items that passed> \
-  --started-at <ISO-8601 start of the release run> \
-  --wall-clock-secs <run seconds, if known> \
-  [--transcript <session .jsonl, if known>] \
-  || echo "run_metadata: emit skipped (telemetry is best-effort)"
+python3 .claude/skills/grm-build-recipe/recipe.py release
+# preview first, if desired:  just release --dry-run
+# beta channel:               just release --channel beta
 ```
 
-- `--outcome` is `pass` on a clean tag. `paradigm` / `profile` / `model`
-  auto-fill from `grimoire-config.json` via `--config`.
-- **Graceful by contract:** absent inputs degrade to null/zero, a missing
-  transcript yields all-zero tokens, the helper never raises out of `--emit`,
-  and the `|| echo` swallows any non-zero exit — the release is never blocked
-  by telemetry. (On Copilot the helper lives at `scripts/run_metadata.py`.)
+If the ceremony fails mid-run, stop and read the error — the trap has already
+removed the release-in-progress marker, but partial state (a dangling tag,
+built `dist/`) may need cleanup before retrying. Do not retry blindly.
 
-## Push to origin (post-release)
+The publish step degrades **loudly**, never silently: if `gh` is unavailable
+the tag ships WITHOUT a published Release and downstream
+`UPSTREAM_TRANSPORT=release` consumers fall back to git clone until the assets
+are attached (the built `dist/*` is reproducible from the tag). The
+skipped-publish gate (`publish_release.py --check`) fails while the newest tag
+has no published Release — opt out only for a genuinely notes-only tag via the
+`<!-- release: notes-only -->` marker in its version-history section. Design:
+`docs/grimoire/design/release-pipeline-design.md`.
 
-A completed release is the **single** trigger moment for the integration
-master to push to origin — once per release. (`grm-release-phase-merge` no longer
-pushes; `dev` stayed local through integration.) Outside this moment, do not
-push.
+## Push to origin (post-release — NOT part of the ceremony)
 
-1. Inspect what's ahead of origin on both branches and the tag:
+The ceremony **never pushes** (and there is deliberately no `just push` recipe:
+`push-guard.sh` recognizes only a literal `git push`, so a wrapper would bypass
+it). A completed release is the **single** trigger moment for the integration
+master to push. Behavior forks on `autonomous-push.enabled` — full decision
+table in `docs/grimoire/design/autonomous-push-prompt-suppression-design.md`
+§Two push modes:
+
+1. Inspect what's ahead of origin:
    ```bash
    git fetch origin
    git log --oneline origin/dev..dev
    git log --oneline origin/main..main
-   git tag --contains origin/main..HEAD
    ```
-2. Propose the push and wait for explicit user confirmation, then push `dev`,
-   `main`, and the version tag **together** in one go:
+2. **Gated (default — `autonomous-push.enabled` false, or any non-Noir
+   paradigm).** Never just announce the push and move on to cleanup — actively
+   stop and ask. Issue an `AskUserQuestion` with options `Push now` / `Hold`,
+   putting the exact push plan in the question body: the refs, the remote, and
+   the literal command, e.g.:
+   ```
+   Push plan:
+     refs:    dev, main, v{X.Y}
+     remote:  origin
+     command: git push origin dev main --follow-tags
+   Push now, or hold?
+   ```
+   Run the `git push` only on `Push now`. On `Hold`, stop here and report the
+   release as tagged-but-unpushed — no passive "next is the push" phrasing.
+3. **Ungated (Noir + `autonomous-push.enabled: true`).** Run the push
+   immediately, no question asked — `push-guard.sh`'s `should_auto_allow`
+   predicate suppresses the permission prompt for this exact command:
    ```bash
    git push origin dev main --follow-tags
    ```
 
-The `push-guard.sh` hook permits `main`, `dev`, and version tags by default
-(see `.claude/push-allowlist` for project additions); pushing requires the
-integration marker. Destructive flags are denied — see `push-guard.sh`. This
-push remains human-gated and marker-gated.
+`push-guard.sh` permits `main`, `dev`, and version tags by default (see
+`.claude/push-allowlist`); pushing requires the integration marker. Destructive
+flags are denied in both modes.
 
-## GitHub Release (authoritative — the distribution artifact, v3.23; channels + signing, v3.27; canonical tarball + `release.json`, v3.29)
+## Reconcile issues (post-tag judgment step)
 
-The GitHub Release is the **authoritative distribution point** downstream
-consumers depend on (`docs/design/release-distribution-design.md`): every release
-**always** produces one, it carries the `version-history` notes, and it attaches
-the **per-flavor `.zip` distributables**, the **canonical `grimoire-v{X.Y}.tar.gz`
-primary artifact**, the generalized **`release.json`** manifest, plus the
-**signing assets** (`SHA256SUMS` always; `SHA256SUMS.minisig` when signing is
-configured). It runs at the same single post-release moment as the push — no
-longer optional. It degrades only when `gh` is genuinely unavailable, and then
-**loudly** (skipping it means downstream has no artifact for this version, and
-release-transport consumers fall back to git clone).
+After the tag exists, before writing the release report, sweep open issues
+this release actually shipped:
 
-**`release.json` (v3.29).** The single manifest / channel-of-record — the
-generalized, kind-discriminated manifest (`schema_version`, `name`, `version`,
-`channel`, nullable `git_sha`, `artifact_kind`, `primary_artifact` +
-`primary_artifact_sha256`, `signature` = null, `assets[]{name,sha256,bytes}`;
-schema in `dependency-channel-design.md` §2). It **replaces** the retired
-`RELEASE-META.json` (a strict superset). The framework builder always emits
-`artifact_kind: asset-bundle` with the canonical `.tar.gz` as the primary
-artifact. `SHA256SUMS` now also covers `release.json`.
+```bash
+python3 .claude/skills/grm-issue-reconcile/issue_reconcile.py --tag v{X.Y}
+```
 
-**Channels (v3.27).** Pick the channel for this release:
-- **stable** — the normal `v{MAJOR}.{MINOR}` release on `main`. Default.
-- **beta** — a `--prerelease` published off the `version/{X.Y}` staging branch
-  (reuse the existing staging convention; no new branch types). Beta assets carry
-  a `-beta` filename suffix and `release.json` records `channel: beta`.
-
-Consumers pin a channel with `UPSTREAM_CHANNEL=stable|beta` in `grm-sync-from-upstream`.
-
-1. **Build the distributables + signing assets** from the repo root:
-   ```bash
-   python3 .claude/skills/grm-project-release/build_distributables.py \
-     --version {MAJOR}.{MINOR} --channel stable   # or --channel beta
-   # → dist/grimoire-<flavor>-v{MAJOR}.{MINOR}[-beta].zip … plus the canonical
-   #   dist/grimoire-v{MAJOR}.{MINOR}[-beta].tar.gz, dist/release.json,
-   #   dist/SHA256SUMS, and (if signing) dist/SHA256SUMS.minisig
-   ```
-   Flavors are auto-discovered (any top-level dir carrying a `.grimoire-flavor`
-   marker), so future flavors are included automatically. The build is
-   deterministic; `dist/` is gitignored. Run `--self-test` to verify the helper.
-2. **Signing contract.** `SHA256SUMS` is **always** emitted (the integrity
-   floor). The `minisign` signature `SHA256SUMS.minisig` is emitted only when the
-   `minisign` tool is on `PATH` **and** `MINISIGN_SECRET_KEY` names a key file;
-   when either is absent the builder prints a **loud** unsigned-build warning and
-   proceeds — never a silent skip. To sign, install `minisign` and export
-   `MINISIGN_SECRET_KEY=/path/to/key` (the public half is embedded in consuming
-   apps at build time, never fetched at runtime — see the design doc).
-3. **Extract notes** for the version from `docs/version-history.md` (the 3–8
-   user-facing bullets) into a temp file for `--notes-file` — use
-   `python3 .claude/skills/grm-status-broker/version_history.py --release v{MAJOR}.{MINOR}`
-   to slice just that section rather than reading the whole file.
-4. **Create the Release from the tag, attaching every built asset** (zips +
-   the canonical `.tar.gz` + `release.json` + `SHA256SUMS` + `SHA256SUMS.minisig`
-   when present). Add `--prerelease` for the beta channel and the channel label:
-   ```bash
-   gh release create v{MAJOR}.{MINOR} \
-     --title "v{MAJOR}.{MINOR}" \
-     --notes-file <extracted-notes> \
-     dist/*                                  # stable
-   # beta: gh release create v{MAJOR}.{MINOR}-beta.N --prerelease --title … dist/*
-   gh release edit v{MAJOR}.{MINOR} --add-label channel:stable   # or channel:beta
-   ```
-5. **Degrade loudly.** If `gh` is absent/unauthenticated, do **not** silently
-   skip: report that the tag shipped WITHOUT a published Release+assets, that
-   downstream `UPSTREAM_TRANSPORT=release` consumers will fall back to git clone
-   until it is published, and keep the built `dist/*` (reproducible from the
-   tag) so they can be attached later.
-
-Like the push, this is integration-master-only and runs at the single
-post-release moment. Under `autonomous-push.enabled` it proceeds unattended
-alongside the push; otherwise it is part of the same human-gated moment.
+Detects candidates from this release's commits, the plan doc's §2, and the
+version-history entry; under Noir it closes-with-comment (verifying the write
+persisted); under Supervised/Weiss it flags for human review and writes
+nothing. Fold its `issues closed by this release: […]` line into the release
+report. See `.claude/skills/grm-issue-reconcile/SKILL.md`.
 
 ## Post-release cleanup (final ordered step)
 
-After the tag is created and the human-gated push completes, run the
-post-release branch + worktree cleanup as the **final ordered step** of the
-release. Only the **marker-blessed integration master** runs this (it is the
-only actor permitted to touch sibling worktrees). This step is governed by
-the existing protocol in `docs/grimoire/integration-workflow.md` §Dead-worktree
-cleanup → §Post-release cleanup step — read it and follow it exactly; the
-summary below does not override it.
-
-For **each** work-item branch/worktree of the just-shipped release:
-
-1. **Verify dead-ness** — the branch is merged (an ancestor of the release
-   tip) AND the worktree is clean. Skip any branch that is not both.
-2. **Preserve or explicitly report** any uncommitted work (stash or patch per
-   the protocol) — never discard silently.
-3. **Unlock** any locked worktree, then `git worktree remove <path>` (it
-   refuses on a dirty tree — the safety net). `--force` is allowed **only**
-   for disposable untracked artifacts (e.g. `__pycache__`) **and only with an
-   explicit logged note** of what is discarded — never a silent `--force`.
-4. `git worktree prune`, then `git branch -d` the merged feature branches and
-   any stale `worktree-*` placeholder branches (merge-safe `-d`; `-D` only
-   with explicit user confirmation).
-
-Report the tally: worktrees removed, branches deleted, work preserved/skipped.
+After the tag and push, the **marker-blessed integration master** (only actor
+permitted to touch sibling worktrees) runs the branch + worktree cleanup per
+`docs/grimoire/integration-workflow.md` §Dead-worktree cleanup → §Post-release
+cleanup step — read and follow it exactly. In brief, for each work-item
+branch/worktree of the shipped release: verify merged + clean, preserve or
+explicitly report any uncommitted work, `git worktree remove` (never a silent
+`--force`), `git worktree prune`, then merge-safe `git branch -d`. Report the
+tally.
 
 ## Reminders
 
-- After release, new work-item worktrees must still root on `dev`, never on
-  `main`. See `grm-worktree-preflight` skill.
-- If the recipe fails mid-run, stop and read the error. Do not retry blindly —
-  partial state (bumped version files, dangling tag) may need cleanup first.
+- After release, new work-item worktrees still root on `dev`, never `main`
+  (`grm-worktree-preflight`).
+- The per-run telemetry artifact is emitted by the ceremony automatically
+  (write-only, best-effort — it never gates or blocks a release).
 
 ## Anti-patterns
 
-- Shipping an adoptable capability without a manifest entry — old projects that
-  sync will silently miss it and receive no adoption prompt; the capability
-  lands inert. When in doubt, add the entry (false positives are filtered by
-  `detect`).
+- Shipping an adoptable capability without a feature-manifest entry — syncing
+  projects silently miss it and the capability lands inert.
+- Hand-running the mechanical steps (marker, tag, build, `gh release create`)
+  instead of the `release` recipe target — the ceremony exists so the marker is
+  trap-guarded and the publish is asserted; ad-hoc runs re-open both gaps.
+- Folding the push into the ceremony or adding a `just push` recipe — push
+  stays a separate, guarded step.

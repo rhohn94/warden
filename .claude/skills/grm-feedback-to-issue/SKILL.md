@@ -10,8 +10,8 @@ files it through the issue-tracker abstraction in one create call. This is the
 reusable engine; the Reporter agent (RP1) wraps it for dedicated filing sessions
 — FI1 itself is invocation-context-agnostic.
 
-Design authority: `docs/grimoire/design/issue-tracker-design.md` §7 (FI1 contract),
-§5.3 (create routing), §2 (IssueDraft shape).
+Design rationale (§7 FI1 contract, §5.3 create routing, §2 IssueDraft shape)
+lives in the upstream Grimoire repository (framework-internal — not shipped).
 
 > **MCP-first (v3.12).** When the `grimoire-issue-tracker` MCP server is active
 > (`mcp.prefer-for-tracker`, default on), file via the `create_issue` tool and
@@ -215,8 +215,9 @@ Near-duplicate skipped (Noir): `Near-duplicate detected: #<number> "<title>" —
 
 ## §9 — Protected-label carve-out: `Grimoire-Requirement`
 
-`Grimoire-Requirement` is a **protected label** (`docs/grimoire/design/issue-label-taxonomy.md`
-§Protected framework labels). When filing an issue tagged with it:
+`Grimoire-Requirement` is a **protected label** (§Protected framework labels of
+the label-taxonomy doc — a framework-internal design; see the upstream
+Grimoire repository for that rationale). When filing an issue tagged with it:
 
 1. **Always `audience: "internal"`** — tagged requirements are engineering-track
    items and must never be routed to an external-facing tracker.

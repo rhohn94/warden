@@ -30,6 +30,8 @@ Usage:
 Stdout: the claimed port (one integer; K lines under --count), or an export line.
 Exit 0: a free port was identified. Exit 1: none found (fatal — abort dispatch).
 """
+from __future__ import annotations
+
 import argparse
 import json
 import os
@@ -44,7 +46,7 @@ DEFAULT_ENV_VAR = "GRIMOIRE_APP_PORT"
 MAX_PROBES = 200
 
 
-def is_free(port, host="127.0.0.1"):
+def is_free(port: int, host: str = "127.0.0.1") -> bool:
     """True iff a TCP socket can bind `port` right now (probe, then release)."""
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:
@@ -57,7 +59,7 @@ def is_free(port, host="127.0.0.1"):
         s.close()
 
 
-def os_assign(host="127.0.0.1"):
+def os_assign(host: str = "127.0.0.1") -> int:
     """Bind to port 0 so the kernel assigns a free port; read it, release it."""
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:
@@ -68,7 +70,7 @@ def os_assign(host="127.0.0.1"):
         s.close()
 
 
-def random_probe(start, end, taken, rng):
+def random_probe(start: int, end: int, taken: set, rng: random.Random) -> int | None:
     span = list(range(start, end + 1))
     rng.shuffle(span)
     for port in span[:MAX_PROBES]:
@@ -77,7 +79,7 @@ def random_probe(start, end, taken, rng):
     return None
 
 
-def index_probe(start, end, index, taken):
+def index_probe(start: int, end: int, index: int, taken: set) -> int | None:
     port = start + max(0, int(index))
     while port <= end:
         if port not in taken and is_free(port):
@@ -116,7 +118,8 @@ def _save_cache(path, cache):
     os.replace(tmp, path)
 
 
-def claim_one(key, strategy, start, end, index, taken, cache, rng):
+def claim_one(key: str, strategy: str, start: int, end: int, index: int,
+              taken: set, cache: dict, rng: random.Random) -> int | None:
     """Return a port for `key`, honoring idempotency via the cache."""
     prev = cache.get(key)
     if isinstance(prev, dict):
@@ -139,8 +142,10 @@ def claim_one(key, strategy, start, end, index, taken, cache, rng):
     return port
 
 
-def claim(strategy="os-assign", start=DEFAULT_RANGE_START, end=DEFAULT_RANGE_END,
-          worktree_id=None, index=None, count=1, cache_path=DEFAULT_CACHE, rng=None):
+def claim(strategy: str = "os-assign", start: int = DEFAULT_RANGE_START,
+          end: int = DEFAULT_RANGE_END, worktree_id: str | None = None,
+          index: int | None = None, count: int = 1, cache_path: str = DEFAULT_CACHE,
+          rng: random.Random | None = None) -> list:
     """Claim `count` unique ports; persist them under the worktree id. Returns a
     list of ports (raises RuntimeError if any cannot be allocated)."""
     rng = rng or random.Random()
@@ -243,7 +248,7 @@ def _self_test():
     return 0
 
 
-def main(argv=None):
+def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Claim a unique free TCP port for a worktree.")
     ap.add_argument("--strategy", default="os-assign",
                     choices=["os-assign", "random-probe", "index"])

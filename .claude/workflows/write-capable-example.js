@@ -13,8 +13,9 @@ export const meta = {
 // ---------------------------------------------------------------------------
 // WRITE-CAPABLE WORKFLOW — REFERENCE IMPLEMENTATION
 //
-// This script demonstrates the full write-capable tier contract specified in
-// docs/design/write-capable-workflow-design.md. It is the canonical reference
+// This script demonstrates the full write-capable tier contract. Design
+// rationale is a framework-internal design spec — see the upstream Grimoire
+// repository for that rationale. It is the canonical reference
 // for NW3 (isolated-worktree parallel execution + master-merge orchestration +
 // the three execution variants).
 //
@@ -46,7 +47,8 @@ export const meta = {
 //   The script returns:
 //     { branches: [ { branch, mergeAfter, result }, … ] }
 //   The master calls release-phase-merge with this list, following mergeAfter
-//   ordering. See docs/design/write-capable-workflow-design.md §2.3–2.4.
+//   ordering (design rationale §2.3-2.4 lives in the upstream Grimoire
+//   repository, framework-internal — not shipped).
 //
 // Invoke:
 //   Workflow({ name: 'write-capable-example' })
@@ -61,7 +63,8 @@ export const meta = {
 // This check is explicit, early, and fail-closed. A write-capable workflow
 // invoked under Supervised or Weiss fails immediately with a clear error rather
 // than silently degrading or producing partial output.
-// See docs/design/write-capable-workflow-design.md §1.2.
+// Design rationale (§1.2) is framework-internal — see the upstream Grimoire
+// repository for that rationale.
 // ---------------------------------------------------------------------------
 if (meta.tier === 'write-capable' && activeParadigm() !== 'Noir') {
   throw new Error(
@@ -289,7 +292,7 @@ CONSTRAINTS — these are hard, not advisory:
   - Do NOT git push (push-guard.sh will block it anyway).
   - Do NOT git merge or git rebase targeting dev / main / version/*.
   - Do NOT edit files outside this worktree.
-  - Do NOT edit docs/release-planning-v*.md.
+  - Do NOT edit docs/release-planning/release-planning-v*.md.
 
 EXIT after committing. Return ONLY { branch, commit (short SHA), summary
 (one sentence) } — no diff recap, no narration of what you did.

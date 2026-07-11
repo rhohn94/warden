@@ -29,6 +29,7 @@ maps to changes per profile.
 | **medium**  | 40 K–80 K est. tokens; multi-file implementation, test runs |
 | **large**   | > 80 K est. tokens; cross-cutting implementation |
 | **review**  | any planning, code review, security review, architecture/design analysis (regardless of token estimate) |
+| **orchestrate** | role-triggered, not token-triggered: release-orchestration agents this session dispatches — the Noir loop's release-master iterations, PM lane integration masters |
 
 ### The starter profiles
 
@@ -46,6 +47,16 @@ The active profile is `model-effort-profile.value` in
 - **Eco/Budget** — **no Opus at all**; Sonnet ceiling for medium–large.
 - **Autonomous** — lean for unattended runs: Haiku trivial, Sonnet small→large
   (effort scaling low→high), Opus reserved for `review` only.
+
+**The `orchestrate` band is Sonnet in every starter profile.** Orchestration is
+mostly plan-execution against reified artifacts (the agreed plan, the §5 ledger,
+the guard hooks), so the orchestrator itself rides Sonnet; the judgment-heavy
+moments are pushed out instead: on an exceptional condition (ambiguous merge
+conflict, unclear test failure, a design/planning question, acceptance-criteria
+ambiguity) the orchestrator spawns a one-shot **adjudicator / designer** agent
+resolved via the `review` band (see the integration-master guide §Model &
+escalation). Profiles that cap `review` at Sonnet (Low Effort, Eco/Budget)
+adjudicate on Sonnet too — a deliberate consequence of their cost posture.
 
 The exact band × profile matrix lives in `.claude/model-effort-profiles.json` —
 read it, don't re-transcribe it here; the registry is the source of truth for
@@ -104,7 +115,7 @@ exist.
 | Aspect                       | Document                                   |
 |------------------------------|--------------------------------------------|
 | Overview / entry point       | `docs/design/README.md`                    |
-| Architecture (this project)  | `docs/design/architecture-design.md`       |
+| Architecture (this project)  | `docs/design/architecture/architecture-design.md` |
 | Architecture guidelines      | `docs/architecture-guidelines.md`          |
 | Coding standards             | `docs/coding-standards.md`                 |
 | UX / interaction model       | `docs/design/ux-design.md`                 |

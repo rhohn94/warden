@@ -56,7 +56,8 @@ command is `stylelint` (standard config plus `no-!important` and the chosen
 naming pattern), with a dead-CSS pass (PurgeCSS-style dry-run against templates)
 and a `jscpd` duplication pass surfaced through `grm-code-health`. Findings are
 warn-level by default and escalate to block via the v1.26 `code-quality`
-`audit-gate` dial. Design: `../design/html-css-quality-enforcement-design.md`.
+`audit-gate` dial. (Design rationale in the upstream Grimoire repository,
+framework-internal.)
 
 ## Audit hints
 

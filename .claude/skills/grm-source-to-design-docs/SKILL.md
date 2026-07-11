@@ -32,6 +32,34 @@ the live tree and emit a one-line warning:
 - A project has code but no `docs/design/` folder (initial onboarding).
 - A feature exists in code but lacks a design doc (partial onboarding).
 - You are about to plan a release and want agents to have doc context.
+- Source changed significantly since the docs were generated and you want a
+  refresh (see **Regeneration control** below).
+
+---
+
+## Regeneration control (#309, BF-5)
+
+Each design-doc candidate identified in Step 2 is classified as **write**
+(no doc exists yet), **skip**, or **regenerate**, using
+`regen_policy.py` in this skill's directory — a deterministic, self-tested
+helper rather than ad-hoc judgement calls per candidate:
+
+```bash
+python3 .claude/skills/grm-source-to-design-docs/regen_policy.py \
+  --design-dir docs/design --candidates auth,billing,search [--regenerate]
+```
+
+- **Default (no flag): skip.** A candidate whose `docs/design/{slug}-design.md`
+  already exists is left untouched. This is the safe default — the skill never
+  silently overwrites a doc nobody asked it to touch.
+- **`--regenerate` (alias `--force`): regenerate.** Pass this when invoking the
+  skill to force a full refresh of every existing candidate doc from a fresh
+  source read — e.g. after significant source changes. Invoke as
+  `Skill(skill: "grm-source-to-design-docs", args: "--regenerate")`.
+- A candidate with **no existing doc is always written**, regardless of the
+  flag — `--regenerate` only changes how *existing* docs are treated.
+
+Self-test: `python3 .claude/skills/grm-source-to-design-docs/regen_policy.py --self-test`.
 
 ---
 
@@ -71,6 +99,12 @@ For each candidate, note:
 - **Key source files** (2–6 files that contain the core logic)
 - **What it does** (one sentence)
 - **Dependencies** on other candidates (for cross-linking)
+
+Run `regen_policy.py` (see **Regeneration control** above) over the candidate
+slugs to classify each as write / skip / regenerate, and add that action as a
+column in the list you show the user — so a candidate already documented is
+visibly marked "skip (already documented — pass `--regenerate` to refresh)"
+rather than silently vanishing from the report.
 
 Output this list to the user and ask:
 - "Does this match your mental model of the major features?"
@@ -130,9 +164,13 @@ Populate it from the survey:
 
 ## Step 4 — Write feature design docs
 
-For each confirmed candidate (highest-priority first), create
-`docs/design/{feature}-design.md` using the house layout. Each generated
-feature doc MUST include an up-link breadcrumb immediately after the heading:
+For each confirmed candidate with action **write** or **regenerate**
+(highest-priority first), create `docs/design/{feature}-design.md` using the
+house layout — for **regenerate**, discard the existing content and re-derive
+the doc from a fresh source read rather than merging onto the old text. Skip
+any candidate whose action is **skip** (already documented, `--regenerate` not
+passed); do not touch its file. Each generated feature doc MUST include an
+up-link breadcrumb immediately after the heading:
 
 ```markdown
 > **Up:** [↑ Design index](README.md)
@@ -215,9 +253,12 @@ git commit -m "docs(design): generate feature design docs from source code"
 ## Step 6 — Report back
 
 Report to the user:
-1. Which docs were created (list by path)
-2. Which sections have `[Needs input from original author]` placeholders
-3. Any significant open questions or gaps you surfaced
+1. Which docs were created or regenerated (list by path, noting which of the
+   two)
+2. Which candidates were skipped because they were already documented (and
+   that `--regenerate` would have refreshed them)
+3. Which sections have `[Needs input from original author]` placeholders
+4. Any significant open questions or gaps you surfaced
 
 Suggest running `grm-release-planning` next if a release is being planned, since
 the new docs will inform the work-items report.

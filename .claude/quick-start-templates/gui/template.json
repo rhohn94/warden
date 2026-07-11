@@ -6,7 +6,7 @@
     "gui",
     "web"
   ],
-  "summary": "Desktop/GUI application shell: an app entrypoint + a visual-inspection hook, ready for the design-language UX tier.",
+  "summary": "Desktop/GUI application shell starter: a placeholder README plus the language-variant command wiring, ready for the design-language UX tier.",
   "components": [],
   "requires": [],
   "config-defaults": {
@@ -45,5 +45,5 @@
       "typecheck": "cargo check"
     }
   },
-  "post-apply-notes": "Pick the language variant matching the project; quick-start-template applies that variant's test/build/lint/typecheck commands into the CLAUDE.md commands table + the v1.26 code-quality block (not edited inline). Starter payload: README.md + an app-shell stub; pairs with design-language-adapt + ux-demo-build. Config defaults are applied via model-effort-profile-switch + workflow-variant-switch."
+  "post-apply-notes": "Pick the language variant matching the project; quick-start-template applies that variant's test/build/lint/typecheck commands into the CLAUDE.md commands table + the v1.26 code-quality block (not edited inline). Starter payload: a placeholder README.md only — bring your own app-entrypoint source; pairs with design-language-adapt + ux-demo-build for the UX tier. Config defaults are applied via model-effort-profile-switch + workflow-variant-switch."
 }

@@ -705,7 +705,7 @@ def detect_audience(root: Path, manifest: dict) -> str:
     return "root" if manifest.get("flavor") == "root" else "consumer"
 
 
-def regenerate(root: Path, check: bool, assume_yes: bool, now=None) -> int:
+def regenerate(root: Path, check: bool, assume_yes: bool, now: datetime.datetime | None = None) -> int:
     """Drive the surgical regenerate. Returns process exit code."""
     golden_root = _resolve_golden_root(root)
     if golden_root is None or not golden_root.exists():
@@ -1194,7 +1194,7 @@ def _snapshot(root: Path) -> dict[str, bytes]:
 # ---------------------------------------------------------------------------
 
 
-def main(argv=None):
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Surgical regenerate of the Grimoire framework layer (CR-5).",
         formatter_class=argparse.RawDescriptionHelpFormatter,

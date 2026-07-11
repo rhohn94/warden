@@ -7,8 +7,9 @@ Loaded on demand by `SKILL.md`.
 - **Existing repo onboarding**: skills present but full of placeholders.
 - **Repair**: a required skill or hook was deleted or corrupted.
 
-Do **not** use it to push local edits back into `golden/` — that is
-`grm-workflow-snapshot`.
+Do **not** use it to push local edits into a committed `golden/` tree — there
+is none since v3.49; the golden baseline is generated on demand by
+`generate_golden.py` from the live/flavor files.
 
 ---
 
@@ -192,6 +193,76 @@ declarations.
 
 ---
 
+## Step 2.8.1 — Seed the dependency-channel PRODUCER intent (library stacks only)
+
+Step 2.8 seeds the **consumer** side (`vendor.toml` — what this repo vendors). A
+**library**-stack project is also a channel **producer**: the crate other repos
+vendor. Seed its producer intent so it can publish itself as a `vendored-crate`
+artifact without hand-rolling packaging bash. Design:
+`docs/grimoire/design/dependency-channel-design.md` §2b. **Run this sub-step only
+when the inferred/confirmed stack is `library`** (a `server`/`cli`/`web` project
+publishes app distributables via `package`, not a crate; skip it there).
+
+1. **`publish.toml`** at the project root — the human-authored producer intent
+   (crate `name`, `artifact_kind = "vendored-crate"`, `channel`, and the `include`
+   glob subset the artifact ships). Write it **only if MISSING**, copied from
+   `golden/publish.toml` (a commented stub with `name = "REPLACE-ME-crate-name"`
+   and the conservative default `include`). **Never clobber a present
+   `publish.toml`** — a live file carries the project's real publish declaration
+   (the same no-silent-clobber rule as `vendor.toml`).
+2. **`recipes.json`** — **ensure** the `package` target is bound to the crate
+   builder for a library crate (read-merge-write; never clobber an existing
+   binding). Bind it to:
+
+   ```json
+   "package": {
+     "command": "python3 .claude/skills/grm-project-release/build_crate_artifact.py --version ${version}",
+     "implemented": true,
+     "params": { "version": { "default": "" } }
+   }
+   ```
+
+   `build_crate_artifact.py` reads `publish.toml`, emits the trio
+   (`<name>-v{ver}.tar.gz` + `release.json` + `SHA256SUMS`) into `dist/`, and the
+   release ceremony uploads it. If `package` is already implemented, leave it as
+   is (the project may publish differently).
+
+**Idempotency contract:** re-running is a **no-op** — a customized `publish.toml`
+is never overwritten and an implemented `package` binding is left untouched.
+
+**On `--restore`:** re-run unconditionally; both sub-steps are missing-only /
+ensure-present guarded, so the restore never clobbers a live publish declaration.
+
+---
+
+## Step 2.9 — Seed architecture-fitness rules (idempotent, never-clobber, #314)
+
+After the dependency-channel seeding (Step 2.8), ensure the project has an
+architecture-fitness ruleset so `grm-architecture-audit` has something to
+enforce from day one (an absent ruleset is a visible WARN in the audit, never
+a silent pass):
+
+1. **Template-scaffolded projects** — if the project was (or will be) scaffolded
+   via `grm-quick-start-template`, the per-family starter
+   (`.claude/quick-start-templates/<family>/files/.claude/architecture-rules.json`)
+   lands with the template's `scaffold` mapping; this step is then a no-op
+   confirmation.
+2. **Non-template projects** — if `.claude/architecture-rules.json` is MISSING,
+   copy `.claude/architecture-rules.example.json` to
+   `.claude/architecture-rules.json` and adapt it minimally: keep the
+   `structure` block as-is (it already encodes `docs/project-structure.md`) and
+   trim the example `layers`/`allowed-edges` to globs that actually match the
+   project's tree (delete layers that match nothing rather than leaving dead
+   globs). Flag the file in the Step 5 report as seeded-needs-review.
+3. **Explicit opt-out** — if the user declines rules for this project, write
+   `{"schema-version": 1, "opt_out": true, "opt_out-reason": "<their reason>"}`
+   instead, so the decision is tracked and surfaced (never a silent absence).
+
+**Never-clobber rule:** a present `.claude/architecture-rules.json` (rules or
+opt-out) is project-owned — leave it untouched, including on `--restore`.
+
+---
+
 ## Step 3 — Guided interview
 
 Ask the project-config questions with `AskUserQuestion`. Skip any whose
@@ -372,6 +443,18 @@ questions; offer a sensible default as the first option where one exists.
      in the Step 5 report. Do **not** fabricate any files; skip
      `grm-design-language-adapt` and `grm-ux-demo-build` for this project's
      bootstrap. The `web-app` block stays **absent** (the default).
+10. **Issue-filing authority (optional, v3.74, #221)** — whether autonomous
+   roles (Reporter, QA agent, Triager, Noir integration master) may file
+   issues against the configured tracker without asking each time. Prompt:
+   *"Allow Grimoire's autonomous roles to file issues against your tracker
+   without asking each time? This provisions a permission allowlist (issue-
+   tracker MCP tool names + CLI fallback) in `.claude/settings.json` — filing
+   is designed-in framework behaviour (see
+   `docs/grimoire/design/issue-filing-authority-design.md`), but the entries
+   are opt-in, never silently granted. [default: No]"* A **Yes** answer sets
+   `issue-filing-authority: { enabled: true }` in `.claude/grimoire-config.json`
+   (Step 4). A **No**/blank answer leaves the block absent — the default, matching
+   `--migrate`'s never-synthesize rule for this dial (`config_validate.py`).
 
 Record answers in a working table; echo it back before patching.
 
@@ -405,6 +488,8 @@ agents at runtime; replacing them breaks the templates.
 | GUI: Yes → GUI stack hint | `docs/design/ux/design-language.md` §Design preamble — add a "Primary stack: `{ux-demo-stack}`" note for `grm-ux-demo-build` to read; also echo in the Step 5 report |
 | GUI: Not yet → deferral | `docs/roadmap.md` `## Backlog` section — append `- UX design language: deferred until v{X.Y}` (leave `{X.Y}` as a user-facing placeholder to fill at release-planning time) |
 | GUI: No, headless → N/A | Report only — no files changed; note that `grm-design-language-adapt` and `grm-ux-demo-build` are skipped for this project |
+| Issue-filing authority: Yes | `.claude/grimoire-config.json` `issue-filing-authority.enabled: true`; Step 2.7.1 then provisions `.claude/settings.json` |
+| Issue-filing authority: No/blank | No files changed — the dial stays absent (the default) |
 
 Rules:
 - If branch names stay `dev`/`main`, leave `PROTECTED_RE` untouched.

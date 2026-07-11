@@ -157,23 +157,38 @@ grm-onboarding skill does not patch `CLAUDE.md` itself.
 ## §5 — Remove the sentinel (idempotent)
 
 As the **final step** of both interactive and non-interactive paths, after
-`grm-workflow-bootstrap` completes:
+`grm-workflow-bootstrap` completes, strip the **entire** onboarding-sentinel
+apparatus from `CLAUDE.md` — the sentinel line AND the whole `## Onboarding
+sentinel (…)` section, not just line 1. The only path that ever re-arms the
+sentinel is `grm-hard-reset`, which restores `CLAUDE.md` wholesale from the
+golden scaffold (which carries its own full section) — so nothing needs to
+persist in an already-onboarded project's live `CLAUDE.md` for that path to
+keep working.
 
-1. Read line 1 of `CLAUDE.md`.
-2. If and only if it matches exactly `<!-- GRIMOIRE_ONBOARDING_SENTINEL -->`,
-   delete that line in-place (shift remaining lines up by one).
-3. If line 1 does not match, this is a no-op — sentinel already removed;
-   do not error.
+1. If line 1 of `CLAUDE.md` is exactly `<!-- GRIMOIRE_ONBOARDING_SENTINEL -->`,
+   delete that line.
+2. Delete the entire `## Onboarding sentinel (…)` section — from that heading
+   through the paragraph immediately before the next `## ` heading.
+3. Both deletions are independently idempotent: if either is already gone,
+   that step is a no-op, never an error.
 
 ```bash
-# Safe idempotent removal: only acts when line 1 is exactly the sentinel.
-# Using Python for cross-platform in-place edit:
+# Safe idempotent removal: strips the sentinel line AND the whole
+# "## Onboarding sentinel" section, not just line 1.
 python3 - <<'EOF'
-import pathlib, sys
+import pathlib, re
 p = pathlib.Path('CLAUDE.md')
-lines = p.read_text().splitlines(keepends=True)
-if lines and lines[0].rstrip('\n') == '<!-- GRIMOIRE_ONBOARDING_SENTINEL -->':
-    p.write_text(''.join(lines[1:]))
+text = p.read_text()
+if text.startswith('<!-- GRIMOIRE_ONBOARDING_SENTINEL -->\n'):
+    text = text[len('<!-- GRIMOIRE_ONBOARDING_SENTINEL -->\n'):]
+text = re.sub(
+    r'\n## Onboarding sentinel \([^\n]*\)\n.*?(?=\n## |\Z)',
+    '',
+    text,
+    count=1,
+    flags=re.DOTALL,
+)
+p.write_text(text)
 EOF
 ```
 
