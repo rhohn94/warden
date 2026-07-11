@@ -102,10 +102,33 @@ def github_pr_enabled(proj: str) -> bool:
     block = read_config(proj).get("github-pr")
     if not isinstance(block, dict):
         return False
-    enabled = block.get("enabled")
-    if isinstance(enabled, dict):
-        enabled = enabled.get("value")
-    return enabled is True
+    return _scalar(block.get("enabled")) is True
+
+
+def work_paradigm(proj: str) -> str:
+    """Active work paradigm (Supervised | Weiss | Noir); defaults Supervised."""
+    return _scalar(read_config(proj).get("work-paradigm")) or "Supervised"
+
+
+def autonomous_push_enabled(proj: str) -> bool:
+    """True iff autonomous-push.enabled == true in grimoire-config (fail-closed)."""
+    block = read_config(proj).get("autonomous-push")
+    if not isinstance(block, dict):
+        return False
+    return _scalar(block.get("enabled")) is True
+
+
+def should_auto_allow(paradigm: str, autopush: bool) -> bool:
+    """Suppress the interactive push prompt ONLY for unattended Noir.
+
+    A guard-passed push is auto-approved (no human prompt) iff the project is
+    Noir AND has explicitly opted into autonomous push. Supervised / Weiss —
+    and Noir without the opt-in — fall through to the normal permission prompt,
+    so a human still gates every push. This is the paradigm-aware replacement
+    for a static `Bash(git push:*)` allowlist entry, which could not tell the
+    paradigms apart.
+    """
+    return paradigm == "Noir" and autopush is True
 
 
 def tokenize(text: str) -> list[str]:
@@ -403,6 +426,18 @@ def main() -> None:
         validate_push(tokens, idx, proj, allowlist, pr_heads)
     # All pushes in the block passed the guard — record the approval (#64).
     audit_log(proj, cmd)
+    # Paradigm-aware prompt suppression: only unattended Noir (paradigm == Noir
+    # AND autonomous-push opted in) auto-approves the push with no human prompt.
+    # Every other posture (Supervised / Weiss, or Noir without the opt-in) exits
+    # silently so the normal permission prompt still gates the push.
+    if should_auto_allow(work_paradigm(proj), autonomous_push_enabled(proj)):
+        print(json.dumps({"hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "allow",
+            "permissionDecisionReason":
+                "push-guard: guard-passed push auto-approved for unattended "
+                "Noir (autonomous-push enabled).",
+        }}))
     sys.exit(0)
 
 
@@ -461,6 +496,24 @@ def _self_test() -> int:
               + f"  is_allowed_ref({name!r}, pr_heads={on}) -> {got} (want {exp})")
     # Destructive flags must stay denied regardless of github-pr.
     assert "--force" in DENIED_FLAGS and "--delete" in DENIED_FLAGS, "denied flags intact"
+
+    # Paradigm-aware prompt suppression: only unattended Noir auto-allows; every
+    # other posture falls through to the human prompt (gated).
+    allow_cases = [
+        # (paradigm, autopush_enabled, expected_auto_allow)
+        ("Noir", True, True),         # unattended Noir -> no prompt
+        ("Noir", False, False),       # Noir, not opted in -> prompt (gated)
+        ("Supervised", True, False),  # Supervised -> always prompt
+        ("Supervised", False, False),
+        ("Weiss", True, False),       # Weiss -> always prompt
+    ]
+    for paradigm, autopush, exp in allow_cases:
+        got = should_auto_allow(paradigm, autopush)
+        ok = got == exp
+        failures += not ok
+        print(("ok  " if ok else "FAIL")
+              + f"  should_auto_allow({paradigm!r}, autopush={autopush}) "
+              + f"-> {got} (want {exp})")
 
     print(f"\n{'PASS' if not failures else str(failures)+' FAILED'}")
     return 1 if failures else 0

@@ -49,7 +49,7 @@ export const meta = {
 // output emitter — was tiered Opus→sonnet (mechanical template-fill of already-
 // structured JSON, no judgement) and told not to echo its input JSON. Output is
 // the most expensive token class and worst on Opus; the synthesizer is exactly
-// the "tier-down an output-heavy step" case. See docs/token-efficiency-baseline.md
+// the "tier-down an output-heavy step" case. See docs/grimoire/token-efficiency-baseline.md
 // (the orchestrator/synthesis path was the costliest single operation measured).
 //
 // Invoke:  Workflow({ name: 'release-planning' })

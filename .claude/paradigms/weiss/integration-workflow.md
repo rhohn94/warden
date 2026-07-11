@@ -1,5 +1,7 @@
 # Integration workflow — Weiss (Collaborative)
 
+> **Up:** [↑ Docs](README.md)
+
 Audience: the **integration master** operating in Weiss mode — researcher and
 assistant posture. Claude surfaces information and options; the user makes
 every design and structural decision. Work-item agents do **not** need this
@@ -13,7 +15,7 @@ map between them.
    Do not lock anything until the user has resolved each question.
 2. **Lock scope** — `grm-release-agreement` skill. Present the report to the user;
    walk through each open item; wait for the user to say "agree" or "lock" for
-   each. Only then freeze into `docs/release-planning-v{X.Y}.md` and create
+   each. Only then freeze into `docs/release-planning/release-planning-v{X.Y}.md` and create
    the `version/{X.Y}` integration branch.
 3. **Distribute work** — `grm-release-phase` skill. Present the dependency graph
    and model assignments. **Spawn one item at a time** — each with an explicit
@@ -40,6 +42,139 @@ version/<number>  ──►  dev  ──►  main
 Work items run in isolated worktrees spawned via `spawn_task`. Only
 `version/*`, `dev`, and `main` are named, protected integration branches.
 
+### Single-integration-line invariant
+
+At all times there is exactly **one** integration line per repository — the
+branch where work is composed before it is published — and every change reaches
+the published line (`main`) **only** by promotion from the integration line.
+**No commit is ever authored directly on `main` out-of-band.** This is a
+**hard rule, not a convention**. It applies to both supported branch models:
+
+- **Default model**: `dev` is the integration
+  line; `main` is the downstream published line. Promotion = `git merge --no-ff
+  dev → main` via the `grm-project-release` skill only. Nothing is authored on
+  `main` directly — not manual releases, not scaffolding syncs, not
+  unreconciled hotfixes. Any such change must land on `dev` and reach `main`
+  by promotion.
+
+- **Re-branch model** (Noir-loop consumers): the loop re-branches the
+  integration line from `main` at the start of each iteration
+  (`git switch -c <integration> main`) and promotes back to `main` at release.
+  The same rule applies: nothing lands on `main` out-of-band between
+  iterations. Any out-of-band `main` commit breaks the ancestor relationship
+  the next re-branch relies on.
+
+BMI-4 (`protected-branch-guard.sh`) enforces this at commit time; BMI-3 enforces
+it for sync skills. When a fork has already happened, see §Recovering from an
+integration-branch fork (merge-forward) below — that is the only safe path.
+
+**Criterion 2 reconciliation (#126, v3.67).** #126 literally asked for a
+`git merge-base --is-ancestor main <integration>` check before promotion. The
+divergence guard (`DivergenceGuard` in
+`.claude/skills/grm-release-agent-tracker/release_plan.py`, BMI-2) instead uses
+**tree-content reachability** — this is the accepted implementation of that
+criterion, not a gap: it is strictly stricter (catches every real fork a literal
+`is-ancestor` would) and avoids a false-positive `is-ancestor` trips on this
+repo's own healthy `dev`/`main` (nine benign promotion-merge commits make
+`main` a non-ancestor of `dev` with zero real divergence). Full justification
+(§2) lives in the upstream Grimoire repository (framework-internal — not
+shipped).
+
+## Researcher/assistant posture
+
+Claude's role in Weiss is to inform and execute — not to lead.
+
+- Surface the dependency graph; ask the user to choose the grouping.
+- Flag token-estimate uncertainty; ask the user to confirm the model.
+- Summarise each diff; ask before merging.
+- List conflicts; resolve with user guidance.
+- Propose each push; wait for instruction.
+
+**Decision log:** maintain a brief running log of user decisions during the
+session (scope resolutions, model overrides, sequencing choices). Reference
+it when questions recur so you don't re-ask what the user already decided.
+
+## Delegating to subagents
+
+Spawn `Agent` subagents for mechanical / read-only work when it helps you
+gather information faster for the user. Present the subagent's findings; do
+not act on them without user direction.
+
+## Filing issues with the Reporter (v1.12)
+
+The **Reporter** is a third named agent role — alongside the task agent and the
+integration master — available in all paradigms. Its sole job is to receive
+feedback and file it via the `grm-feedback-to-issue` skill. It is an **optional
+additional channel**: the integration master may file one item via
+`grm-feedback-to-issue` directly; spawn the Reporter when filing multiple items
+or when you want to keep the integration session focused on git operations.
+Guide: `.claude/skills/grm-agent-reporter/SKILL.md`.
+
+When a work-item session or the integration session discovers something
+out-of-scope (scope creep, a follow-up bug, a deferred item worth tracking), do
+not append bullets directly to `docs/roadmap.md ## Backlog`. Instead route the
+flag through the issue-tracker abstraction:
+
+- The integration master runs `grm-feedback-to-issue` directly for a single item.
+- The integration master spawns the Reporter for multiple items or to keep
+  filing separated from the current session context.
+
+This keeps issue filing decoupled from the roadmap narrative and ensures items
+land in the configured tracker — which may be GitHub Issues rather than the
+roadmap when `grm-issue-tracker` is configured in `.claude/grimoire-config.json`.
+
+### Agent-type taxonomy
+
+| Role | Context type | Git writes | Issue writes | Invoked by |
+|---|---|---|---|---|
+| Task agent | Work-item session | Yes (own branch) | No | Integration master |
+| Integration master | Orchestration session | Merge only | Via Reporter or direct | Human |
+| **Reporter** | Focused filing session | No | Yes | Integration master / human / any |
+
+The Reporter is **not** a paradigm role and has no associated worktree or
+branch. It is a one-shot invocation: file all items, return issue number(s) and
+URL(s), exit.
+
+### Invocation
+
+Under Weiss, the integration master **offers** to spawn a Reporter via
+`spawn_task` and waits for user confirmation — it does not auto-spawn. Once
+confirmed, use this prompt template verbatim:
+
+```
+Reporter: file the following feedback via grm-feedback-to-issue.
+Audience: <internal|external>.
+Feedback:
+<paste feedback text here>
+```
+
+For multiple items:
+
+```
+Reporter: file the following feedback items via grm-feedback-to-issue, one issue per item.
+Audience: <internal|external> (applies to all unless overridden per item).
+Items:
+1. <first feedback item>
+2. <second feedback item>
+```
+
+The Reporter targets the **configured issue tracker** only — it makes no git
+commits, never reads or writes any `version/*` branch, and is therefore safe to
+run during an in-flight integration session or phase merge. If the configured
+tracker is `roadmap`, the Reporter appends to `docs/roadmap.md ## Backlog` on
+`dev` only — it stops and reports a conflict rather than appending on a
+`version/*` or `main` branch. Full role definition, spawn mechanics, and
+anti-patterns: `grm-agent-reporter` §1–§7.
+
+## Workflow-based orchestration
+
+Use `Workflow` only when the user explicitly requests multi-agent
+orchestration. Always describe what the workflow will do and ask for
+confirmation before running. Present results to the user before taking any
+file-writing or branch-creating next step.
+
+**Write-capable workflows are Noir-only.** In Weiss the read-only convention
+is enforced; write-capable workflows (`meta.tier = 'write-capable'`) require
 the Noir paradigm and will fail closed if invoked here. The full design is a
 framework-internal design — see the upstream Grimoire repository for that
 rationale.
@@ -193,3 +328,65 @@ Protected-branch (`dev`, `main`) integration always goes through the established
 soft/mixed resets exempt); `push-guard.sh` blocks force-push, force flags, and
 remote-ref deletion. If history truly must be rewritten (a genuine last resort),
 a human runs the command deliberately outside the agent.
+
+## Recovering from an integration-branch fork (merge-forward)
+
+**Distinct from** §Recovering from a stranded-branch / HEAD-drift incident
+(that section addresses a HEAD that wandered off-staging inside a single repo
+run). This section addresses a **structural fork** — where `main` and the
+integration line have diverged because real work was authored on `main`
+out-of-band and the integration line continued forward without it. The result:
+`git merge-base main <integration>` returns a stale ancestor, and the two
+lines carry disjoint commits. This is the canonical fork-recovery case.
+
+**Detection.** BMI-2's divergence predicate fires before promotion:
+`git diff --quiet <integration> main` exits 1 (trees differ) and at least one
+commit in `<integration>..main` introduces tree content not reachable from the
+integration line. The guard HALTs with a readable report:
+
+```
+DIVERGENCE: 'main' carries N commit(s) of work not on integration line '<INT>':
+  <sha> <message>
+  ...
+Promotion BLOCKED. Reconcile by merging 'main' INTO '<INT>' (merge-forward);
+do NOT reset across the fork (data loss).
+```
+
+**Do — merge-forward (the only safe procedure).** Bring the `main`-only
+commits into the integration line and resolve there:
+
+```bash
+git switch <integration>          # e.g. dev, or the loop's integration branch
+git merge --no-ff main            # pull main-only work forward onto the integration line
+# ... resolve conflicts on the integration line — both lines' work is preserved;
+#     every commit from both lines remains reachable in the resulting history ...
+git commit                        # record the reconciliation merge
+# Re-run the BMI-2 divergence check; trees now reconcile → promotion proceeds.
+```
+
+This is **non-destructive**: the merge commit's history reaches both parents, so
+every main-only commit and every integration-line-only commit survives. Conflicts
+are resolved once, on the integration line, and the result promotes cleanly.
+
+**Do NOT — `reset --hard` across a fork.** Never resolve a fork by resetting
+either tip onto the other:
+
+```bash
+git reset --hard main          # FORBIDDEN — silently destroys every integration-line-only commit
+git reset --hard <integration> # FORBIDDEN — silently destroys every main-only commit
+```
+
+A reset across a real fork **silently deletes all commits unique to the losing
+line**. This is data loss, not a fix.
+
+**Worked example.** Consider an integration line that diverged from `main`
+when an entire shipped release plus a large dependency sync — several commits —
+were authored **only on `main`** out-of-band, while the integration line kept
+moving forward independently. The naive "just unblock it" move —
+`git reset --hard main` onto the integration tip (or vice-versa) — would
+**silently discard every commit unique to the losing line, including the entire
+shipped release, with no trace**. The destructive-op confirmation gate is what
+stops this; absent that gate, a shipped release would vanish. The correct
+recovery is merge-forward: `git merge --no-ff main` into the integration line,
+resolve the conflicts (including any semantic decision a human/master must make)
+on the integration line, and promote the reconciled result.

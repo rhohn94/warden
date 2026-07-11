@@ -71,7 +71,7 @@ Summarise for the user:
 - Files changed and what they do.
 - Scope: within or outside §2.{N}?
 - Any `TODO` / `FIXME` or missing tests.
-- Any edits to `docs/release-planning-v{X.Y}.md` §§1–4 — flag and ask the
+- Any edits to `docs/release-planning/release-planning-v{X.Y}.md` §§1–4 — flag and ask the
   user whether to proceed or reject.
 
 ### 2. Confirm before merging (per-branch gate)
@@ -104,7 +104,7 @@ After the user acknowledges the test pass, tick ☑ Merged and commit the
 ledger update:
 
 ```bash
-git add docs/release-planning-v{X.Y}.md
+git add docs/release-planning/release-planning-v{X.Y}.md
 git commit -m "docs(release-v{X.Y}): tick §5 — {branch} merged ({short-sha})"
 ```
 
@@ -144,7 +144,7 @@ After tests pass, ask before deleting the staging branch:
 **Branch + worktree cleanup is a post-release step, not this skill's job.** The
 just-merged work-item worktrees are cleaned up after the release tags and
 pushes — see `grm-project-release` §Post-release cleanup, governed by
-`docs/integration-workflow.md` §Dead-worktree cleanup.
+`docs/grimoire/integration-workflow.md` §Dead-worktree cleanup.
 
 ---
 
@@ -153,7 +153,7 @@ pushes — see `grm-project-release` §Post-release cleanup, governed by
 This skill pushes nothing. After the `version/{X.Y}` → `dev` integration, `dev`
 stays local. Pushing happens **once, at `grm-project-release`**, in a single
 human-gated prompt that pushes `dev` + `main` + the version tag together (see
-`docs/integration-workflow.md` §Pushing to origin). Do not propose a `dev` push
+`docs/grimoire/integration-workflow.md` §Pushing to origin). Do not propose a `dev` push
 from this skill.
 
 ---

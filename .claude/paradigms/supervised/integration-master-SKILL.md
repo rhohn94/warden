@@ -66,7 +66,7 @@ the question, it never replaces the gate.
   `main`. Work-item agents never merge.
 - The master operates the **marker-blessed worktree** (carries
   `.claude/integration-allow.local`).
-- For the full six-step map, see `docs/integration-workflow.md`.
+- For the full six-step map, see `docs/grimoire/integration-workflow.md`.
 
 ---
 
@@ -120,7 +120,7 @@ not carry the integration marker and cannot merge.
 ## Pushing to origin
 
 Once per release, at a single trigger moment (see
-`docs/integration-workflow.md` §Pushing to origin): after `dev` → `main` +
+`docs/grimoire/integration-workflow.md` §Pushing to origin): after `dev` → `main` +
 release tag (end of `grm-project-release`), push `dev`, `main`, and the version
 tag **together**. `grm-release-phase-merge` no longer pushes — `dev` stays local
 through integration. Always propose the push and receive explicit user

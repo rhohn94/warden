@@ -109,7 +109,7 @@ git diff version/{X.Y}...{branch}
 
 Verify:
 - Scope: within the files listed in §2.{N}.
-- No edits to `docs/release-planning-v{X.Y}.md` §§1–4.
+- No edits to `docs/release-planning/release-planning-v{X.Y}.md` §§1–4.
 - No obvious regressions.
 
 If scope creep or a §§1–4 edit is found: stop and surface to the user.
@@ -205,7 +205,7 @@ of the release closeout. Response policy based on findings:
 ### 4. Tick §5 ledger
 
 ```bash
-git add docs/release-planning-v{X.Y}.md
+git add docs/release-planning/release-planning-v{X.Y}.md
 git commit -m "docs(release-v{X.Y}): tick §5 — {branch} merged ({short-sha})"
 ```
 
@@ -231,6 +231,9 @@ Pre-merge checklist (verify silently):
 - [ ] `{build-command}` clean
 - [ ] All §5 rows ☑ Merged
 - [ ] `version-history.md` entry written on `version/{X.Y}`
+- [ ] **Before-promotion divergence gate clean** — `divergence-check` reports no
+      divergence (the `dev→main` promotion at `grm-project-release` depends on it; a
+      real fork HALTs here, reconcile merge-forward per §2/§5 of the design).
 
 Execute autonomously:
 
@@ -255,7 +258,7 @@ completes, emit the per-run metadata artifact via
 invocation in `reference.md` §Telemetry artifact. Never gates the release.
 
 **Branch + worktree cleanup is a post-release step, not this skill's job.** See
-`grm-project-release` §Post-release cleanup and `docs/integration-workflow.md`
+`grm-project-release` §Post-release cleanup and `docs/grimoire/integration-workflow.md`
 §Dead-worktree cleanup.
 
 ---
@@ -265,7 +268,7 @@ invocation in `reference.md` §Telemetry artifact. Never gates the release.
 **This skill pushes nothing.** After the `version/{X.Y}` → `dev` integration,
 `dev` stays local. Pushing happens **once, at `grm-project-release`**, in a single
 human-gated prompt that pushes `dev` + `main` + the version tag together (see
-`docs/integration-workflow.md` §Pushing to origin). Propose no `dev` push from
+`docs/grimoire/integration-workflow.md` §Pushing to origin). Propose no `dev` push from
 this skill; the push gate is never lifted in Noir but it fires at release, not
 here.
 

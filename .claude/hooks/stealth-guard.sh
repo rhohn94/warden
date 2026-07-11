@@ -99,11 +99,14 @@ def build_denylist_pattern(extra):
 # ── Managed-path default set (Grimoire's own concealed files) ──────────────
 DEFAULT_MANAGED = (
     ".claude/", "CLAUDE.md", "AGENTS.md",
-    "docs/design/", "docs/roadmap.md", "docs/version-history.md",
-    "docs/release-planning-v", "docs/integration-workflow.md",
+    "docs/design/", "docs/grimoire/", "docs/roadmap.md", "docs/version-history.md",
+    "docs/release-planning-v", "docs/release-planning/", "docs/grimoire/integration-workflow.md",
     "docs/coding-standards", "docs/architecture-guidelines.md",
     ".github/prompts/", ".github/copilot-instructions.md",
 )
+# docs/grimoire/ (v3.39 "Bulkhead"): the framework-internal doc tier — relocated
+# framework design specs (docs/grimoire/design/) + study artifacts + the tier
+# index. Managed Grimoire docs, so Stealth Mode must still recognize them.
 
 STATEMENT_SEPARATORS = {";", ";;", "&&", "||", "|", "|&", "&", "(", ")", "\n"}
 OPTS_WITH_VALUE = {"-C", "--git-dir", "--work-tree", "--namespace", "-c"}

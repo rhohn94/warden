@@ -146,7 +146,7 @@ and may mutate history only while HEAD is on its `version/{X.Y}/<lane>` branch
 (the HEAD-drift guard); the cross-worktree hijack guard refuses any op aimed at a
 sibling worktree. The PM worktree performs the lane→`version/{X.Y}`→dev→main
 merges. Place the marker per lane as you dispatch it. Detail:
-`docs/integration-workflow.md` §Multiple marked lane worktrees.
+`docs/grimoire/integration-workflow.md` §Multiple marked lane worktrees.
 
 ---
 

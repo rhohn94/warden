@@ -67,7 +67,7 @@ never replaces the collaboration.
   `main`. Work-item agents never merge.
 - The master operates the **marker-blessed worktree** (carries
   `.claude/integration-allow.local`).
-- For the full six-step map, see `docs/integration-workflow.md`.
+- For the full six-step map, see `docs/grimoire/integration-workflow.md`.
 
 ---
 

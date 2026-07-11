@@ -247,10 +247,16 @@ def _self_test() -> int:
 
     # merge_preflight returns a structured verdict (real git unavailable in a
     # bare temp dir → head/branches degrade, but the shape must be intact).
+    # v3.38 (#126): the verdict also carries the before-promotion `divergence`
+    # gate result; assert both the core keys and the divergence sub-shape.
     res, out = call("merge_preflight",
                     {"plan": str(plan), "staging": "version/9.9",
                      "branches": ["alpha-v99"]})
-    assert set(out) == {"head_ok", "head", "staging", "branches", "blocked"}, out
+    assert {"head_ok", "head", "staging", "branches", "blocked",
+            "divergence"} == set(out), out
+    assert set(out["divergence"]) == {
+        "integration", "published", "trees_identical", "diverged",
+        "main_only_commits", "diverging_commits", "report"}, out["divergence"]
 
     # plan_phase.
     res, out = call("plan_phase", {"plan": str(plan)})

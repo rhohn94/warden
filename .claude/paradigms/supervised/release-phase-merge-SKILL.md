@@ -77,7 +77,7 @@ Spot-check for:
 - Scope creep (changes outside the files listed in §2.{N})
 - Missing tests for new public functions
 - `TODO` / `FIXME` left in non-test code
-- Any edits to `docs/release-planning-v{X.Y}.md` — flag and reject if found
+- Any edits to `docs/release-planning/release-planning-v{X.Y}.md` — flag and reject if found
   in §§1–4
 
 If the diff looks wrong, stop and ask the user before merging.
@@ -117,7 +117,7 @@ If tests fail: do **not** tick ☑ Merged. Instead:
 
 ### 5. Tick §5 ledger
 
-Edit the branch's row in `docs/release-planning-v{X.Y}.md §5`:
+Edit the branch's row in `docs/release-planning/release-planning-v{X.Y}.md §5`:
 - Tick ☑ Merged
 - Append the merge commit SHA: `☑ \`{short-sha}\``
 
@@ -125,7 +125,7 @@ This edit is in §5, so the `release-plan-guard` hook allows it.
 
 Commit the ledger update immediately:
 ```bash
-git add docs/release-planning-v{X.Y}.md
+git add docs/release-planning/release-planning-v{X.Y}.md
 git commit -m "docs(release-v{X.Y}): tick §5 — {branch} merged ({short-sha})"
 ```
 
@@ -184,7 +184,7 @@ broken state.
 - **Branch + worktree cleanup is a post-release step, not this skill's job.**
   The just-merged work-item worktrees are cleaned up after the release tags and
   pushes — see `grm-project-release` §Post-release cleanup, governed by
-  `docs/integration-workflow.md` §Dead-worktree cleanup. Removing dead
+  `docs/grimoire/integration-workflow.md` §Dead-worktree cleanup. Removing dead
   worktrees here, mid-release, is premature.
 
 ---
@@ -194,7 +194,7 @@ broken state.
 **This skill pushes nothing.** After the `version/{X.Y}` → `dev` integration,
 `dev` stays local. Pushing now happens **once, at `grm-project-release`** time, in
 a single human-gated prompt that pushes `dev` + `main` + the version tag
-together — see `docs/integration-workflow.md` §Pushing to origin and the
+together — see `docs/grimoire/integration-workflow.md` §Pushing to origin and the
 `grm-project-release` skill. Do not propose a `dev` push from this skill.
 
 ---

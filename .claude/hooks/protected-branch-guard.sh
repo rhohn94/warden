@@ -764,7 +764,7 @@ def main() -> None:
                     "  git switch -c <branch> version/<X.Y>\n"
                     "Never `git -C`, `--git-dir`/`--work-tree`, or `cd` into "
                     "another worktree to\nswitch/create a branch there. "
-                    "(See docs/integration-workflow.md, worktree isolation.)\n"
+                    "(See docs/grimoire/integration-workflow.md, worktree isolation.)\n"
                 )
                 sys.exit(2)
     # --------------------------------------------------------------------
@@ -955,13 +955,12 @@ def main() -> None:
     sys.exit(2)
 
 
-def _self_test() -> int:
+def _self_test_rewrite_detector() -> int:
     """Parser-level self-test for the v3.15 (#84) history-rewrite detector.
 
     No git / marker / protected-branch needed — exercises find_rewrite_op()
     against a table of commands (the protected-branch gating is applied in
-    main() once HEAD is known). Run with --self-test; returns process exit
-    code (0 = all pass), mirroring push-guard.sh's self-test pattern."""
+    main() once HEAD is known). Returns failure count."""
     # (command, expected find_rewrite_op result)
     cases = [
         ("git rebase dev", "rebase"),

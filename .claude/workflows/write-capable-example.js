@@ -292,7 +292,7 @@ CONSTRAINTS — these are hard, not advisory:
   - Do NOT git push (push-guard.sh will block it anyway).
   - Do NOT git merge or git rebase targeting dev / main / version/*.
   - Do NOT edit files outside this worktree.
-  - Do NOT edit docs/release-planning-v*.md.
+  - Do NOT edit docs/release-planning/release-planning-v*.md.
 
 EXIT after committing. Return ONLY { branch, commit (short SHA), summary
 (one sentence) } — no diff recap, no narration of what you did.

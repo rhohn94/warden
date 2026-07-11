@@ -1,56 +1,53 @@
 ---
 name: grm-release-phase
-description: Dispatch work-item subagents for the next open phase autonomously — no per-item confirmation, no chips. Groups work by dependency, sizes each item by token estimate, and dispatches the full batch at once via isolated-worktree subagents. Use when the user says "start phase N", "dispatch the tasks", or "kick off phase". Run after release-agreement has locked the plan.
+description: Spawn work-item sessions (via spawn_task) for the next open phase of the in-flight release. Groups work by dependency, sizes each item by token estimate, and assigns model/effort per the `grm-repo-reference` skill table. Use when the user says "start phase N", "kick off phase", or "distribute phase work". Run after release-agreement has locked the plan.
 ---
 
-# Release phase — spawn work-item sessions (Noir)
+# Release phase — spawn work-item sessions
 
-Reads the agreed release plan, identifies the next open phase, groups its
-work items into parallel batches per §3's conflict map, and dispatches the full
-current batch at once — no per-item confirmation.
+Reads the agreed release plan, identifies the next open phase, groups its work
+items into parallel batches, and uses the **`spawn_task`** tool to open a new
+session in an isolated worktree for each item. The integration master never
+hands the user raw copy-paste prompts — it spawns the sessions directly.
 
-> **Noir is chip-free.** Under Noir the master never drops `spawn_task` chips
-> for work-item dispatch — chips require a human click and break the autonomous
-> posture. Dispatch is always via **isolated-worktree subagents** (`Agent` with
-> `isolation:"worktree"`) or a **write-capable Workflow**. The chip-based path
-> belongs to the Supervised / Weiss paradigms only.
-
-**This is the Noir default execution path.** Once a plan reaches
-`status: agreed` with a `version/{X.Y}` staging branch, the master enters this
-skill **by default** — it dispatches the phase's work items as separate
-isolated-worktree agents rather than implementing them inline in its own
-session. Dispatching is what "execute the plan" means under Noir; building the
-items solo is the anti-pattern (see the integration-master §Default execution
-path and its soft guard).
+> **Preferred interface — the `grimoire-release` MCP server (v3.27).** Phase
+> detection + conflict-map batch grouping are now deterministic. When
+> `mcp.enabled` and the server is registered (root `.mcp.json`), call
+> **`plan_phase`** to get `{phase, batches, model_assignments}` (first
+> all-unticked pass → batches per §3 + a per-band model default) instead of
+> recomputing it in-context; use **`get_ledger`** to read §5 rows. The model
+> resolver below still owns the final tier (the tool's assignment is a coarse
+> default). **CLI fallback** (no MCP / disabled): `python3
+> .claude/skills/grm-release-agent-tracker/release_plan.py plan-phase`. Design:
+> `docs/design/grimoire-release-server-design.md`.
 
 **`release-phase-model` dial.** The master reads `release-phase-model.value`
 live before dispatching. When it is `Default` (or absent), dispatch the phase
-via the isolated-worktree subagent flow below (`Agent` with
-`isolation:"worktree"`). When it is **`Auto`** (Noir only — otherwise
+via the `spawn_task` flow below. When it is **`Auto`** (Noir only — otherwise
 fall back to `Default` and log the downgrade), dispatch the phase's items
 instead via a **write-capable Workflow**, whose isolated-worktree agents each
 implement one item and return a branch; the returned branches are then merged
 in `mergeAfter` order by `grm-release-phase-merge`. `Auto` reuses the existing
 write-capable tier — no new machinery — and the execution variant still comes
-from `workflow-variant`. See the integration-master §Write-capable Workflow
-integration / §`release-phase-model` dial and
-`docs/design/release-phase-model-design.md`.
+from `workflow-variant`. See the integration-master §`release-phase-model` dial
+and `docs/design/release-phase-model-design.md`.
 
 ---
 
 ## Step 1 — Locate the active plan and current phase
 
 ```bash
-ls docs/release-planning-v*.md
+ls docs/release-planning/release-planning-v*.md
 ```
 
 Pick the highest-version file with `status: agreed` (check first 15 lines).
 Read §3 (pass structure + conflict map) and §5 (ledger) to determine:
 
 - **Current phase** = the first pass whose rows are all ☐ Implemented.
-- Only spawn the ☐ rows; skip any already ☑.
-- If all passes are ☑, move to `grm-release-phase-merge` for the final
-  `version/{X.Y}` → `dev` step.
+- If a phase is partially done (some ☑, some ☐), it is still the current
+  phase — only spawn the ☐ rows.
+- If all passes are ☑, there is nothing to spawn; move to
+  `grm-release-phase-merge` for the final `version/{X.Y}` → `dev` step.
 
 ---
 
@@ -122,15 +119,9 @@ also blocks. Do not dispatch until all planned issues are labeled.
 
 ---
 
-## Step 4 — Dispatch the full batch (chip-free)
+## Step 4 — Confirm before spawning (Supervised gate)
 
-Dispatch **every item in the current batch** as an isolated-worktree subagent
-without pausing between calls — no `spawn_task` chips. Apply the posture chosen
-in Step 2.5: `Fast` = max fan-out; `Efficient` = balanced batches (default);
-`Cheap-Slow` = sub-split into small sequential batches. Use the `Agent` tool with
-`isolation:"worktree"` (or, when `release-phase-model` is `Auto`, a write-capable
-Workflow). Each subagent receives its own worktree and short-lived branch,
-implements one item, and returns its branch for merge.
+Before calling `spawn_task`, present the batch to the user:
 
 - **Lead with the dispatch posture** (Step 2.5): active execution-strategy and
   what it does to this batch (e.g. `Efficient → balanced, 3 items concurrent`).
@@ -225,17 +216,19 @@ Do NOT merge. Report back:
 Replace `{test-command}` and `{build-command}` with your project's actual
 commands (see CLAUDE.md §Project commands).
 
-After dispatching the batch, report to the user:
+---
 
-- The dispatch posture applied (Step 2.5) and what it did to this batch.
-- How many subagents were dispatched and which items they cover.
-- The model/effort assigned to each (noting any Step 3a Noir ceiling clamps —
-  e.g. `E5: opus/high → sonnet/high (Noir ceiling)`); no human action required
-  to start them.
-- That the master will proceed to merging as subagents return their branches.
+## Step 6 — Spawn the batch, then wait
 
-**Do not dispatch Batch 2 until Batch 1 is merged** — merge conflicts are hard
-to resolve headlessly.
+Spawn every item in the current batch (one `spawn_task` call each), then stop
+and tell the user:
+
+- How many chips were dropped and which items they cover.
+- To open each chip, set the named model, and let the session run.
+- To say "agent {branch-name} is done" when a session reports back, so
+  `grm-release-agent-tracker` can mark it ☑ Implemented and queue it for merge.
+- **Do not** spawn the next batch until the current batch is merged
+  (`grm-release-phase-merge`) — later batches build on earlier merges.
 
 ---
 

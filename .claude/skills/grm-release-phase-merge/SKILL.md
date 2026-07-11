@@ -1,6 +1,6 @@
 ---
 name: grm-release-phase-merge
-description: Merge completed subagent branches into version/{X.Y} autonomously — no per-merge confirmation. Runs tests after each merge, ticks §5, and drives the final version/{X.Y}→dev merge unsupervised. Stops only on conflict, test failure, or push trigger. Use when the user says "merge agent X", "merge branch foo", "phase N is done, merge it", "all agents done", or "workflow returned branches". Handles both isolated-worktree subagent work-item branches and write-capable workflow agent branches. Push to origin remains human-gated.
+description: Merge completed subagent branches into version/{X.Y} autonomously — no per-merge confirmation. Runs tests after each merge, ticks §5, and drives the final version/{X.Y}→dev merge unsupervised. Stops only on conflict, test failure, or push trigger. Handles both isolated-worktree work-item branches and write-capable workflow branches. Push to origin remains human-gated. Use when the user says "merge agent X" or "phase N is done".
 ---
 
 # Release phase merge (Noir)
@@ -99,7 +99,7 @@ git diff version/{X.Y}...{branch}
 
 Verify:
 - Scope: within the files listed in §2.{N}.
-- No edits to `docs/release-planning-v{X.Y}.md` §§1–4.
+- No edits to `docs/release-planning/release-planning-v{X.Y}.md` §§1–4.
 - No obvious regressions.
 
 If scope creep or a §§1–4 edit is found: stop and surface to the user.
@@ -117,7 +117,7 @@ If there are conflicts:
 - If intent is ambiguous: **stop and surface to the user** — describe the
   conflict and ask for direction.
 - **Tiered conflict resolution (v1.30, #62):** before stopping, classify the
-  conflict per `docs/design/autonomy-hardening-design.md`. Auto-resolvable
+  conflict per `docs/grimoire/design/autonomy-hardening-design.md`. Auto-resolvable
   (additive/disjoint hunks, lockfiles, generated artifacts) → resolve, log to
   §5 follow-ups, continue. Semantic/ambiguous → stop and surface. Full
   classification table in `reference.md` §Tiered conflict resolution.
@@ -141,7 +141,7 @@ If tests fail:
 Read the `code-quality` block from `.claude/grimoire-config.json` **live**.
 Absent block ⇒ defaults (`audit-gate: warn`, `auto-reviewer: noir`,
 `coverage-threshold: null`, `typecheck: build`). Design:
-`docs/design/merge-gate-quality-design.md`.
+`docs/grimoire/design/merge-gate-quality-design.md`.
 
 Run in order; first failing **blocking** check stops the merge:
 1. **Type-check / build** (`typecheck: build` → type errors are build failures).
@@ -176,7 +176,7 @@ of the release closeout. Response policy based on findings:
 ### 4. Tick §5 ledger
 
 ```bash
-git add docs/release-planning-v{X.Y}.md
+git add docs/release-planning/release-planning-v{X.Y}.md
 git commit -m "docs(release-v{X.Y}): tick §5 — {branch} merged ({short-sha})"
 ```
 
@@ -202,6 +202,9 @@ Pre-merge checklist (verify silently):
 - [ ] `{build-command}` clean
 - [ ] All §5 rows ☑ Merged
 - [ ] `version-history.md` entry written on `version/{X.Y}`
+- [ ] **Before-promotion divergence gate clean** — `divergence-check` reports no
+      divergence (the `dev→main` promotion at `grm-project-release` depends on it; a
+      real fork HALTs here, reconcile merge-forward per §2/§5 of the design).
 
 Execute autonomously:
 
@@ -232,7 +235,7 @@ artifact) — this is the `telemetry-errors` boundary rule
 Still never gates the release; a failed emit is swallowed.
 
 **Branch + worktree cleanup is a post-release step, not this skill's job.** See
-`grm-project-release` §Post-release cleanup and `docs/integration-workflow.md`
+`grm-project-release` §Post-release cleanup and `docs/grimoire/integration-workflow.md`
 §Dead-worktree cleanup.
 
 ---
@@ -242,7 +245,7 @@ Still never gates the release; a failed emit is swallowed.
 **This skill pushes nothing.** After the `version/{X.Y}` → `dev` integration,
 `dev` stays local. Pushing happens **once, at `grm-project-release`**, in a single
 human-gated prompt that pushes `dev` + `main` + the version tag together (see
-`docs/integration-workflow.md` §Pushing to origin). Propose no `dev` push from
+`docs/grimoire/integration-workflow.md` §Pushing to origin). Propose no `dev` push from
 this skill; the push gate is never lifted in Noir but it fires at release, not
 here.
 

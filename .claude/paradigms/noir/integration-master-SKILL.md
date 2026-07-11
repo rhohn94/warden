@@ -231,6 +231,9 @@ The master **must** stop and surface to the user when:
    `AskUserQuestion` with the push plan; `Push now` / `Hold`).
 4. The user explicitly says "stop" / "pause."
 5. The specified milestone is reached.
+6. The **before-promotion divergence gate** HALTs (`main` has diverged from the
+   integration line) — merge-forward reconciliation is a human/master decision
+   (BMI-2, §Pre-merge verification above).
 
 At a stop, report: current state, what was completed, what is blocked, and
 what the user needs to decide.

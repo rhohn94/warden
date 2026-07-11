@@ -14,7 +14,7 @@ the `spawn_task` call.
 ## Step 1 — Locate the active plan and current phase
 
 ```bash
-ls docs/release-planning-v*.md
+ls docs/release-planning/release-planning-v*.md
 ```
 
 Pick the highest-version file with `status: agreed` (check first 15 lines).

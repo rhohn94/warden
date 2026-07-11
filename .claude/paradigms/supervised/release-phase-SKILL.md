@@ -15,7 +15,7 @@ hands the user raw copy-paste prompts — it spawns the sessions directly.
 ## Step 1 — Locate the active plan and current phase
 
 ```bash
-ls docs/release-planning-v*.md
+ls docs/release-planning/release-planning-v*.md
 ```
 
 Pick the highest-version file with `status: agreed` (check first 15 lines).
@@ -105,7 +105,7 @@ NOT edit or git-operate on the integration worktree or any sibling worktree —
 a repo guard hook blocks cross-worktree paths anyway.
 
 ### Context — read before touching code
-- docs/release-planning-v{X.Y}.md §2.{N} — this item's scope + acceptance
+- docs/release-planning/release-planning-v{X.Y}.md §2.{N} — this item's scope + acceptance
 - docs/design/{feature}-design.md — full feature design
 - docs/coding-standards.md and docs/architecture-guidelines.md — standing rules
 - {any other design doc cross-linked in the plan}
@@ -116,7 +116,7 @@ Include acceptance criteria verbatim.}
 
 ### Constraints
 - Scope strictly to the files listed in §2.{N}. Do not touch
-  docs/release-planning-v{X.Y}.md.
+  docs/release-planning/release-planning-v{X.Y}.md.
 - Write or extend the design doc for this item if §2.{N} flags one missing.
 - Run `{test-command}` and `{build-command}` before finishing.
 - Fix all errors and warnings introduced by your changes.
