@@ -163,23 +163,52 @@ fn parse_app_dir(dir: &Path) -> AppEntry {
     // Precedence: a deployed build-info (root or `current/` symlink) wins over
     // project-source `grimoire-config.json` so the deployed `app_version` and
     // service address are surfaced; the bare dir-name fallback is last.
-    if let Some(entry) = parse_from_build_info(dir) {
-        return entry;
+    let mut entry = parse_from_build_info(dir)
+        .or_else(|| parse_from_grimoire_config(dir))
+        .unwrap_or_else(|| {
+            // Fallback: use directory name, no metadata.
+            // `root` is populated by `scan_once` after this call.
+            AppEntry {
+                name: dir_name(dir),
+                dir: dir.to_path_buf(),
+                root: PathBuf::new(),
+                framework_version: None,
+                server_command: read_server_command(dir),
+                known_port: None,
+                launchd_label: launchd_label(dir),
+                repo: None,
+            }
+        });
+    // Deployed-version fallbacks (#54): several instances have no
+    // grimoire-build-info.json at all — read the actual deployed version from
+    // current/release.json, else the current -> versions/vX.Y.Z symlink name.
+    if entry.framework_version.is_none() {
+        entry.framework_version = deployed_version(dir);
     }
-    if let Some(entry) = parse_from_grimoire_config(dir) {
-        return entry;
+    entry
+}
+
+/// Read the deployed version of a `current/`-layout instance (#54):
+/// 1. `current/release.json` `.version` (the asserting-publisher asset), else
+/// 2. the basename of the `current` symlink target (`versions/v1.102.0`),
+///    with a leading `v` stripped for consistency with app_version strings.
+fn deployed_version(dir: &Path) -> Option<String> {
+    let release_json = dir.join("current").join("release.json");
+    if let Ok(text) = std::fs::read_to_string(&release_json) {
+        if let Ok(val) = serde_json::from_str::<Value>(&text) {
+            if let Some(v) = val.get("version").and_then(Value::as_str) {
+                return Some(v.trim_start_matches('v').to_string());
+            }
+        }
     }
-    // Fallback: use directory name, no metadata.
-    // `root` is populated by `scan_once` after this call.
-    let name = dir_name(dir);
-    AppEntry {
-        name,
-        dir: dir.to_path_buf(),
-        root: PathBuf::new(),
-        framework_version: None,
-        server_command: read_server_command(dir),
-        known_port: None,
-        launchd_label: launchd_label(dir),
+    let target = std::fs::read_link(dir.join("current")).ok()?;
+    let base = target.file_name()?.to_str()?;
+    let version = base.trim_start_matches('v');
+    // Only trust the symlink name when it actually looks like a version.
+    if version.chars().next().is_some_and(|c| c.is_ascii_digit()) {
+        Some(version.to_string())
+    } else {
+        None
     }
 }
 
@@ -232,7 +261,17 @@ fn parse_from_build_info(dir: &Path) -> Option<AppEntry> {
         server_command: read_server_command(dir),
         known_port,
         launchd_label: launchd_label(dir),
+        repo: repo_from_grimoire_config(cfg),
     })
+}
+
+/// Extract the `owner/name` GitHub slug from a grimoire config value's
+/// issue-tracker block (#54). Deploy dirs are not git checkouts, so this is
+/// how the version checker learns which remote to query.
+fn repo_from_grimoire_config(cfg: &Value) -> Option<String> {
+    cfg.pointer("/issue-tracker/trackers/0/repo")
+        .and_then(Value::as_str)
+        .map(str::to_string)
 }
 
 /// Parse from Grimoire project source config (`grimoire-config.json`).
@@ -260,6 +299,7 @@ fn parse_from_grimoire_config(dir: &Path) -> Option<AppEntry> {
         server_command: read_server_command(dir),
         known_port: None,
         launchd_label: launchd_label(dir),
+        repo: repo_from_grimoire_config(&val),
     })
 }
 
@@ -424,6 +464,91 @@ mod tests {
         assert_eq!(apps[0].name, "deployed-app");
         assert_eq!(apps[0].framework_version.as_deref(), Some("2.5.0"));
         assert_eq!(apps[0].known_port, Some(8800));
+    }
+
+    /// Versioned layout WITHOUT grimoire-build-info.json (familiar/issue-tracker
+    /// shape, #54): the deployed version comes from current/release.json.
+    #[test]
+    fn reads_version_from_current_release_json() {
+        let tmp = TempDir::new().unwrap();
+        let app_dir = tmp.path().join("familiar");
+        fs::create_dir_all(app_dir.join("current")).unwrap();
+        fs::write(
+            app_dir.join("current").join("release.json"),
+            r#"{"version": "1.102.0", "target_triple": "aarch64-apple-darwin"}"#,
+        )
+        .unwrap();
+
+        let apps = scan_once(&tmp.path().to_path_buf());
+        assert_eq!(apps.len(), 1);
+        assert_eq!(apps[0].framework_version.as_deref(), Some("1.102.0"));
+    }
+
+    /// Versioned layout with neither build-info nor release.json (harmony
+    /// shape, #54): the version falls back to the current -> versions/vX.Y.Z
+    /// symlink target name, with the leading v stripped.
+    #[test]
+    fn reads_version_from_current_symlink_target() {
+        let tmp = TempDir::new().unwrap();
+        let app_dir = tmp.path().join("harmony");
+        fs::create_dir_all(app_dir.join("versions").join("v0.39.0")).unwrap();
+        std::os::unix::fs::symlink(
+            app_dir.join("versions").join("v0.39.0"),
+            app_dir.join("current"),
+        )
+        .unwrap();
+
+        let apps = scan_once(&tmp.path().to_path_buf());
+        assert_eq!(apps.len(), 1);
+        assert_eq!(apps[0].framework_version.as_deref(), Some("0.39.0"));
+    }
+
+    /// A `current` symlink pointing at a non-version name must not be
+    /// mistaken for a version.
+    #[test]
+    fn non_version_symlink_target_yields_no_version() {
+        let tmp = TempDir::new().unwrap();
+        let app_dir = tmp.path().join("odd-app");
+        fs::create_dir_all(app_dir.join("builds").join("latest")).unwrap();
+        std::os::unix::fs::symlink(
+            app_dir.join("builds").join("latest"),
+            app_dir.join("current"),
+        )
+        .unwrap();
+
+        let apps = scan_once(&tmp.path().to_path_buf());
+        assert_eq!(apps.len(), 1);
+        assert!(apps[0].framework_version.is_none());
+    }
+
+    /// The repo slug for update checks (#54) is read from the grimoire
+    /// config's issue-tracker block in grimoire-build-info.json.
+    #[test]
+    fn reads_repo_slug_from_build_info_issue_tracker() {
+        let tmp = TempDir::new().unwrap();
+        let app_dir = tmp.path().join("discord-bot");
+        fs::create_dir_all(&app_dir).unwrap();
+        let build_info = serde_json::json!({
+            "schema_version": 1,
+            "app_version": "0.8.0",
+            "grimoire_config": {
+                "name": "Discord-bot",
+                "issue-tracker": {
+                    "trackers": [
+                        {"name": "default", "provider": "github", "repo": "rhohn94/discord-bot"}
+                    ]
+                }
+            }
+        });
+        fs::write(
+            app_dir.join("grimoire-build-info.json"),
+            build_info.to_string(),
+        )
+        .unwrap();
+
+        let apps = scan_once(&tmp.path().to_path_buf());
+        assert_eq!(apps.len(), 1);
+        assert_eq!(apps[0].repo.as_deref(), Some("rhohn94/discord-bot"));
     }
 
     /// Flat-layout app dir with a LaunchAgent plist (goon-cave shape, #53):

@@ -19,6 +19,11 @@ pub struct AppEntry {
     /// launchd's KeepAlive, which restarts the process (#53).
     #[serde(default)]
     pub launchd_label: Option<String>,
+    /// GitHub repo slug (`owner/name`) for update checks, read from the
+    /// grimoire config's issue-tracker block when present (#54). Deploy dirs
+    /// are not git checkouts, so the version checker needs an explicit remote.
+    #[serde(default)]
+    pub repo: Option<String>,
 }
 
 /// Running state of a discovered app.
