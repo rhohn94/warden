@@ -179,7 +179,13 @@ fn parse_app_dir(dir: &Path) -> AppEntry {
         framework_version: None,
         server_command: read_server_command(dir),
         known_port: None,
+        launchd_label: launchd_label(dir),
     }
+}
+
+/// Label of a LaunchAgent plist at the app-dir root, when present (#53).
+fn launchd_label(dir: &Path) -> Option<String> {
+    crate::launchd::find_agent(dir).map(|a| a.label)
 }
 
 /// Parse from Grimoire deployment build info (`grimoire-build-info.json`).
@@ -225,6 +231,7 @@ fn parse_from_build_info(dir: &Path) -> Option<AppEntry> {
         framework_version,
         server_command: read_server_command(dir),
         known_port,
+        launchd_label: launchd_label(dir),
     })
 }
 
@@ -252,6 +259,7 @@ fn parse_from_grimoire_config(dir: &Path) -> Option<AppEntry> {
         framework_version,
         server_command: read_server_command(dir),
         known_port: None,
+        launchd_label: launchd_label(dir),
     })
 }
 
@@ -416,6 +424,26 @@ mod tests {
         assert_eq!(apps[0].name, "deployed-app");
         assert_eq!(apps[0].framework_version.as_deref(), Some("2.5.0"));
         assert_eq!(apps[0].known_port, Some(8800));
+    }
+
+    /// Flat-layout app dir with a LaunchAgent plist (goon-cave shape, #53):
+    /// discovered via start.sh, and the plist Label is surfaced on the entry.
+    #[test]
+    fn discovers_launchd_label_from_app_dir_plist() {
+        let tmp = TempDir::new().unwrap();
+        let app_dir = tmp.path().join("goon-cave");
+        fs::create_dir_all(&app_dir).unwrap();
+        fs::write(app_dir.join("start.sh"), "#!/bin/sh\n").unwrap();
+        fs::write(
+            app_dir.join("com.gooncave.server.plist"),
+            r#"<plist><dict><key>Label</key><string>com.gooncave.server</string></dict></plist>"#,
+        )
+        .unwrap();
+
+        let apps = scan_once(&tmp.path().to_path_buf());
+        assert_eq!(apps.len(), 1);
+        assert_eq!(apps[0].name, "goon-cave");
+        assert_eq!(apps[0].launchd_label.as_deref(), Some("com.gooncave.server"));
     }
 
     #[test]

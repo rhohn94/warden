@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 /// A discovered Grimoire-ecosystem app in the watched directory.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct AppEntry {
     pub name: String,
     pub dir: PathBuf,
@@ -13,6 +13,12 @@ pub struct AppEntry {
     /// Port declared in grimoire-build-info.json environments.local.service_address.
     #[serde(default)]
     pub known_port: Option<u16>,
+    /// Label of a launchd LaunchAgent plist found at the app dir root
+    /// (e.g. `com.gooncave.server`). When the agent is actually loaded,
+    /// start/stop must go through `launchctl` — a plain SIGTERM fights
+    /// launchd's KeepAlive, which restarts the process (#53).
+    #[serde(default)]
+    pub launchd_label: Option<String>,
 }
 
 /// Running state of a discovered app.

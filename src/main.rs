@@ -4,6 +4,7 @@ mod config;
 mod detector;
 mod dump_ui;
 mod history;
+mod launchd;
 mod launcher;
 mod log_capture;
 mod models;

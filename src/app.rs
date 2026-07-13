@@ -901,6 +901,16 @@ impl App {
                         {
                             ui.label(format!("↑ {}", latest));
                         }
+                        // launchd-managed apps (#53): start/stop is redirected
+                        // through launchctl when the agent is loaded.
+                        if let Some(label) = &entry.launchd_label {
+                            Badge::new("launchd", BadgeStatus::Neutral)
+                                .ui(ui)
+                                .on_hover_text(format!(
+                                    "LaunchAgent {} found in app dir; Start/Stop use launchctl when loaded",
+                                    label
+                                ));
+                        }
                         ui.label(&port_str);
                         // Show which root directory this app came from when multiple roots
                         // are watched; use a subdued label so it doesn't dominate the row.
@@ -1183,6 +1193,12 @@ impl App {
                 ui.label(egui::RichText::new("Tech stack").color(golden::TEXT_MUTED).size(golden::TEXT_SM));
                 ui.label(infer_tech_stack(entry.server_command.as_deref()));
                 ui.end_row();
+
+                if let Some(label) = &entry.launchd_label {
+                    ui.label(egui::RichText::new("launchd agent").color(golden::TEXT_MUTED).size(golden::TEXT_SM));
+                    ui.label(label);
+                    ui.end_row();
+                }
             });
         theme::hairline(ui);
 
@@ -2147,9 +2163,7 @@ mod tests {
             name: name.to_string(),
             dir: PathBuf::from(format!("/tmp/apps/{}", name)),
             root: PathBuf::from("/tmp/apps"),
-            framework_version: None,
-            server_command: None,
-            known_port: None,
+            ..Default::default()
         }
     }
 
@@ -2315,9 +2329,8 @@ mod tests {
             name: name.to_string(),
             dir: PathBuf::from(format!("/tmp/apps/{}", name)),
             root: PathBuf::from("/tmp/apps"),
-            framework_version: None,
-            server_command: None,
             known_port: port,
+            ..Default::default()
         }
     }
 
