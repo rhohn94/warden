@@ -1,5 +1,6 @@
 use crate::{
     config::Config,
+    fleet_status::{version_drift, FleetProbe},
     history::HistoryStore,
     launcher::Launcher,
     log_capture::{LogCapture, LogReceiver},
@@ -32,6 +33,8 @@ use winit::{
 pub struct AppState {
     pub entries: Vec<AppEntry>,
     pub statuses: HashMap<PathBuf, (AppStatus, PortInfo)>,
+    /// Fleet Status Contract probe outcomes per app dir (#55).
+    pub fleet_probes: HashMap<PathBuf, FleetProbe>,
     pub in_flight: HashSet<PathBuf>,
     /// All watched root directories.
     pub apps_dirs: Vec<PathBuf>,
@@ -64,6 +67,7 @@ impl AppState {
         AppState {
             entries: Vec::new(),
             statuses: HashMap::new(),
+            fleet_probes: HashMap::new(),
             in_flight: HashSet::new(),
             apps_dirs,
             refresh_secs,
@@ -215,8 +219,8 @@ impl App {
             let scan_results = self.scanner_rx.borrow_and_update().clone();
             debug!("scanner update: {} entries", scan_results.len());
             let new_paths: HashSet<PathBuf> =
-                scan_results.iter().map(|(e, _, _)| e.dir.clone()).collect();
-            let entries: Vec<AppEntry> = scan_results.iter().map(|(e, _, _)| e.clone()).collect();
+                scan_results.iter().map(|(e, _, _, _)| e.dir.clone()).collect();
+            let entries: Vec<AppEntry> = scan_results.iter().map(|(e, _, _, _)| e.clone()).collect();
             let mut state = self.state.lock().unwrap();
             let removed_paths: Vec<PathBuf> = state
                 .statuses
@@ -226,13 +230,15 @@ impl App {
                 .collect();
             for path in removed_paths {
                 state.statuses.remove(&path);
+                state.fleet_probes.remove(&path);
                 state.in_flight.remove(&path);
                 state.entries.retain(|e| e.dir != path);
             }
             state.entries = entries;
             state.last_scan = Instant::now();
             // Apply scanner-provided statuses with crash classification; skip in-flight apps.
-            for (entry, new_status, port_info) in scan_results {
+            for (entry, new_status, port_info, fleet_probe) in scan_results {
+                state.fleet_probes.insert(entry.dir.clone(), fleet_probe);
                 if state.in_flight.contains(&entry.dir) {
                     continue;
                 }
@@ -347,7 +353,7 @@ impl App {
         }
 
         // Snapshot all shared state before rendering so we can drop the lock.
-        let (entries, statuses, in_flight, apps_dirs, refresh_secs, last_scan, current_selected, version_results_snap) = {
+        let (entries, statuses, fleet_probes, in_flight, apps_dirs, refresh_secs, last_scan, current_selected, version_results_snap) = {
             let state = self.state.lock().unwrap();
             let ver_snap: HashMap<String, VersionCheckResult> = state
                 .version_results
@@ -357,6 +363,7 @@ impl App {
             (
                 state.entries.clone(),
                 state.statuses.clone(),
+                state.fleet_probes.clone(),
                 state.in_flight.clone(),
                 state.apps_dirs.clone(),
                 state.refresh_secs,
@@ -395,6 +402,7 @@ impl App {
                         &current_selected,
                         &entries,
                         &statuses,
+                        &fleet_probes,
                         &in_flight,
                         &self.restart_in_flight.clone(),
                         &version_results_snap,
@@ -636,6 +644,7 @@ impl App {
                     ui,
                     &filtered,
                     &statuses,
+                    &fleet_probes,
                     &in_flight,
                     &self.restart_in_flight.clone(),
                     &version_results_snap,
@@ -818,6 +827,7 @@ impl App {
         ui: &mut egui::Ui,
         entries: &[AppEntry],
         statuses: &HashMap<PathBuf, (AppStatus, PortInfo)>,
+        fleet_probes: &HashMap<PathBuf, FleetProbe>,
         in_flight: &HashSet<PathBuf>,
         restart_in_flight: &HashSet<PathBuf>,
         version_results_snap: &HashMap<String, VersionCheckResult>,
@@ -900,6 +910,40 @@ impl App {
                             version_results_snap.get(&entry.name)
                         {
                             ui.label(format!("↑ {}", latest));
+                        }
+                        // Fleet Status Contract signals (#55).
+                        if let Some(probe) = fleet_probes.get(&entry.dir) {
+                            // Declared vs running version drift — the on-machine
+                            // signal of a failed or pending self-update.
+                            let declared = entry
+                                .fleet_manifest
+                                .as_ref()
+                                .and_then(|m| m.declared.version.as_deref());
+                            if let Some((d, r)) = version_drift(declared, probe.running_version()) {
+                                Badge::new("Drift", BadgeStatus::Danger)
+                                    .ui(ui)
+                                    .on_hover_text(format!("declared {d} but running {r}"));
+                            }
+                            // The app's own status claim from the response BODY —
+                            // an HTTP 200 with a degraded body is not healthy
+                            // (issue-tracker incident, 2026-07-12).
+                            if let Some(s) = probe.reported_status() {
+                                if !status_claim_is_healthy(s) {
+                                    Badge::new("Degraded", BadgeStatus::Warning)
+                                        .ui(ui)
+                                        .on_hover_text(format!("app reports status \"{s}\""));
+                                }
+                            }
+                        }
+                        // launchd-managed apps (#53): start/stop is redirected
+                        // through launchctl when the agent is loaded.
+                        if let Some(label) = &entry.launchd_label {
+                            Badge::new("launchd", BadgeStatus::Neutral)
+                                .ui(ui)
+                                .on_hover_text(format!(
+                                    "LaunchAgent {} found in app dir; Start/Stop use launchctl when loaded",
+                                    label
+                                ));
                         }
                         ui.label(&port_str);
                         // Show which root directory this app came from when multiple roots
@@ -1121,6 +1165,7 @@ impl App {
         selected: &Option<PathBuf>,
         entries: &[AppEntry],
         statuses: &HashMap<PathBuf, (AppStatus, PortInfo)>,
+        fleet_probes: &HashMap<PathBuf, FleetProbe>,
         in_flight: &HashSet<PathBuf>,
         restart_in_flight: &HashSet<PathBuf>,
         version_results: &HashMap<String, VersionCheckResult>,
@@ -1183,6 +1228,12 @@ impl App {
                 ui.label(egui::RichText::new("Tech stack").color(golden::TEXT_MUTED).size(golden::TEXT_SM));
                 ui.label(infer_tech_stack(entry.server_command.as_deref()));
                 ui.end_row();
+
+                if let Some(label) = &entry.launchd_label {
+                    ui.label(egui::RichText::new("launchd agent").color(golden::TEXT_MUTED).size(golden::TEXT_SM));
+                    ui.label(label);
+                    ui.end_row();
+                }
             });
         theme::hairline(ui);
 
@@ -1214,6 +1265,10 @@ impl App {
                 ui.label("⚠ ports differ");
             }
         }
+        theme::hairline(ui);
+
+        // ── Fleet Status Contract (#55) ──────────────────────────────────
+        self.draw_fleet_section(ui, entry, fleet_probes.get(dir));
         theme::hairline(ui);
 
         // ── Command ──────────────────────────────────────────────────────
@@ -1362,6 +1417,96 @@ impl App {
             }
         }
         }); // elevated_panel_show
+    }
+
+    /// Details-pane section for the Fleet Status Contract (#55): runtime
+    /// probe outcome, static manifest fields, and declared-vs-running drift.
+    /// Absence is rendered honestly ("no status endpoint") — most fleet apps
+    /// do not expose the contract yet, and showing that IS the observability.
+    fn draw_fleet_section(&self, ui: &mut egui::Ui, entry: &AppEntry, probe: Option<&FleetProbe>) {
+        ui.label(egui::RichText::new("Fleet status").color(golden::TEXT_MUTED).size(golden::TEXT_SM));
+
+        let probe = probe.unwrap_or(&FleetProbe::NotProbed);
+
+        egui::Grid::new("details_fleet")
+            .num_columns(2)
+            .spacing([golden::SPACE[3], golden::SPACE[2]])
+            .show(ui, |ui| {
+                ui.label(egui::RichText::new("Endpoint").color(golden::TEXT_MUTED).size(golden::TEXT_SM));
+                ui.label(fleet_probe_source_label(probe));
+                ui.end_row();
+
+                if let Some(s) = probe.reported_status() {
+                    ui.label(egui::RichText::new("Reported status").color(golden::TEXT_MUTED).size(golden::TEXT_SM));
+                    if status_claim_is_healthy(s) {
+                        ui.label(s);
+                    } else {
+                        ui.label(egui::RichText::new(s).color(golden::TEXT_MUTED).strong());
+                    }
+                    ui.end_row();
+                }
+
+                if let Some(v) = probe.running_version() {
+                    ui.label(egui::RichText::new("Running version").color(golden::TEXT_MUTED).size(golden::TEXT_SM));
+                    ui.label(v);
+                    ui.end_row();
+                }
+
+                if let FleetProbe::Contract(status) = probe {
+                    if let Some(sha) = &status.build.git_sha {
+                        ui.label(egui::RichText::new("Git SHA").color(golden::TEXT_MUTED).size(golden::TEXT_SM));
+                        ui.label(egui::RichText::new(sha).monospace());
+                        ui.end_row();
+                    }
+                    if let Some(env) = status.instance.env.as_deref().or(status.env.as_deref()) {
+                        ui.label(egui::RichText::new("Env").color(golden::TEXT_MUTED).size(golden::TEXT_SM));
+                        ui.label(env);
+                        ui.end_row();
+                    }
+                    if let Some(id) = &status.instance.id {
+                        ui.label(egui::RichText::new("Instance id").color(golden::TEXT_MUTED).size(golden::TEXT_SM));
+                        ui.label(egui::RichText::new(id).monospace());
+                        ui.end_row();
+                    }
+                    if let Some(verdict) = &status.update.verdict {
+                        ui.label(egui::RichText::new("Update verdict").color(golden::TEXT_MUTED).size(golden::TEXT_SM));
+                        ui.label(verdict);
+                        ui.end_row();
+                    }
+                }
+
+                // Static manifest half (fleet-instance.json).
+                if let Some(manifest) = &entry.fleet_manifest {
+                    if let Some(v) = &manifest.declared.version {
+                        ui.label(egui::RichText::new("Declared version").color(golden::TEXT_MUTED).size(golden::TEXT_SM));
+                        ui.label(v);
+                        ui.end_row();
+                    }
+                    if let Some(env) = &manifest.instance.env {
+                        ui.label(egui::RichText::new("Declared env").color(golden::TEXT_MUTED).size(golden::TEXT_SM));
+                        ui.label(env);
+                        ui.end_row();
+                    }
+                    if let Some(at) = &manifest.deployed_at {
+                        ui.label(egui::RichText::new("Deployed at").color(golden::TEXT_MUTED).size(golden::TEXT_SM));
+                        ui.label(at);
+                        ui.end_row();
+                    }
+                } else {
+                    ui.label(egui::RichText::new("Manifest").color(golden::TEXT_MUTED).size(golden::TEXT_SM));
+                    ui.label("no fleet-instance.json");
+                    ui.end_row();
+                }
+            });
+
+        // Drift line — declared vs running disagreement (#55 acceptance 3).
+        let declared = entry
+            .fleet_manifest
+            .as_ref()
+            .and_then(|m| m.declared.version.as_deref());
+        if let Some((d, r)) = version_drift(declared, probe.running_version()) {
+            ui.label(format!("⚠ drift: declared {d} but running {r}"));
+        }
     }
 
     fn dispatch_start(&mut self, entry: AppEntry) {
@@ -1546,6 +1691,29 @@ pub fn classify_status(
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
+
+/// Whether an app's own status claim counts as healthy. Anything other than
+/// an explicit healthy vocabulary word ("ok", "up", "healthy") is surfaced as
+/// degraded — a 200 with `{"status":"degraded"}` must never render as fine
+/// (issue-tracker incident, 2026-07-12).
+pub fn status_claim_is_healthy(status: &str) -> bool {
+    matches!(
+        status.trim().to_ascii_lowercase().as_str(),
+        "ok" | "up" | "healthy"
+    )
+}
+
+/// Human label for the fleet-probe outcome shown in the details pane (#55).
+/// "no status endpoint" is a distinct honest state, not an error.
+pub fn fleet_probe_source_label(probe: &FleetProbe) -> &'static str {
+    match probe {
+        FleetProbe::NotProbed => "not probed (app not running or no port)",
+        FleetProbe::Contract(_) => "/fleet/v1/status",
+        FleetProbe::Healthz { .. } => "/healthz (no fleet contract)",
+        FleetProbe::NoEndpoint => "no status endpoint",
+        FleetProbe::Unreachable => "port unreachable",
+    }
+}
 
 /// Filter a slice of `AppEntry` values by a case-insensitive substring query.
 ///
@@ -2140,6 +2308,37 @@ mod tests {
         assert!(state.selected_app.is_none());
     }
 
+    // ── fleet status display helpers (#55) ───────────────────────────────────
+
+    #[test]
+    fn healthy_status_vocabulary() {
+        for s in ["ok", "up", "healthy", "OK", " Up "] {
+            assert!(status_claim_is_healthy(s), "{s:?} should be healthy");
+        }
+        for s in ["degraded", "starting", "draining", "down", "error", ""] {
+            assert!(!status_claim_is_healthy(s), "{s:?} should NOT be healthy");
+        }
+    }
+
+    #[test]
+    fn no_endpoint_is_a_distinct_label_not_an_error() {
+        assert_eq!(
+            fleet_probe_source_label(&FleetProbe::NoEndpoint),
+            "no status endpoint"
+        );
+        assert_eq!(
+            fleet_probe_source_label(&FleetProbe::Unreachable),
+            "port unreachable"
+        );
+        assert_eq!(
+            fleet_probe_source_label(&FleetProbe::Healthz {
+                status: Some("ok".into()),
+                version: None
+            }),
+            "/healthz (no fleet contract)"
+        );
+    }
+
     // ── filter_entries ───────────────────────────────────────────────────────
 
     fn make_entry(name: &str) -> AppEntry {
@@ -2147,9 +2346,7 @@ mod tests {
             name: name.to_string(),
             dir: PathBuf::from(format!("/tmp/apps/{}", name)),
             root: PathBuf::from("/tmp/apps"),
-            framework_version: None,
-            server_command: None,
-            known_port: None,
+            ..Default::default()
         }
     }
 
@@ -2315,9 +2512,8 @@ mod tests {
             name: name.to_string(),
             dir: PathBuf::from(format!("/tmp/apps/{}", name)),
             root: PathBuf::from("/tmp/apps"),
-            framework_version: None,
-            server_command: None,
             known_port: port,
+            ..Default::default()
         }
     }
 

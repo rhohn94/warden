@@ -1,5 +1,5 @@
 use crate::{
-    detector,
+    detector, launchd,
     log_capture::{log_channel, LogReceiver, LogSender},
     models::{AppEntry, AppStatus, PortInfo},
 };
@@ -30,6 +30,20 @@ impl Launcher {
     /// it is `None` when no launch method was found.
     pub async fn start(&mut self, entry: &AppEntry) -> (AppStatus, PortInfo, Option<LogReceiver>) {
         info!("starting {}", entry.name);
+
+        // launchd-managed and loaded → let launchd own the process (#53).
+        // Spawning it ourselves would race the agent; and our stop signals
+        // would fight KeepAlive. No log receiver: output goes to the plist's
+        // StandardOutPath/StandardErrorPath.
+        if let Some(label) = &entry.launchd_label {
+            if launchd::is_loaded(label) {
+                info!("{}: launchd agent {} is loaded; using launchctl kickstart", entry.name, label);
+                launchd::kickstart(label);
+                tokio::time::sleep(Duration::from_secs(1)).await;
+                let (status, port_info) = detector::detect(entry);
+                return (status, port_info, None);
+            }
+        }
 
         let (tx, rx) = log_channel();
 
@@ -81,6 +95,16 @@ impl Launcher {
         if let Some(mut child) = self.children.remove(&entry.dir) {
             let _ = child.kill().await;
             let _ = child.wait().await;
+        } else if let Some(label) = entry
+            .launchd_label
+            .as_deref()
+            .filter(|l| launchd::is_loaded(l))
+        {
+            // launchd-managed with KeepAlive: SIGTERM would be undone by
+            // launchd respawning the process. Boot the agent out instead —
+            // the plist stays on disk for a later re-load (#53).
+            info!("{}: launchd agent {} is loaded; using launchctl bootout", entry.name, label);
+            launchd::bootout(label);
         } else if let Some(pid) = last_known_pid {
             sigterm_then_sigkill(pid).await;
         }
@@ -158,30 +182,68 @@ impl Launcher {
         info!("shutdown_all: all children terminated");
     }
 
+    /// Probe launch paths in order and spawn the first that exists:
+    /// 1. `current/<name>`            (versioned layout)
+    /// 2. `current/bin/<name>`        (versioned layout, bin subdir)
+    /// 3. `start.sh` at the app root  (flat layout with launch script)
+    /// 4. `<dir>/<name>` at the app root (flat layout, bare binary) (#53)
+    ///
+    /// For the name-based probes both `entry.name` (which may come from
+    /// grimoire config and differ in case) and the directory name are tried.
     fn spawn_binary_piped(&self, entry: &AppEntry) -> Option<Child> {
-        let current = entry.dir.join("current");
-        let binary = current.join(&entry.name);
-        if binary.exists() {
-            return tokio::process::Command::new(&binary)
+        for candidate in launch_candidates(entry) {
+            if !is_executable_file(&candidate) {
+                continue;
+            }
+            match tokio::process::Command::new(&candidate)
                 .current_dir(&entry.dir)
                 .stdout(std::process::Stdio::piped())
                 .stderr(std::process::Stdio::piped())
                 .kill_on_drop(true)
                 .spawn()
-                .ok();
-        }
-        let binary = current.join("bin").join(&entry.name);
-        if binary.exists() {
-            return tokio::process::Command::new(&binary)
-                .current_dir(&entry.dir)
-                .stdout(std::process::Stdio::piped())
-                .stderr(std::process::Stdio::piped())
-                .kill_on_drop(true)
-                .spawn()
-                .ok();
+            {
+                Ok(child) => return Some(child),
+                Err(e) => {
+                    warn!("spawn failed for {}: {e}; trying next candidate", candidate.display());
+                }
+            }
         }
         None
     }
+}
+
+/// True when `path` is a regular file with at least one execute bit set.
+fn is_executable_file(path: &std::path::Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    match std::fs::metadata(path) {
+        Ok(meta) => meta.is_file() && meta.permissions().mode() & 0o111 != 0,
+        Err(_) => false,
+    }
+}
+
+/// Ordered launch-path candidates for `spawn_binary_piped` (see its doc).
+/// Names are deduplicated so `entry.name == dir name` doesn't probe twice.
+fn launch_candidates(entry: &AppEntry) -> Vec<PathBuf> {
+    let mut names: Vec<String> = vec![entry.name.clone()];
+    if let Some(dir_name) = entry.dir.file_name().and_then(|n| n.to_str()) {
+        if dir_name != entry.name {
+            names.push(dir_name.to_string());
+        }
+    }
+
+    let current = entry.dir.join("current");
+    let mut candidates = Vec::new();
+    for name in &names {
+        candidates.push(current.join(name));
+    }
+    for name in &names {
+        candidates.push(current.join("bin").join(name));
+    }
+    candidates.push(entry.dir.join("start.sh"));
+    for name in &names {
+        candidates.push(entry.dir.join(name));
+    }
+    candidates
 }
 
 /// Spawns an async task that reads lines from `reader` and forwards them to `tx`.
@@ -239,11 +301,118 @@ mod tests {
         AppEntry {
             name: dir.file_name().and_then(|n| n.to_str()).unwrap_or("app").to_string(),
             dir,
-            root: PathBuf::new(),
-            framework_version: None,
             server_command: Some(cmd.to_string()),
-            known_port: None,
+            ..Default::default()
         }
+    }
+
+    /// An entry with NO server_command, so start() exercises the
+    /// spawn_binary_piped fallback chain.
+    fn bare_entry(dir: PathBuf) -> AppEntry {
+        AppEntry {
+            name: dir.file_name().and_then(|n| n.to_str()).unwrap_or("app").to_string(),
+            dir,
+            ..Default::default()
+        }
+    }
+
+    fn write_executable(path: &std::path::Path, contents: &str) {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::write(path, contents).unwrap();
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    /// Flat layout (#53): executable `start.sh` at the app root, no `current/`.
+    /// Mirrors goon-cave / mission-control on the target machine.
+    #[tokio::test]
+    async fn starts_flat_layout_app_via_start_sh() {
+        let tmp = TempDir::new().unwrap();
+        let app_dir = tmp.path().join("flat-script-app");
+        std::fs::create_dir_all(&app_dir).unwrap();
+        write_executable(&app_dir.join("start.sh"), "#!/bin/sh\nexec sleep 120\n");
+
+        let entry = bare_entry(app_dir.clone());
+        let mut launcher = Launcher::new();
+
+        let (_, _, log_rx) = launcher.start(&entry).await;
+        assert!(
+            launcher.children.contains_key(&app_dir),
+            "start.sh fallback should spawn and track a child"
+        );
+        assert!(log_rx.is_some(), "spawned child must pipe logs");
+
+        launcher.stop(&entry, None).await;
+        assert!(!launcher.children.contains_key(&app_dir));
+    }
+
+    /// Flat layout (#53): bare executable named after the app at the root,
+    /// no `current/`, no start.sh.
+    #[tokio::test]
+    async fn starts_flat_layout_app_via_root_binary() {
+        let tmp = TempDir::new().unwrap();
+        let app_dir = tmp.path().join("flat-binary-app");
+        std::fs::create_dir_all(&app_dir).unwrap();
+        write_executable(&app_dir.join("flat-binary-app"), "#!/bin/sh\nexec sleep 120\n");
+
+        let entry = bare_entry(app_dir.clone());
+        let mut launcher = Launcher::new();
+
+        launcher.start(&entry).await;
+        assert!(
+            launcher.children.contains_key(&app_dir),
+            "root-binary fallback should spawn and track a child"
+        );
+
+        launcher.stop(&entry, None).await;
+        assert!(!launcher.children.contains_key(&app_dir));
+    }
+
+    /// The versioned layout must win over the flat fallbacks: `current/<name>`
+    /// is probed before `start.sh` and the root binary.
+    #[test]
+    fn launch_candidates_prefer_current_layout_then_start_sh_then_root_binary() {
+        let dir = PathBuf::from("/apps/my-app");
+        let entry = bare_entry(dir.clone());
+        let candidates = launch_candidates(&entry);
+        let expected: Vec<PathBuf> = vec![
+            dir.join("current/my-app"),
+            dir.join("current/bin/my-app"),
+            dir.join("start.sh"),
+            dir.join("my-app"),
+        ];
+        assert_eq!(candidates, expected);
+    }
+
+    /// When grimoire config capitalizes the name (`Discord-bot`) the dir-name
+    /// variant must also be probed.
+    #[test]
+    fn launch_candidates_include_dir_name_variant() {
+        let dir = PathBuf::from("/apps/discord-bot");
+        let entry = AppEntry {
+            name: "Discord-bot".to_string(),
+            dir: dir.clone(),
+            ..Default::default()
+        };
+        let candidates = launch_candidates(&entry);
+        assert!(candidates.contains(&dir.join("current/discord-bot")));
+        assert!(candidates.contains(&dir.join("discord-bot")));
+        assert!(candidates.contains(&dir.join("start.sh")));
+    }
+
+    /// A non-executable file must not satisfy a launch probe.
+    #[tokio::test]
+    async fn non_executable_root_file_is_not_launched() {
+        let tmp = TempDir::new().unwrap();
+        let app_dir = tmp.path().join("data-file-app");
+        std::fs::create_dir_all(&app_dir).unwrap();
+        // Same name as the app, but a plain 0644 data file.
+        std::fs::write(app_dir.join("data-file-app"), "not a program").unwrap();
+
+        let entry = bare_entry(app_dir.clone());
+        let mut launcher = Launcher::new();
+        let (_, _, log_rx) = launcher.start(&entry).await;
+        assert!(log_rx.is_none(), "no launch method should be found");
+        assert!(!launcher.children.contains_key(&app_dir));
     }
 
     #[tokio::test]

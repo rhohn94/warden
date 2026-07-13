@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 /// A discovered Grimoire-ecosystem app in the watched directory.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct AppEntry {
     pub name: String,
     pub dir: PathBuf,
@@ -13,6 +13,21 @@ pub struct AppEntry {
     /// Port declared in grimoire-build-info.json environments.local.service_address.
     #[serde(default)]
     pub known_port: Option<u16>,
+    /// Label of a launchd LaunchAgent plist found at the app dir root
+    /// (e.g. `com.gooncave.server`). When the agent is actually loaded,
+    /// start/stop must go through `launchctl` — a plain SIGTERM fights
+    /// launchd's KeepAlive, which restarts the process (#53).
+    #[serde(default)]
+    pub launchd_label: Option<String>,
+    /// GitHub repo slug (`owner/name`) for update checks, read from the
+    /// grimoire config's issue-tracker block when present (#54). Deploy dirs
+    /// are not git checkouts, so the version checker needs an explicit remote.
+    #[serde(default)]
+    pub repo: Option<String>,
+    /// Half 2 of the Fleet Status Contract: the static `fleet-instance.json`
+    /// manifest (declared intent), when the app dir carries one (#55).
+    #[serde(default)]
+    pub fleet_manifest: Option<crate::fleet_status::FleetManifest>,
 }
 
 /// Running state of a discovered app.

@@ -1,4 +1,5 @@
 use crate::detector;
+use crate::fleet_status::{self, FleetProbe};
 use crate::models::{AppEntry, AppStatus, PortInfo};
 use crate::perf::write_perf_log;
 use serde_json::Value;
@@ -9,8 +10,9 @@ use tokio::sync::watch;
 use tokio::task::JoinSet;
 use tracing::{debug, info, warn};
 
-/// Combined scan result: discovered entry, detected status, and port info.
-pub type ScanResult = Vec<(AppEntry, AppStatus, PortInfo)>;
+/// Combined scan result: discovered entry, detected status, port info, and
+/// the Fleet Status Contract probe outcome (#55).
+pub type ScanResult = Vec<(AppEntry, AppStatus, PortInfo, FleetProbe)>;
 
 /// Starts a background tokio task that scans all `roots` every `interval`,
 /// runs per-app detection concurrently, and sends the combined results through
@@ -38,7 +40,7 @@ pub fn start(
                 roots.len()
             );
 
-            // Run per-app detector calls concurrently with a 2 s timeout each.
+            // Run per-app detector calls concurrently with a timeout each.
             let results = run_detectors_concurrent(entries).await;
             let cycle_ms = t0.elapsed().as_millis();
 
@@ -78,26 +80,39 @@ pub fn start(
     (rx, caller_force_tx)
 }
 
-/// Run `detector::detect` for each entry concurrently using a `JoinSet`,
-/// with a 2-second timeout per app. Timed-out apps are marked Unknown.
+/// Run `detector::detect` (plus, for Running apps with a known port, the
+/// fleet-status probe #55) for each entry concurrently using a `JoinSet`,
+/// with a 4-second timeout per app. Timed-out apps are marked Unknown.
 async fn run_detectors_concurrent(
     entries: Vec<AppEntry>,
-) -> Vec<(AppEntry, AppStatus, PortInfo)> {
-    let mut join_set: JoinSet<(AppEntry, AppStatus, PortInfo)> = JoinSet::new();
+) -> Vec<(AppEntry, AppStatus, PortInfo, FleetProbe)> {
+    let mut join_set: JoinSet<(AppEntry, AppStatus, PortInfo, FleetProbe)> = JoinSet::new();
 
     for entry in entries {
         join_set.spawn(async move {
             let entry_for_detect = entry.clone();
-            let detect_task = tokio::task::spawn_blocking(move || detector::detect(&entry_for_detect));
-            match tokio::time::timeout(Duration::from_secs(2), detect_task).await {
-                Ok(Ok((status, port_info))) => (entry, status, port_info),
+            let detect_task = tokio::task::spawn_blocking(move || {
+                let (status, port_info) = detector::detect(&entry_for_detect);
+                // Runtime half of the Fleet Status Contract: only meaningful
+                // for a live process on a known port. The probe has its own
+                // sub-second timeouts, so it cannot blow this task's budget.
+                let probe = match (&status, port_info.port) {
+                    (AppStatus::Running { .. }, Some(port)) => fleet_status::probe(port),
+                    _ => FleetProbe::NotProbed,
+                };
+                (status, port_info, probe)
+            });
+            // 4 s: up to ~2 s of lsof/pgrep probing plus two HTTP requests
+            // bounded at ~1 s each by the fleet-status client timeouts.
+            match tokio::time::timeout(Duration::from_secs(4), detect_task).await {
+                Ok(Ok((status, port_info, probe))) => (entry, status, port_info, probe),
                 Ok(Err(_join_err)) => {
                     warn!("detector task panicked for {}", entry.name);
-                    (entry, AppStatus::Unknown, PortInfo { port: None })
+                    (entry, AppStatus::Unknown, PortInfo { port: None }, FleetProbe::NotProbed)
                 }
                 Err(_timeout) => {
                     debug!("detector timed out for {}", entry.name);
-                    (entry, AppStatus::Unknown, PortInfo { port: None })
+                    (entry, AppStatus::Unknown, PortInfo { port: None }, FleetProbe::NotProbed)
                 }
             }
         });
@@ -163,23 +178,63 @@ fn parse_app_dir(dir: &Path) -> AppEntry {
     // Precedence: a deployed build-info (root or `current/` symlink) wins over
     // project-source `grimoire-config.json` so the deployed `app_version` and
     // service address are surfaced; the bare dir-name fallback is last.
-    if let Some(entry) = parse_from_build_info(dir) {
-        return entry;
+    let mut entry = parse_from_build_info(dir)
+        .or_else(|| parse_from_grimoire_config(dir))
+        .unwrap_or_else(|| {
+            // Fallback: use directory name, no metadata.
+            // `root` is populated by `scan_once` after this call.
+            AppEntry {
+                name: dir_name(dir),
+                dir: dir.to_path_buf(),
+                root: PathBuf::new(),
+                framework_version: None,
+                server_command: read_server_command(dir),
+                known_port: None,
+                launchd_label: launchd_label(dir),
+                repo: None,
+                fleet_manifest: None,
+            }
+        });
+    // Deployed-version fallbacks (#54): several instances have no
+    // grimoire-build-info.json at all — read the actual deployed version from
+    // current/release.json, else the current -> versions/vX.Y.Z symlink name.
+    if entry.framework_version.is_none() {
+        entry.framework_version = deployed_version(dir);
     }
-    if let Some(entry) = parse_from_grimoire_config(dir) {
-        return entry;
+    // Static half of the Fleet Status Contract (#55): absent for every
+    // instance today; parsed tolerant-first so warden lights up as apps
+    // adopt the contract.
+    entry.fleet_manifest = crate::fleet_status::FleetManifest::load(dir);
+    entry
+}
+
+/// Read the deployed version of a `current/`-layout instance (#54):
+/// 1. `current/release.json` `.version` (the asserting-publisher asset), else
+/// 2. the basename of the `current` symlink target (`versions/v1.102.0`),
+///    with a leading `v` stripped for consistency with app_version strings.
+fn deployed_version(dir: &Path) -> Option<String> {
+    let release_json = dir.join("current").join("release.json");
+    if let Ok(text) = std::fs::read_to_string(&release_json) {
+        if let Ok(val) = serde_json::from_str::<Value>(&text) {
+            if let Some(v) = val.get("version").and_then(Value::as_str) {
+                return Some(v.trim_start_matches('v').to_string());
+            }
+        }
     }
-    // Fallback: use directory name, no metadata.
-    // `root` is populated by `scan_once` after this call.
-    let name = dir_name(dir);
-    AppEntry {
-        name,
-        dir: dir.to_path_buf(),
-        root: PathBuf::new(),
-        framework_version: None,
-        server_command: read_server_command(dir),
-        known_port: None,
+    let target = std::fs::read_link(dir.join("current")).ok()?;
+    let base = target.file_name()?.to_str()?;
+    let version = base.trim_start_matches('v');
+    // Only trust the symlink name when it actually looks like a version.
+    if version.chars().next().is_some_and(|c| c.is_ascii_digit()) {
+        Some(version.to_string())
+    } else {
+        None
     }
+}
+
+/// Label of a LaunchAgent plist at the app-dir root, when present (#53).
+fn launchd_label(dir: &Path) -> Option<String> {
+    crate::launchd::find_agent(dir).map(|a| a.label)
 }
 
 /// Parse from Grimoire deployment build info (`grimoire-build-info.json`).
@@ -225,7 +280,19 @@ fn parse_from_build_info(dir: &Path) -> Option<AppEntry> {
         framework_version,
         server_command: read_server_command(dir),
         known_port,
+        launchd_label: launchd_label(dir),
+        repo: repo_from_grimoire_config(cfg),
+        fleet_manifest: None,
     })
+}
+
+/// Extract the `owner/name` GitHub slug from a grimoire config value's
+/// issue-tracker block (#54). Deploy dirs are not git checkouts, so this is
+/// how the version checker learns which remote to query.
+fn repo_from_grimoire_config(cfg: &Value) -> Option<String> {
+    cfg.pointer("/issue-tracker/trackers/0/repo")
+        .and_then(Value::as_str)
+        .map(str::to_string)
 }
 
 /// Parse from Grimoire project source config (`grimoire-config.json`).
@@ -252,6 +319,9 @@ fn parse_from_grimoire_config(dir: &Path) -> Option<AppEntry> {
         framework_version,
         server_command: read_server_command(dir),
         known_port: None,
+        launchd_label: launchd_label(dir),
+        repo: repo_from_grimoire_config(&val),
+        fleet_manifest: None,
     })
 }
 
@@ -416,6 +486,149 @@ mod tests {
         assert_eq!(apps[0].name, "deployed-app");
         assert_eq!(apps[0].framework_version.as_deref(), Some("2.5.0"));
         assert_eq!(apps[0].known_port, Some(8800));
+    }
+
+    /// Versioned layout WITHOUT grimoire-build-info.json (familiar/issue-tracker
+    /// shape, #54): the deployed version comes from current/release.json.
+    #[test]
+    fn reads_version_from_current_release_json() {
+        let tmp = TempDir::new().unwrap();
+        let app_dir = tmp.path().join("familiar");
+        fs::create_dir_all(app_dir.join("current")).unwrap();
+        fs::write(
+            app_dir.join("current").join("release.json"),
+            r#"{"version": "1.102.0", "target_triple": "aarch64-apple-darwin"}"#,
+        )
+        .unwrap();
+
+        let apps = scan_once(&tmp.path().to_path_buf());
+        assert_eq!(apps.len(), 1);
+        assert_eq!(apps[0].framework_version.as_deref(), Some("1.102.0"));
+    }
+
+    /// Versioned layout with neither build-info nor release.json (harmony
+    /// shape, #54): the version falls back to the current -> versions/vX.Y.Z
+    /// symlink target name, with the leading v stripped.
+    #[test]
+    fn reads_version_from_current_symlink_target() {
+        let tmp = TempDir::new().unwrap();
+        let app_dir = tmp.path().join("harmony");
+        fs::create_dir_all(app_dir.join("versions").join("v0.39.0")).unwrap();
+        std::os::unix::fs::symlink(
+            app_dir.join("versions").join("v0.39.0"),
+            app_dir.join("current"),
+        )
+        .unwrap();
+
+        let apps = scan_once(&tmp.path().to_path_buf());
+        assert_eq!(apps.len(), 1);
+        assert_eq!(apps[0].framework_version.as_deref(), Some("0.39.0"));
+    }
+
+    /// A `current` symlink pointing at a non-version name must not be
+    /// mistaken for a version.
+    #[test]
+    fn non_version_symlink_target_yields_no_version() {
+        let tmp = TempDir::new().unwrap();
+        let app_dir = tmp.path().join("odd-app");
+        fs::create_dir_all(app_dir.join("builds").join("latest")).unwrap();
+        std::os::unix::fs::symlink(
+            app_dir.join("builds").join("latest"),
+            app_dir.join("current"),
+        )
+        .unwrap();
+
+        let apps = scan_once(&tmp.path().to_path_buf());
+        assert_eq!(apps.len(), 1);
+        assert!(apps[0].framework_version.is_none());
+    }
+
+    /// The repo slug for update checks (#54) is read from the grimoire
+    /// config's issue-tracker block in grimoire-build-info.json.
+    #[test]
+    fn reads_repo_slug_from_build_info_issue_tracker() {
+        let tmp = TempDir::new().unwrap();
+        let app_dir = tmp.path().join("discord-bot");
+        fs::create_dir_all(&app_dir).unwrap();
+        let build_info = serde_json::json!({
+            "schema_version": 1,
+            "app_version": "0.8.0",
+            "grimoire_config": {
+                "name": "Discord-bot",
+                "issue-tracker": {
+                    "trackers": [
+                        {"name": "default", "provider": "github", "repo": "rhohn94/discord-bot"}
+                    ]
+                }
+            }
+        });
+        fs::write(
+            app_dir.join("grimoire-build-info.json"),
+            build_info.to_string(),
+        )
+        .unwrap();
+
+        let apps = scan_once(&tmp.path().to_path_buf());
+        assert_eq!(apps.len(), 1);
+        assert_eq!(apps[0].repo.as_deref(), Some("rhohn94/discord-bot"));
+    }
+
+    /// Fleet Status Contract Half 2 (#55): a fleet-instance.json in the app
+    /// dir is parsed onto the entry during scan.
+    #[test]
+    fn parses_fleet_instance_manifest_when_present() {
+        let tmp = TempDir::new().unwrap();
+        let app_dir = tmp.path().join("familiar");
+        fs::create_dir_all(app_dir.join("current")).unwrap();
+        fs::write(
+            app_dir.join("fleet-instance.json"),
+            r#"{
+                "schema_version": "1",
+                "app": "familiar",
+                "instance": {"id": "01JX", "name": "local", "env": "prod"},
+                "declared": {"version": "1.102.0", "bind": "127.0.0.1:2121"}
+            }"#,
+        )
+        .unwrap();
+
+        let apps = scan_once(&tmp.path().to_path_buf());
+        assert_eq!(apps.len(), 1);
+        let manifest = apps[0].fleet_manifest.as_ref().expect("manifest parsed");
+        assert_eq!(manifest.declared.version.as_deref(), Some("1.102.0"));
+        assert_eq!(manifest.instance.env.as_deref(), Some("prod"));
+    }
+
+    /// Absent manifest (every instance today) is a clean None, not an error.
+    #[test]
+    fn absent_fleet_manifest_is_none() {
+        let tmp = TempDir::new().unwrap();
+        let app_dir = tmp.path().join("plain-app");
+        fs::create_dir_all(&app_dir).unwrap();
+        fs::write(app_dir.join("start.sh"), "#!/bin/sh\n").unwrap();
+
+        let apps = scan_once(&tmp.path().to_path_buf());
+        assert_eq!(apps.len(), 1);
+        assert!(apps[0].fleet_manifest.is_none());
+    }
+
+    /// Flat-layout app dir with a LaunchAgent plist (goon-cave shape, #53):
+    /// discovered via start.sh, and the plist Label is surfaced on the entry.
+    #[test]
+    fn discovers_launchd_label_from_app_dir_plist() {
+        let tmp = TempDir::new().unwrap();
+        let app_dir = tmp.path().join("goon-cave");
+        fs::create_dir_all(&app_dir).unwrap();
+        fs::write(app_dir.join("start.sh"), "#!/bin/sh\n").unwrap();
+        fs::write(
+            app_dir.join("com.gooncave.server.plist"),
+            r#"<plist><dict><key>Label</key><string>com.gooncave.server</string></dict></plist>"#,
+        )
+        .unwrap();
+
+        let apps = scan_once(&tmp.path().to_path_buf());
+        assert_eq!(apps.len(), 1);
+        assert_eq!(apps[0].name, "goon-cave");
+        assert_eq!(apps[0].launchd_label.as_deref(), Some("com.gooncave.server"));
     }
 
     #[test]
