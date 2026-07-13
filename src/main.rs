@@ -3,6 +3,7 @@ mod changelog;
 mod config;
 mod detector;
 mod dump_ui;
+mod fleet_status;
 mod history;
 mod launchd;
 mod launcher;

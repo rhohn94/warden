@@ -24,6 +24,10 @@ pub struct AppEntry {
     /// are not git checkouts, so the version checker needs an explicit remote.
     #[serde(default)]
     pub repo: Option<String>,
+    /// Half 2 of the Fleet Status Contract: the static `fleet-instance.json`
+    /// manifest (declared intent), when the app dir carries one (#55).
+    #[serde(default)]
+    pub fleet_manifest: Option<crate::fleet_status::FleetManifest>,
 }
 
 /// Running state of a discovered app.

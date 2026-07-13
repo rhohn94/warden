@@ -1,4 +1,5 @@
 use crate::detector;
+use crate::fleet_status::{self, FleetProbe};
 use crate::models::{AppEntry, AppStatus, PortInfo};
 use crate::perf::write_perf_log;
 use serde_json::Value;
@@ -9,8 +10,9 @@ use tokio::sync::watch;
 use tokio::task::JoinSet;
 use tracing::{debug, info, warn};
 
-/// Combined scan result: discovered entry, detected status, and port info.
-pub type ScanResult = Vec<(AppEntry, AppStatus, PortInfo)>;
+/// Combined scan result: discovered entry, detected status, port info, and
+/// the Fleet Status Contract probe outcome (#55).
+pub type ScanResult = Vec<(AppEntry, AppStatus, PortInfo, FleetProbe)>;
 
 /// Starts a background tokio task that scans all `roots` every `interval`,
 /// runs per-app detection concurrently, and sends the combined results through
@@ -38,7 +40,7 @@ pub fn start(
                 roots.len()
             );
 
-            // Run per-app detector calls concurrently with a 2 s timeout each.
+            // Run per-app detector calls concurrently with a timeout each.
             let results = run_detectors_concurrent(entries).await;
             let cycle_ms = t0.elapsed().as_millis();
 
@@ -78,26 +80,39 @@ pub fn start(
     (rx, caller_force_tx)
 }
 
-/// Run `detector::detect` for each entry concurrently using a `JoinSet`,
-/// with a 2-second timeout per app. Timed-out apps are marked Unknown.
+/// Run `detector::detect` (plus, for Running apps with a known port, the
+/// fleet-status probe #55) for each entry concurrently using a `JoinSet`,
+/// with a 4-second timeout per app. Timed-out apps are marked Unknown.
 async fn run_detectors_concurrent(
     entries: Vec<AppEntry>,
-) -> Vec<(AppEntry, AppStatus, PortInfo)> {
-    let mut join_set: JoinSet<(AppEntry, AppStatus, PortInfo)> = JoinSet::new();
+) -> Vec<(AppEntry, AppStatus, PortInfo, FleetProbe)> {
+    let mut join_set: JoinSet<(AppEntry, AppStatus, PortInfo, FleetProbe)> = JoinSet::new();
 
     for entry in entries {
         join_set.spawn(async move {
             let entry_for_detect = entry.clone();
-            let detect_task = tokio::task::spawn_blocking(move || detector::detect(&entry_for_detect));
-            match tokio::time::timeout(Duration::from_secs(2), detect_task).await {
-                Ok(Ok((status, port_info))) => (entry, status, port_info),
+            let detect_task = tokio::task::spawn_blocking(move || {
+                let (status, port_info) = detector::detect(&entry_for_detect);
+                // Runtime half of the Fleet Status Contract: only meaningful
+                // for a live process on a known port. The probe has its own
+                // sub-second timeouts, so it cannot blow this task's budget.
+                let probe = match (&status, port_info.port) {
+                    (AppStatus::Running { .. }, Some(port)) => fleet_status::probe(port),
+                    _ => FleetProbe::NotProbed,
+                };
+                (status, port_info, probe)
+            });
+            // 4 s: up to ~2 s of lsof/pgrep probing plus two HTTP requests
+            // bounded at ~1 s each by the fleet-status client timeouts.
+            match tokio::time::timeout(Duration::from_secs(4), detect_task).await {
+                Ok(Ok((status, port_info, probe))) => (entry, status, port_info, probe),
                 Ok(Err(_join_err)) => {
                     warn!("detector task panicked for {}", entry.name);
-                    (entry, AppStatus::Unknown, PortInfo { port: None })
+                    (entry, AppStatus::Unknown, PortInfo { port: None }, FleetProbe::NotProbed)
                 }
                 Err(_timeout) => {
                     debug!("detector timed out for {}", entry.name);
-                    (entry, AppStatus::Unknown, PortInfo { port: None })
+                    (entry, AppStatus::Unknown, PortInfo { port: None }, FleetProbe::NotProbed)
                 }
             }
         });
@@ -177,6 +192,7 @@ fn parse_app_dir(dir: &Path) -> AppEntry {
                 known_port: None,
                 launchd_label: launchd_label(dir),
                 repo: None,
+                fleet_manifest: None,
             }
         });
     // Deployed-version fallbacks (#54): several instances have no
@@ -185,6 +201,10 @@ fn parse_app_dir(dir: &Path) -> AppEntry {
     if entry.framework_version.is_none() {
         entry.framework_version = deployed_version(dir);
     }
+    // Static half of the Fleet Status Contract (#55): absent for every
+    // instance today; parsed tolerant-first so warden lights up as apps
+    // adopt the contract.
+    entry.fleet_manifest = crate::fleet_status::FleetManifest::load(dir);
     entry
 }
 
@@ -262,6 +282,7 @@ fn parse_from_build_info(dir: &Path) -> Option<AppEntry> {
         known_port,
         launchd_label: launchd_label(dir),
         repo: repo_from_grimoire_config(cfg),
+        fleet_manifest: None,
     })
 }
 
@@ -300,6 +321,7 @@ fn parse_from_grimoire_config(dir: &Path) -> Option<AppEntry> {
         known_port: None,
         launchd_label: launchd_label(dir),
         repo: repo_from_grimoire_config(&val),
+        fleet_manifest: None,
     })
 }
 
@@ -549,6 +571,44 @@ mod tests {
         let apps = scan_once(&tmp.path().to_path_buf());
         assert_eq!(apps.len(), 1);
         assert_eq!(apps[0].repo.as_deref(), Some("rhohn94/discord-bot"));
+    }
+
+    /// Fleet Status Contract Half 2 (#55): a fleet-instance.json in the app
+    /// dir is parsed onto the entry during scan.
+    #[test]
+    fn parses_fleet_instance_manifest_when_present() {
+        let tmp = TempDir::new().unwrap();
+        let app_dir = tmp.path().join("familiar");
+        fs::create_dir_all(app_dir.join("current")).unwrap();
+        fs::write(
+            app_dir.join("fleet-instance.json"),
+            r#"{
+                "schema_version": "1",
+                "app": "familiar",
+                "instance": {"id": "01JX", "name": "local", "env": "prod"},
+                "declared": {"version": "1.102.0", "bind": "127.0.0.1:2121"}
+            }"#,
+        )
+        .unwrap();
+
+        let apps = scan_once(&tmp.path().to_path_buf());
+        assert_eq!(apps.len(), 1);
+        let manifest = apps[0].fleet_manifest.as_ref().expect("manifest parsed");
+        assert_eq!(manifest.declared.version.as_deref(), Some("1.102.0"));
+        assert_eq!(manifest.instance.env.as_deref(), Some("prod"));
+    }
+
+    /// Absent manifest (every instance today) is a clean None, not an error.
+    #[test]
+    fn absent_fleet_manifest_is_none() {
+        let tmp = TempDir::new().unwrap();
+        let app_dir = tmp.path().join("plain-app");
+        fs::create_dir_all(&app_dir).unwrap();
+        fs::write(app_dir.join("start.sh"), "#!/bin/sh\n").unwrap();
+
+        let apps = scan_once(&tmp.path().to_path_buf());
+        assert_eq!(apps.len(), 1);
+        assert!(apps[0].fleet_manifest.is_none());
     }
 
     /// Flat-layout app dir with a LaunchAgent plist (goon-cave shape, #53):
