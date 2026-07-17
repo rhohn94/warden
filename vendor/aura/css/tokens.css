@@ -251,6 +251,26 @@
   --aura-sidebar-saturate: var(--aura-glass-saturate);
   --aura-sidebar-surface-solid: var(--aura-surface-solid);
 
+  /* ---- FMB choreography (v3.555) [semantic] */
+  /* v3.555 (#1054 follow-on, docs/design/fmb-choreography-design.md): the shared token set the FMB state-transition animation contract (docs/design/fmb-design.md §State-transition choreography) reads from — one engine (js/fmb-choreography.js) and every member's per-file adoption (nav-header, user-profile, sidebar, footer). Deliberately a SEPARATE group from 'Sidebar FMB' above, not folded into it — these tokens are cross-member, not sidebar-specific. */
+  /* FMB choreography (v3.555): rest ghost opacity — names the 0.35 literal
+     previously hard-duplicated at 4 call sites (css/footer.css:280-281,
+     css/nav-header.css:598-599 & :759-760, css/sidebar.css:136-137). See
+     docs/design/fmb-choreography-design.md. */
+  --aura-fmb-ghost-opacity: 0.35;
+  --aura-fmb-morph-duration: var(--aura-fmb-column-duration);
+  --aura-fmb-morph-easing: var(--aura-fmb-column-easing);
+  --aura-fmb-press-scale: 0.94;
+  --aura-fmb-pinned-accent: var(--aura-edge-color);
+  --aura-fmb-proximity-fade-band: 16px;
+  /* FMB choreography (v3.555): timed auto-decay length beyond the proximity-
+     fade band. Deliberately its own primitive, not a dur-* alias — every
+     dur-* token is <=1.6s, well below this contract's 5s dial. See
+     docs/design/fmb-choreography-design.md. */
+  --aura-fmb-decay-duration: 5s;
+  --aura-fmb-decay-easing: var(--aura-ease-out);
+  --aura-fmb-decay-progress: 0;
+
   /* ---- Image catalog (v2.35) [semantic] */
   /* Single source of truth for the <aura-catalog> image thumbnail grid (#172). A responsive auto-fill grid: min tile width drives the column count, ratio fixes each thumb's aspect box, and surface/radius/elevation reference existing primitives so a theme re-skins it globally (no new colour tokens). See docs/design/image-catalog-design.md. */
   --aura-catalog-min: 11rem;

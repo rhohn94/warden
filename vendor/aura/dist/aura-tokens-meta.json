@@ -1469,6 +1469,60 @@
     "category": "Component-specific tokens",
     "cssVar": "--aura-fmb-column-width"
   },
+  "fmb-decay-duration": {
+    "value": "5s",
+    "kind": "value",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-fmb-decay-duration"
+  },
+  "fmb-decay-easing": {
+    "value": "cubic-bezier(0.16, 1, 0.3, 1)",
+    "kind": "value",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-fmb-decay-easing"
+  },
+  "fmb-decay-progress": {
+    "value": "0",
+    "kind": "value",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-fmb-decay-progress"
+  },
+  "fmb-ghost-opacity": {
+    "value": "0.35",
+    "kind": "value",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-fmb-ghost-opacity"
+  },
+  "fmb-morph-duration": {
+    "value": "200ms",
+    "kind": "value",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-fmb-morph-duration"
+  },
+  "fmb-morph-easing": {
+    "value": "cubic-bezier(0.16, 1, 0.3, 1)",
+    "kind": "value",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-fmb-morph-easing"
+  },
+  "fmb-pinned-accent": {
+    "value": "rgb(118, 84, 245)",
+    "kind": "color",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-fmb-pinned-accent"
+  },
+  "fmb-press-scale": {
+    "value": "0.94",
+    "kind": "value",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-fmb-press-scale"
+  },
+  "fmb-proximity-fade-band": {
+    "value": "16px",
+    "kind": "value",
+    "category": "Component-specific tokens",
+    "cssVar": "--aura-fmb-proximity-fade-band"
+  },
   "footer-bg": {
     "value": "color(srgb 1 1 1 / 0.11)",
     "kind": "color",
