@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# HOOK_CONTRACT: v1 capabilities=[release-plan-agreed-lock,release-plan-ledger-writable]
 """Release-plan guard.
 
 Blocks writes to the agreed scope (§§1-4) of any docs/release-planning-v*.md

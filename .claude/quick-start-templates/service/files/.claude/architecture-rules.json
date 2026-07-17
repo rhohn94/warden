@@ -17,7 +17,12 @@
       "static": "assets",
       "resources": "assets"
     },
-    "gitignored": ["dist", "build"]
+    "gitignored": ["dist", "build"],
+    "required-file-content": [
+      { "id": "cargo-profile-dev-debug", "path": "Cargo.toml",
+        "contains": "debug = \"line-tables-only\"", "severity": "warn",
+        "message": "Cargo.toml should set [profile.dev] debug = \"line-tables-only\" — shrinks target/debug while keeping backtrace-quality debug info (#447)" }
+    ]
   },
   "layers": {
     "api": ["src/api/**", "src/handlers/**", "src/routes/**"],

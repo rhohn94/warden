@@ -1,6 +1,6 @@
 ---
 name: grm-issue-tracker-switch
-description: Set or update the issue-tracker block in .claude/grimoire-config.json. Sub-commands — set (replace entire block with a single tracker), add (append a tracker), remove (remove by name), list (read-only table). Validates provider ∈ {roadmap, github, grimoire} and that repo is non-null for github. Idempotent. Use when switching providers (e.g. GitHub issues) or adding/removing named trackers.
+description: Set or update the issue-tracker block in .claude/grimoire-config.json via set/add/remove/list sub-commands. Validates provider ∈ {roadmap, github, grimoire} and that repo is non-null for github. Idempotent. Use when switching providers (e.g. GitHub issues) or adding/removing named trackers.
 ---
 
 # Issue-tracker switch

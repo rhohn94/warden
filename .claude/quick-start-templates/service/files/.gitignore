@@ -1,0 +1,5 @@
+/target
+/dist
+config.env
+.grimoire-run.pid
+.grimoire-run.log

@@ -18,14 +18,22 @@
 #   * backs up every file it rewrites to .scaffold-sync-backup/<timestamp>/.
 #   * refuses --apply on a dirty git tree unless --force.
 #
-# RECOGNIZED ARTIFACT — .claude/component-registry.json (Pillar 4 distribution):
-#   The versioned component registry is carried by the normal file-merge walk
-#   below (it is NOT in is_excluded). It therefore rides the existing 3-way
-#   merge: local components are preserved and upstream ones added/updated by
-#   version; genuine same-entry collisions surface as CONFLICT. No special
-#   casing is needed and none is added here — this note documents the behaviour.
-#   The derived matrix (.claude/cache/component-compatibility.json) is gitignored
-#   and regenerable, so it is intentionally NOT distributed.
+# RECOGNIZED ARTIFACT — .claude/component-registry.json (#REG-4, Pillar 4
+#   distribution): the versioned component registry is carried by the normal
+#   file-merge walk below (it is NOT in is_excluded), so NEW/in-sync/UPDATE/
+#   local classification is unchanged. ONLY the "both sides changed since
+#   base" step is special-cased: a plain textual `git merge-file` 3-way merge
+#   — the mechanism every other file uses — FALSE-conflicts on two disjoint
+#   component additions (both diffs touch the same closing-brace/trailing-
+#   comma region; verified empirically, see component_registry_merge.py's
+#   --self-test). merge_component_registry() below routes this one recognized
+#   artifact to that structural, per-component-id merge engine instead:
+#   local-only and upstream-only components are preserved/added by id, a
+#   genuine same-id collision surfaces as CONFLICT (local left untouched, no
+#   embedded diff3 markers — a conflict report is written instead), and
+#   nothing is ever silently dropped. The derived matrix
+#   (.claude/cache/component-compatibility.json) is gitignored and
+#   regenerable, so it is intentionally NOT distributed.
 #
 # Config — .scaffold-upstream.conf at the project root (or env vars / flags):
 #   UPSTREAM_REPO=<git url or local path>   (required)
@@ -65,7 +73,7 @@
 #
 # Usage:
 #   ./sync-from-upstream.sh [--apply] [--diff] [--adopt-base] [--force]
-#                           [--allow-ahead] [--mark-resolved <file>]
+#                           [--mark-resolved <file>] [--all-resolved]
 #
 #   (no flag)      dry-run: report what each file would do.
 #   --diff         also print per-file diffs for would-be changes.
@@ -84,26 +92,33 @@
 #                  it refuses if the file still contains conflict markers. The
 #                  path may be project-relative or absolute; writes only
 #                  .scaffold-base/<file>.
+#   --all-resolved batch form of --mark-resolved (#420): advances the base for
+#                  EVERY file currently classified CONFLICT in one invocation,
+#                  instead of one --mark-resolved per file. Per file, the same
+#                  rule applies as the single-file form: a file whose LOCAL copy
+#                  still contains conflict markers is reported and SKIPPED, never
+#                  force-resolved; only files that look already hand-resolved
+#                  (no markers) get their base advanced. Prints a resolved/skipped
+#                  summary; writes only .scaffold-base/.
 #
-# WARNINGS the merge walk can emit (#180/#181):
+# WARNINGS the merge walk can emit (#180):
 #   * MISSING-SYMBOL (#180): after a 3-way merge, the result references a symbol
 #     UPSTREAM defines but that is NOT defined anywhere in the merged output —
 #     a "call-site without definition" the merge produced with no conflict marker
 #     (typically LOCAL deleted a helper UPSTREAM still calls, in a non-overlapping
 #     region). Best-effort, language-agnostic-ish. Never blocks; warns loudly.
-#   * MANUALLY-RESOLVED-BUT-BASE-NOT-ADVANCED (#181): --apply is about to
-#     overwrite a CONFLICT file whose LOCAL copy has no conflict markers (it looks
-#     already hand-resolved) — it points you at --mark-resolved instead.
-#   --allow-ahead  BMI-3 Rule 3b consumer-sync escape hatch (#144/#146/#162/#173):
-#                  permit --apply when the integration line is merely AHEAD of
-#                  main (e.g. a prior sync's framework-version bump, or committed
-#                  conflict resolutions) instead of demanding tree-identical
-#                  lines. It does NOT disable the divergence guard — a genuine
-#                  fork (main carrying work the integration line lacks) is still
-#                  refused. Use for back-to-back syncs or where dev->main merges
-#                  are restricted.
+#   * A file that re-`CONFLICT`s on --apply but whose LOCAL copy carries NO
+#     conflict markers (#181) — a prior round was already hand-resolved (or
+#     resolved via --mark-resolved) and looks it — has its base AUTO-ADVANCED
+#     (#420) instead of being overwritten with fresh markers every sync; LOCAL is
+#     left untouched. Reported as RESOLVED, not CONFLICT.
 #
 set -euo pipefail
+
+# Directory this script lives in — used to locate its sibling
+# component_registry_merge.py (Pillar 4 distribution engine) regardless of cwd.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REGISTRY_MERGE_ENGINE="$SCRIPT_DIR/component_registry_merge.py"
 
 # --------------------------------------------------------------------------
 # Upstream transport resolution (v3.23 release-distribution)
@@ -154,6 +169,34 @@ resolve_transport() {
     printf 'release\n'; return 0
   fi
   printf 'git\n'
+}
+
+# --------------------------------------------------------------------------
+# Self-update helpers (#443, v3.91) — pure functions consulted by the
+# self-update step below, before the BMI-3 boundary guard runs.
+# --------------------------------------------------------------------------
+self_update_rel_path() {
+  # Arg: <flavor>. Echoes this script's own path relative to a flavor's tree.
+  if [ "$1" = "copilot" ]; then
+    printf 'scripts/sync-from-upstream.sh\n'
+  else
+    printf '.claude/skills/grm-sync-from-upstream/sync-from-upstream.sh\n'
+  fi
+}
+
+self_update_raw_url() {
+  # Args: <repo> <ref> <flavor>. Echoes the raw.githubusercontent.com URL for
+  # this script's newest upstream bytes, or "" when <repo> isn't a GitHub URL
+  # (self-update is a GitHub-raw-content / local-path best-effort only, never
+  # a hard requirement — any other transport falls through silently).
+  local repo="$1" ref="$2" flavor="$3" owner_repo
+  case "$repo" in
+    https://github.com/*|http://github.com/*) ;;
+    *) printf ''; return 0 ;;
+  esac
+  owner_repo="$(printf '%s' "$repo" | sed -E 's#^https?://github\.com/##; s#\.git$##; s#/$##')"
+  printf 'https://raw.githubusercontent.com/%s/%s/%s/%s\n' \
+    "$owner_repo" "$ref" "$flavor" "$(self_update_rel_path "$flavor")"
 }
 
 _sha256_of() {
@@ -296,6 +339,137 @@ main_only_cherry_lines() {
 }
 
 # --------------------------------------------------------------------------
+# BMI-3 sync-continuation token (v3.90) — bookkeeping for the ahead-by-design
+# state, no longer a gate. Before v3.92 (#419), Rule 3b demanded the
+# integration line and main be tree-identical, so a sync's own commit put the
+# line ahead-by-one and the SAME flow's follow-up runs (conflict-resolution
+# re-sync, adoption re-run) had to pass --allow-ahead — a flag whose name
+# pattern-matches a [Safety Bypass Flag] and that autonomous harnesses
+# rightly refuse to invent or reach for. #419 retires that flag entirely:
+# Rule 3b now proceeds by DEFAULT whenever the fork predicate
+# (cherry_lines_show_unreachable_work) shows main carries no unreachable
+# work, ahead-by-any-amount, no token required. The token file
+# (.scaffold-sync-state.json) is still written on a clean boundary and on an
+# ahead-but-safe run, purely as an operator-facing record of the last known
+# boundary; nothing in the guard path branches on it anymore. The fork guard
+# itself is NEVER relaxed — main carrying unreachable work is still refused
+# unconditionally, by the same cherry-based predicate, with no flag or token
+# able to bypass it.
+# --------------------------------------------------------------------------
+continuation_read_sha() {
+  # Arg: state-file path. Echo the recorded boundary main SHA ("" if absent).
+  [ -f "$1" ] || { echo ""; return 0; }
+  sed -n 's/.*"boundary-main-sha"[[:space:]]*:[[:space:]]*"\([0-9a-fA-F]*\)".*/\1/p' "$1" | head -n1
+}
+
+continuation_permits() {
+  # Args: <recorded_sha> <current_main_sha> <cherry_lines>. Pure predicate:
+  # continuation holds iff a SHA was recorded, main has not moved since the
+  # recorded clean boundary, and main carries no unreachable work.
+  local rec="$1" cur="$2" cherry="$3"
+  [ -n "$rec" ] || return 1
+  [ -n "$cur" ] || return 1
+  [ "$rec" = "$cur" ] || return 1
+  if cherry_lines_show_unreachable_work "$cherry"; then return 1; fi
+  return 0
+}
+
+continuation_should_bootstrap() {
+  # Arg: <recorded_sha> (the current continuation_read_sha() result). Pure
+  # predicate: bootstrap-seeding applies iff NO token has ever been recorded
+  # for this repo — an empty/absent state file, never a stale one. The fork
+  # predicate is checked separately by the caller before this is consulted, so
+  # this function only decides "first encounter or not," not safety.
+  [ -z "$1" ]
+}
+
+continuation_record() {
+  # Args: <state-file path> <main_sha> <integration-branch>. Overwrites.
+  printf '{\n  "boundary-main-sha": "%s",\n  "integration-branch": "%s",\n  "recorded-by": "sync-from-upstream"\n}\n' \
+    "$2" "$3" > "$1"
+}
+
+# --------------------------------------------------------------------------
+# Hook atomic-replace class (v3.90) — guard hooks are upstream-authoritative.
+# 3-way-merge conflicts inside live guard-hook code cannot be auto-resolved by
+# autonomous agents (harness classifiers block hand-edits to guard logic —
+# correctly), and a stale hook can silently lack a capability its config claims
+# (the warden push-guard incident). Project-specific behavior belongs in
+# .claude/grimoire-config.json, which hooks read at runtime — so any file
+# upstream ships under .claude/hooks/ is REPLACED wholesale on --apply (backed
+# up, loudly reported), never 3-way merged into CONFLICT/REVIEW.
+# --------------------------------------------------------------------------
+is_hook_artifact() {
+  case "$1" in .claude/hooks/*) return 0 ;; esac
+  return 1
+}
+
+# --------------------------------------------------------------------------
+# Recognized sync artifact — .claude/component-registry.json (#REG-4, Pillar 4
+# distribution). NOT excluded from the walk (it still rides "NEW"/"in-sync"/
+# "UPDATE"/"local" classification unchanged) — only the "both sides changed"
+# 3-way-merge step below special-cases it, routing to the structural
+# component_registry_merge.py engine instead of a plain textual `git
+# merge-file`, which produces FALSE conflicts on two disjoint component
+# additions (see that script's module docstring + --self-test).
+# --------------------------------------------------------------------------
+is_component_registry_artifact() {
+  [ "$1" = ".claude/component-registry.json" ]
+}
+
+# --------------------------------------------------------------------------
+# Structural merge dispatch for the component registry (#REG-4). Pure over its
+# file-path arguments (writes only $4/$5) so the self-test can drive it
+# directly, without the full CLI's unrelated BMI-3 boundary guards. Echoes
+# "clean" (merged registry written to $4) or "conflict" (nothing written to
+# $4; a structured report written to $5) — mirrors the merge engine's own 0/1
+# exit-code contract without the caller needing to inspect it directly.
+# --------------------------------------------------------------------------
+merge_component_registry() {
+  local l="$1" b="$2" u="$3" out="$4" conflicts_out="$5"
+  if python3 "$REGISTRY_MERGE_ENGINE" merge --local "$l" --base "$b" --upstream "$u" \
+      --out "$out" --conflicts-out "$conflicts_out" 2>/dev/null; then
+    echo clean
+  else
+    echo conflict
+  fi
+}
+
+# --------------------------------------------------------------------------
+# Stale skill-dir namespacing detection (v3.90) — the file-walk ADDS upstream
+# grm-* skills but never deletes a pre-v3.42 bare-named twin (the sync is
+# non-destructive), so `iterate/` and `grm-iterate/` coexist indefinitely.
+# Echo one "bare/ -> grm-bare/" line per coexisting pair; empty when clean.
+# The migrate itself stays explicitly-confirmed (grm_namespacing.py --apply,
+# reference.md Step 4.55) — this only makes the sync flow SURFACE it.
+# --------------------------------------------------------------------------
+stale_namespacing_pairs() {
+  # Arg: skills dir (e.g. <root>/.claude/skills). Pure over the filesystem.
+  # Alias-aware (#308): the agent-role skills were renamed grm-<role> ->
+  # grm-agent-<role>, so a bare `scout/` pairs with `grm-agent-scout/`, and a
+  # stale grm-era ghost (`grm-scout/`) pairs with its canonical twin too.
+  local sd="$1" d base twin
+  [ -d "$sd" ] || return 0
+  for d in "$sd"/*/; do
+    [ -d "$d" ] || continue
+    base="$(basename "$d")"
+    case "$base" in
+      scout|grm-scout)                 twin="grm-agent-scout" ;;
+      reporter|grm-reporter)           twin="grm-agent-reporter" ;;
+      reviewer|grm-reviewer)           twin="grm-agent-reviewer" ;;
+      verifier|grm-verifier)           twin="grm-agent-verifier" ;;
+      triager|grm-triager)             twin="grm-agent-triager" ;;
+      qa-agent|grm-qa-agent)           twin="grm-agent-qa" ;;
+      grm-*|README*|_*)                continue ;;
+      *)                               twin="grm-$base" ;;
+    esac
+    [ "$base" = "$twin" ] && continue
+    [ -d "$sd/$twin" ] && printf '%s\n' "$base/ -> $twin/"
+  done
+  return 0
+}
+
+# --------------------------------------------------------------------------
 # Files that map to local but must NOT be auto-synced (project-owned/templates)
 # Paths are relative to the flavor dir (== relative to the project root).
 # Defined here (before --self-test) so the self-test can call the real function.
@@ -308,6 +482,8 @@ is_excluded() {
     .grimoire-flavor) return 0 ;;                # upstream flavor marker, not project content (v3.23)
     .claude/settings.local.json|.claude/integration-allow.local) return 0 ;;
     .scaffold-base/*|.scaffold-sync-backup/*|.scaffold-upstream.conf) return 0 ;;
+    .scaffold-sync-state.json) return 0 ;;      # BMI-3 continuation token (v3.90) — local state, never synced
+    .scaffold-conflict-pending/*) return 0 ;;   # pending-conflict fingerprints (#420) — local state, never synced
     .claude/grimoire-config.json) return 0 ;;   # adoption phase owns this file (SR1 F2)
     CLAUDE.md) return 0 ;;                       # project-specific; re-specialize manually (SR1 F2)
     # ── Framework-internal docs (v3.39 "Bulkhead" / documentation-separation
@@ -415,6 +591,54 @@ find_dropped_definitions() {
 content_has_conflict_markers() {
   # CONTENT on stdin. Returns 0 iff a git conflict marker line is present.
   grep -qE '^(<<<<<<< |=======$|>>>>>>> )' 2>/dev/null
+}
+
+# --------------------------------------------------------------------------
+# Pending-conflict fingerprint (#420) — distinguishes a re-presentation of an
+# already-resolved conflict from a brand-new, never-yet-surfaced one.
+#
+# A file whose LOCAL copy has no conflict markers RIGHT NOW is ambiguous on
+# its own: it could be an already-resolved re-presentation (safe to
+# auto-advance the base), or it could be a brand-new conflict whose LOCAL
+# content simply differs from both base and upstream (NOT safe to silently
+# discard by auto-advancing — that would drop the conflict without ever
+# showing it, a silent data-loss regression). The disambiguating fact is
+# whether THIS EXACT (base, upstream) pairing was already written to LOCAL as
+# a CONFLICT by a prior --apply run. Rather than mine git history (which
+# cannot tell "this same conflict, still unresolved" apart from "a LATER,
+# different conflict on the same path" once the path has ever been resolved
+# once), record a small sentinel — a hash of (base, upstream) content — the
+# moment a CONFLICT is actually written to disk, under
+# .scaffold-conflict-pending/ (untracked local state, like
+# .scaffold-sync-state.json; never synced, never committed). A later run only
+# auto-advances when the CURRENT (base, upstream) pairing still matches the
+# recorded fingerprint — any upstream change, or a base that already moved,
+# invalidates it and the classic CONFLICT path applies. Defined here (before
+# --self-test) so the self-test can exercise the real functions.
+# --------------------------------------------------------------------------
+conflict_pending_path() {  # Args: <rel>. Echo the sentinel file path for it.
+  printf '%s/.scaffold-conflict-pending/%s\n' "$PROJECT_ROOT" "$1"
+}
+
+conflict_fingerprint() {  # Args: <base-file> <upstream-file>. Echo a hash pair.
+  printf '%s %s\n' "$(git hash-object "$1" 2>/dev/null || echo none)" \
+                    "$(git hash-object "$2" 2>/dev/null || echo none)"
+}
+
+record_conflict_pending() {  # Args: <rel> <base-file> <upstream-file>.
+  local p; p="$(conflict_pending_path "$1")"
+  mkdir -p "$(dirname "$p")"
+  conflict_fingerprint "$2" "$3" > "$p"
+}
+
+conflict_pending_matches() {  # Args: <rel> <base-file> <upstream-file>.
+  local p; p="$(conflict_pending_path "$1")"
+  [ -f "$p" ] || return 1
+  [ "$(cat "$p")" = "$(conflict_fingerprint "$2" "$3")" ]
+}
+
+clear_conflict_pending() {  # Args: <rel>. Drop the sentinel once resolved.
+  rm -f "$(conflict_pending_path "$1")"
 }
 
 # --------------------------------------------------------------------------
@@ -553,6 +777,21 @@ if printf '%s\n' "$@" | grep -qx -- '--self-test'; then
   assert_eq "beta pattern"   "$(_channel_asset_pattern copilot beta)"      "grimoire-copilot-v*-beta.zip"
   if _channel_asset_pattern claude-code nightly 2>/dev/null; then echo "FAIL: bad channel should error" >&2; fails=$((fails+1)); fi
 
+  # self-update helpers (#443, v3.91) — the raw-content URL used to fetch THIS
+  # script's newest upstream bytes before the BMI-3 guard runs on a stale copy.
+  assert_eq "self-update rel path (claude-code)" "$(self_update_rel_path claude-code)" \
+    ".claude/skills/grm-sync-from-upstream/sync-from-upstream.sh"
+  assert_eq "self-update rel path (copilot)" "$(self_update_rel_path copilot)" \
+    "scripts/sync-from-upstream.sh"
+  assert_eq "self-update raw url (github, .git suffix)" \
+    "$(self_update_raw_url https://github.com/rhohn94/grimoire-framework.git main claude-code)" \
+    "https://raw.githubusercontent.com/rhohn94/grimoire-framework/main/claude-code/.claude/skills/grm-sync-from-upstream/sync-from-upstream.sh"
+  assert_eq "self-update raw url (github, no suffix, copilot)" \
+    "$(self_update_raw_url https://github.com/rhohn94/grimoire-framework main copilot)" \
+    "https://raw.githubusercontent.com/rhohn94/grimoire-framework/main/copilot/scripts/sync-from-upstream.sh"
+  assert_eq "self-update raw url (non-github => empty, best-effort no-op)" \
+    "$(self_update_raw_url https://gitlab.com/x/y.git main claude-code)" ""
+
   # SHA256SUMS verification (v3.27) — exercised with temp files, no network.
   # Capture the rc explicitly so `set -e` does not abort on the non-zero returns.
   verify_rc() { verify_against_sha256sums "$1" "$2" >/dev/null 2>&1 && echo 0 || echo $?; }
@@ -598,6 +837,57 @@ if printf '%s\n' "$@" | grep -qx -- '--self-test'; then
   assert_eq "project-own design NOT excl" "$(excl_rc docs/design/bar-design.md)"          1
   assert_eq "existing roadmap rule kept"  "$(excl_rc docs/roadmap.md)"                    0
 
+  # component-registry recognized-artifact detector (#REG-4, Pillar 4) — NOT
+  # excluded from the walk; only routes the "both sides changed" merge step.
+  regart_rc() { is_component_registry_artifact "$1" && echo 0 || echo $?; }
+  assert_eq "registry artifact matched"     "$(regart_rc .claude/component-registry.json)" 0
+  assert_eq "registry artifact excl check"  "$(excl_rc .claude/component-registry.json)"   1
+  assert_eq "unrelated .claude file no match" "$(regart_rc .claude/grimoire-config.json)"  1
+  assert_eq "nested registry path no match" "$(regart_rc foo/.claude/component-registry.json)" 1
+
+  # component-registry structural-merge dispatch wiring (#REG-4) — exercises
+  # the SAME merge_component_registry() function the main classification loop
+  # calls (not just the Python engine's own --self-test, covered separately),
+  # proving the wiring — not only the algorithm — routes correctly. Bypasses
+  # the full CLI (its BMI-3 boundary guards are unrelated to this code path;
+  # merge_component_registry() is pure over its file-path arguments).
+  if [ -f "$REGISTRY_MERGE_ENGINE" ] && command -v python3 >/dev/null 2>&1; then
+    _rt="$(mktemp -d)"
+    printf '%s' '{"components":{"auth-core":{"version":"1.0.0"}}}' \
+      > "$_rt/base.json"
+    printf '%s' '{"components":{"auth-core":{"version":"1.0.0"},"local-widget":{"version":"1.0.0"}}}' \
+      > "$_rt/local.json"
+    printf '%s' '{"components":{"auth-core":{"version":"1.0.0"},"upstream-widget":{"version":"2.0.0"}}}' \
+      > "$_rt/upstream.json"
+    reg_status="$(merge_component_registry "$_rt/local.json" "$_rt/base.json" "$_rt/upstream.json" \
+      "$_rt/out.json" "$_rt/conflicts.json")"
+    assert_eq "registry wiring: disjoint additions -> clean" "$reg_status" "clean"
+    merged_on_disk="$(cat "$_rt/out.json" 2>/dev/null || echo "")"
+    if ! printf '%s' "$merged_on_disk" | grep -q "local-widget" || \
+       ! printf '%s' "$merged_on_disk" | grep -q "upstream-widget"; then
+      echo "FAIL: registry wiring — merged --out missing a disjoint addition: $merged_on_disk" >&2
+      fails=$((fails+1))
+    fi
+
+    # Genuine same-id conflict — must report "conflict" and leave --out unwritten.
+    printf '%s' '{"components":{"auth-core":{"version":"2.0.0-local"}}}' \
+      > "$_rt/local2.json"
+    printf '%s' '{"components":{"auth-core":{"version":"2.0.0-upstream"}}}' \
+      > "$_rt/upstream2.json"
+    reg_status2="$(merge_component_registry "$_rt/local2.json" "$_rt/base.json" "$_rt/upstream2.json" \
+      "$_rt/out2.json" "$_rt/conflicts2.json")"
+    assert_eq "registry wiring: genuine conflict -> conflict" "$reg_status2" "conflict"
+    if [ -f "$_rt/out2.json" ]; then
+      echo "FAIL: registry wiring — conflict path wrote --out (should be untouched)" >&2
+      fails=$((fails+1))
+    fi
+    if ! grep -q "auth-core" "$_rt/conflicts2.json" 2>/dev/null; then
+      echo "FAIL: registry wiring — conflicts-out missing the colliding id" >&2
+      fails=$((fails+1))
+    fi
+    rm -rf "$_rt"
+  fi
+
   # Dirty-tree check ignoring untracked files (#143) — clean tree with only
   # untracked "?? " entries must NOT count as dirty; tracked changes must.
   tracked_rc() { porcelain_has_tracked_changes "$1" && echo 0 || echo $?; }
@@ -620,6 +910,57 @@ if printf '%s\n' "$@" | grep -qx -- '--self-test'; then
   assert_eq "mixed: one + among - => fork"   "$(unreach_rc "- 341e674
 + 46901b7")"                                                                                  0
   assert_eq "git-error sentinel => HALT"     "$(unreach_rc "+ error")"                        0
+
+  # BMI-3 sync-continuation token (v3.90) — pure predicates, kept as bookkeeping
+  # (#419 retired --allow-ahead; the main guard path no longer gates on these,
+  # but the functions and their state file remain, and stay self-tested).
+  cont_rc() { continuation_permits "$1" "$2" "$3" && echo 0 || echo $?; }
+  assert_eq "no recorded sha => refuse"        "$(cont_rc "" abc123 "")"                     1
+  assert_eq "empty current sha => refuse"      "$(cont_rc abc123 "" "")"                     1
+  assert_eq "main moved => refuse"             "$(cont_rc abc123 def456 "")"                 1
+  assert_eq "match + clean cherry => permit"   "$(cont_rc abc123 abc123 "")"                 0
+  assert_eq "match + promotion-only => permit" "$(cont_rc abc123 abc123 "- 341e674")"        0
+  assert_eq "match but real fork => refuse"    "$(cont_rc abc123 abc123 "+ 46901b7")"        1
+  assert_eq "match but git error => refuse"    "$(cont_rc abc123 abc123 "+ error")"          1
+  _cs="$(mktemp -d)"
+  continuation_record "$_cs/state.json" 0123abcd dev
+  assert_eq "record/read round-trip" "$(continuation_read_sha "$_cs/state.json")" 0123abcd
+  assert_eq "absent state file => empty sha" "$(continuation_read_sha "$_cs/nope.json")" ""
+  rm -rf "$_cs"
+  assert_eq "continuation state file excluded from walk" "$(excl_rc .scaffold-sync-state.json)" 0
+  assert_eq "pending-conflict state dir excluded from walk (#420)" "$(excl_rc .scaffold-conflict-pending/foo.sh)" 0
+
+  # #443 sync-continuation bootstrap: fires ONLY on true absence (no token
+  # ever recorded), never on a recorded-but-stale one — a stale token must
+  # still hit the classic refusal, not be silently re-seeded.
+  boot_rc() { continuation_should_bootstrap "$1" && echo 0 || echo $?; }
+  assert_eq "no recorded sha => bootstrap"      "$(boot_rc "")"        0
+  assert_eq "recorded sha (any) => not bootstrap" "$(boot_rc abc123)"  1
+
+  # Hook atomic-replace classification (v3.90) — upstream-authoritative hooks.
+  hook_rc() { is_hook_artifact "$1" && echo 0 || echo $?; }
+  assert_eq "push-guard is a hook artifact"     "$(hook_rc .claude/hooks/push-guard.sh)"        0
+  assert_eq "hook helper module is too"         "$(hook_rc .claude/hooks/_hook_common.py)"      0
+  assert_eq "skill script is NOT a hook"        "$(hook_rc .claude/skills/grm-iterate/SKILL.md)" 1
+  assert_eq "similarly-named non-hook path"     "$(hook_rc docs/hooks/notes.md)"                 1
+
+  # Stale-namespacing pair detection (v3.90) — bare dir coexisting with grm-*.
+  _nsd="$(mktemp -d)"
+  mkdir -p "$_nsd/skills/grm-iterate" "$_nsd/skills/iterate" "$_nsd/skills/grm-clean-only"
+  _pairs="$(stale_namespacing_pairs "$_nsd/skills")"
+  assert_eq "coexisting pair detected" "$_pairs" "iterate/ -> grm-iterate/"
+  rm -rf "$_nsd/skills/iterate"
+  assert_eq "clean tree => no pairs" "$(stale_namespacing_pairs "$_nsd/skills")" ""
+  # #308 alias pairs: bare role dir and grm-era ghost both pair with the
+  # canonical grm-agent-* twin.
+  mkdir -p "$_nsd/skills/grm-agent-scout" "$_nsd/skills/scout"
+  assert_eq "role alias pair detected" "$(stale_namespacing_pairs "$_nsd/skills")" "scout/ -> grm-agent-scout/"
+  rm -rf "$_nsd/skills/scout"; mkdir -p "$_nsd/skills/grm-scout"
+  assert_eq "grm-era ghost pair detected" "$(stale_namespacing_pairs "$_nsd/skills")" "grm-scout/ -> grm-agent-scout/"
+  rm -rf "$_nsd/skills/grm-scout"
+  assert_eq "canonical twin alone => no pairs" "$(stale_namespacing_pairs "$_nsd/skills")" ""
+  assert_eq "missing skills dir => no pairs" "$(stale_namespacing_pairs "$_nsd/absent")" ""
+  rm -rf "$_nsd"
 
   # Missing-symbol heuristic (#180) — definition extraction across shapes.
   _defs="$(printf '%s\n' \
@@ -654,6 +995,25 @@ if printf '%s\n' "$@" | grep -qx -- '--self-test'; then
 x")" 0
   assert_eq "has ======= marker => 0" "$(marker_rc "=======")" 0
   assert_eq "clean text => 1"     "$(marker_rc "just resolved content")" 1
+
+  # Pending-conflict fingerprint (#420) — the auto-advance safety gate: only a
+  # RE-presentation of the EXACT (base, upstream) pairing already surfaced as
+  # CONFLICT is safe to auto-resolve; a different or brand-new pairing is not.
+  PROJECT_ROOT="$(mktemp -d)"
+  _cf_b="$(mktemp)"; _cf_u="$(mktemp)"
+  printf 'base v1\n' > "$_cf_b"; printf 'upstream v1\n' > "$_cf_u"
+  cf_rc() { conflict_pending_matches "$@" && echo 0 || echo $?; }
+  assert_eq "no sentinel recorded yet => no match" "$(cf_rc foo/bar.sh "$_cf_b" "$_cf_u")" 1
+  record_conflict_pending "foo/bar.sh" "$_cf_b" "$_cf_u"
+  assert_eq "recorded fingerprint matches same (base,upstream)" "$(cf_rc foo/bar.sh "$_cf_b" "$_cf_u")" 0
+  assert_eq "different rel path has no sentinel of its own" "$(cf_rc foo/other.sh "$_cf_b" "$_cf_u")" 1
+  printf 'upstream v2\n' > "$_cf_u"
+  assert_eq "upstream changed since => fingerprint invalidated" "$(cf_rc foo/bar.sh "$_cf_b" "$_cf_u")" 1
+  printf 'upstream v1\n' > "$_cf_u"   # restore the original pairing
+  assert_eq "restored pairing matches again" "$(cf_rc foo/bar.sh "$_cf_b" "$_cf_u")" 0
+  clear_conflict_pending "foo/bar.sh"
+  assert_eq "cleared sentinel no longer matches" "$(cf_rc foo/bar.sh "$_cf_b" "$_cf_u")" 1
+  rm -rf "$PROJECT_ROOT"; rm -f "$_cf_b" "$_cf_u"; PROJECT_ROOT=""
 
   # Additive-only diff3 conflict resolution (#198) — empty-local hunks collapse
   # to upstream; any hunk with real local content is left as a genuine conflict.
@@ -783,20 +1143,20 @@ CONF="$PROJECT_ROOT/.scaffold-upstream.conf"
 BASE_ROOT="$PROJECT_ROOT/.scaffold-base"
 BACKUP_DIR="$PROJECT_ROOT/.scaffold-sync-backup/$(date +%Y%m%d-%H%M%S)"
 
-APPLY=0; SHOW_DIFF=0; ADOPT_BASE=0; FORCE=0; ALLOW_AHEAD=0; MARK_RESOLVED=""
+APPLY=0; SHOW_DIFF=0; ADOPT_BASE=0; FORCE=0; MARK_RESOLVED=""; ALL_RESOLVED=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --apply)       APPLY=1 ;;
     --diff)        SHOW_DIFF=1 ;;
     --adopt-base)  ADOPT_BASE=1 ;;
     --force)       FORCE=1 ;;
-    --allow-ahead) ALLOW_AHEAD=1 ;;   # BMI-3 Rule 3b escape hatch (#144/#146/#162/#173)
     --mark-resolved)                  # per-file base advance (#181)
       shift; [ $# -gt 0 ] || { echo "ERROR: --mark-resolved needs a <file> argument." >&2; exit 2; }
       MARK_RESOLVED="$1" ;;
     --mark-resolved=*) MARK_RESOLVED="${1#--mark-resolved=}" ;;
+    --all-resolved) ALL_RESOLVED=1 ;; # batch --mark-resolved for every CONFLICT (#420)
     --self-test)   : ;;  # handled in the transport block above (pre-re-exec)
-    -h|--help)    sed -n '2,104p' "${BASH_SOURCE[0]}" | sed 's/^#\{0,1\} \{0,1\}//'; exit 0 ;;
+    -h|--help)    sed -n '2,106p' "${BASH_SOURCE[0]}" | sed 's/^#\{0,1\} \{0,1\}//'; exit 0 ;;
     *)            echo "unknown arg: $1" >&2; exit 2 ;;
   esac
   shift
@@ -877,6 +1237,55 @@ fi
 case "$FLAVOR" in claude-code|copilot) ;; *) echo "ERROR: FLAVOR must be claude-code or copilot (got '$FLAVOR')." >&2; exit 2 ;; esac
 
 # --------------------------------------------------------------------------
+# Self-update on a stale local copy (#443, v3.91) — before the BMI-3 boundary
+# guard runs, best-effort fetch THIS script's newest bytes from upstream's
+# `main` branch (always the newest tooling — UPSTREAM_REF may pin an old
+# release) and re-exec them. A sync normally updates ITSELF as part of a
+# project's regular --apply file-walk, but that update only takes effect on
+# the NEXT invocation — the CURRENT invocation still runs whatever guard
+# logic the local copy shipped with. A project whose local copy predates a
+# boundary-guard fix (e.g. the #443 bootstrap-seeding logic just above) can
+# never sync in the fix, because the OLD guard's stricter refusal blocks the
+# very --apply that would deliver it (verified in sim-game: dev ahead by
+# exactly the sync commit, main byte-identical to the merge base — the
+# precisely-sanctioned scenario — still hard-blocked by a pre-v3.90 guard).
+# Best-effort only: no curl, a non-GitHub/non-local-path remote, offline, or
+# any fetch failure silently falls through to running the LOCAL copy — this
+# must never be a hard failure, only an opportunistic upgrade.
+# --------------------------------------------------------------------------
+if [ "$APPLY" -eq 1 ] && [ -z "${SYNC_FROM_UPSTREAM_SELF_UPDATED:-}" ]; then
+  _self_update_ref="${UPSTREAM_SELF_UPDATE_REF:-main}"
+  _remote_copy="" _remote_tmp=""
+  case "$UPSTREAM_REPO" in
+    https://github.com/*|http://github.com/*)
+      if command -v curl >/dev/null 2>&1; then
+        _raw_url="$(self_update_raw_url "$UPSTREAM_REPO" "$_self_update_ref" "$FLAVOR")"
+        if [ -n "$_raw_url" ]; then
+          _remote_tmp="$(mktemp "${TMPDIR:-/tmp}/sync-from-upstream-remote.XXXXXX")"
+          if curl -fsSL "$_raw_url" -o "$_remote_tmp" 2>/dev/null && [ -s "$_remote_tmp" ]; then
+            _remote_copy="$_remote_tmp"
+          else
+            rm -f "$_remote_tmp"; _remote_tmp=""
+          fi
+        fi
+      fi
+      ;;
+    /*)
+      _local_candidate="$UPSTREAM_REPO/$FLAVOR/$(self_update_rel_path "$FLAVOR")"
+      [ -f "$_local_candidate" ] && _remote_copy="$_local_candidate"
+      ;;
+  esac
+  if [ -n "$_remote_copy" ] && ! cmp -s "$_remote_copy" "$0" 2>/dev/null; then
+    echo "NOTICE: sync-from-upstream self-update — upstream ($_self_update_ref) carries a" >&2
+    echo "  different copy of this script; re-executing it before the boundary guard" >&2
+    echo "  runs, so a stale local guard can never block the fix that supersedes it (#443)." >&2
+    export SYNC_FROM_UPSTREAM_SELF_UPDATED=1
+    exec bash "$_remote_copy" "$@"
+  fi
+  [ -n "$_remote_tmp" ] && rm -f "$_remote_tmp"
+fi
+
+# --------------------------------------------------------------------------
 # Guard: refuse --apply onto a dirty git tree
 # --------------------------------------------------------------------------
 if [ "$APPLY" -eq 1 ] && git -C "$PROJECT_ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
@@ -893,13 +1302,15 @@ fi
 # off a divergent tree. Config key: branch-model.integration-branch (default dev).
 # Rule 3a: HEAD must be the integration line, not main or any other branch.
 # Rule 3b: main must NOT carry work the integration line lacks (a real fork).
-#   By default the line is also required to be at a clean release boundary
-#   (integration line and main tree-identical). --allow-ahead relaxes that to the
-#   model-aware divergence predicate: the integration line being merely AHEAD of
-#   main (the consumer-sync catch-22 — a prior sync's framework-version bump or a
-#   committed conflict resolution) is SAFE and permitted, while a genuine fork
-#   (main carrying tree content unreachable from the integration line) is still
-#   refused (#144/#146/#162/#173). The escape hatch never disables the fork guard.
+#   The integration line being merely AHEAD of main (a prior sync's own
+#   framework-version bump, a committed conflict resolution, or normal
+#   in-between-releases drift) is SAFE and PROCEEDS BY DEFAULT (#419) — no
+#   flag, no token required. Only a genuine fork (main carrying tree content
+#   unreachable from the integration line) is refused, by the same
+#   cherry-based predicate this rule has always used to tell the two apart.
+#   #419 retired the `--allow-ahead` escape hatch entirely: a flag whose name
+#   pattern-matches a [Safety Bypass Flag] should never have been the thing
+#   standing between an autonomous agent and a safe, ahead-only sync.
 # The full rule, recovery, and rationale are documented in the sync skill's
 # SKILL.md (§BMI-3 boundary rules) — the authoritative design doc is
 # framework-internal and not shipped to consumers, so it is NOT cited here.
@@ -914,36 +1325,33 @@ if [ "$APPLY" -eq 1 ] && git -C "$PROJECT_ROOT" rev-parse --is-inside-work-tree 
     echo "  Switch to '$_INT' (git switch $_INT) and re-run." >&2
     exit 3
   fi
-  # Rule 3b: refuse when the integration line and main differ — unless the only
-  # difference is the integration line being AHEAD and --allow-ahead is set.
+  # Rule 3b: refuse only when main carries unreachable work (a real fork). An
+  # integration line that is merely ahead of (or tree-identical to) main
+  # proceeds unconditionally — the sync-continuation token file is still
+  # recorded as an operator-facing boundary record, but nothing below branches
+  # on it (#419).
+  _STATE_FILE="$PROJECT_ROOT/.scaffold-sync-state.json"
+  _CUR_MAIN_SHA="$(git -C "$PROJECT_ROOT" rev-parse main 2>/dev/null || echo "")"
   if ! git -C "$PROJECT_ROOT" diff --quiet "$_INT" main 2>/dev/null; then
-    if [ "$ALLOW_AHEAD" -eq 1 ]; then
-      # Escape hatch: permit only when main carries NO unreachable work (the
-      # same divergence predicate the BMI-2 promotion guard uses). A real fork
-      # still HALTs — the guard is relaxed for "ahead", never for "diverged".
-      _CHERRY="$(main_only_cherry_lines "$PROJECT_ROOT" "$_INT" main)"
-      if cherry_lines_show_unreachable_work "$_CHERRY"; then
-        echo "ERROR (BMI-3): sync-from-upstream --apply refused — main has DIVERGED." >&2
-        echo "  main carries commit(s) of work not on the integration line ('$_INT'):" >&2
-        git -C "$PROJECT_ROOT" log --oneline --no-decorate "$_INT"..main 2>/dev/null | sed 's/^/    /' >&2
-        echo "  This is a real fork, not the integration line merely being ahead." >&2
-        echo "  --allow-ahead does NOT bypass this. Reconcile by merging main INTO" >&2
-        echo "  '$_INT' (merge-forward); never reset across the fork (data loss)." >&2
-        exit 3
-      fi
-      echo "NOTICE (BMI-3): integration line ('$_INT') is ahead of main; main carries" >&2
-      echo "  no unreachable work, so --allow-ahead permits this sync. Promote the" >&2
-      echo "  accumulated integration-line commits to main when convenient." >&2
-    else
-      echo "ERROR (BMI-3): sync-from-upstream --apply refused — not at a clean release boundary." >&2
-      echo "  The integration line ('$_INT') and main differ (e.g. mid-release work, or" >&2
-      echo "  a prior sync's framework-version bump not yet promoted to main)." >&2
-      echo "  By default a sync runs only when the two lines are tree-identical." >&2
-      echo "  If the integration line is simply AHEAD of main (no real fork), re-run with" >&2
-      echo "  --allow-ahead to sync without promoting first (the consumer-sync escape hatch)." >&2
-      echo "  Otherwise promote the current release, then re-run the sync." >&2
+    _CHERRY="$(main_only_cherry_lines "$PROJECT_ROOT" "$_INT" main)"
+    if cherry_lines_show_unreachable_work "$_CHERRY"; then
+      echo "ERROR (BMI-3): sync-from-upstream --apply refused — main has DIVERGED." >&2
+      echo "  main carries commit(s) of work not on the integration line ('$_INT'):" >&2
+      git -C "$PROJECT_ROOT" log --oneline --no-decorate "$_INT"..main 2>/dev/null | sed 's/^/    /' >&2
+      echo "  This is a real fork, not the integration line merely being ahead. There is" >&2
+      echo "  no flag or token that bypasses this." >&2
+      echo "  Reconcile by merging main INTO '$_INT' (merge-forward); never reset" >&2
+      echo "  across the fork (data loss)." >&2
       exit 3
     fi
+    echo "NOTICE (BMI-3): integration line ('$_INT') is ahead of main; main carries no" >&2
+    echo "  unreachable work, so this is a safe ahead-only state and the sync proceeds" >&2
+    echo "  by default (#419). Promote the accumulated integration-line commits to" >&2
+    echo "  main when convenient." >&2
+    continuation_record "$_STATE_FILE" "$_CUR_MAIN_SHA" "$_INT"
+  else
+    # Clean boundary: record the continuation token as a boundary record.
+    continuation_record "$_STATE_FILE" "$_CUR_MAIN_SHA" "$_INT"
   fi
 fi
 
@@ -1044,8 +1452,63 @@ if [ -n "$MARK_RESOLVED" ]; then
     exit 3
   fi
   mkdir -p "$(dirname "$B_mr")"; cp "$U_mr" "$B_mr"
+  clear_conflict_pending "$rel_mr"
   echo "Marked resolved: advanced base for '$rel_mr' to current upstream content."
   echo "  Future syncs will no longer re-merge it (other files' bases untouched)."
+  exit 0
+fi
+
+# --------------------------------------------------------------------------
+# --all-resolved (#420) — batch form of --mark-resolved: advances the base for
+# EVERY currently-conflicted file in one invocation, instead of one
+# --mark-resolved per file. A file is "currently conflicted" by the same test
+# the report loop uses: both sides changed since the recorded base, and the
+# 3-way merge (after the #198 additive-only auto-resolve) still leaves genuine
+# conflict markers. For each such file: if LOCAL no longer contains conflict
+# markers (already hand-resolved, or resolved via a prior --mark-resolved run
+# outside this batch), its base is advanced, same as the single-file form; if
+# LOCAL still carries markers, it is reported and SKIPPED — never
+# force-resolved, so a genuinely unresolved file is never silently lost.
+# --------------------------------------------------------------------------
+if [ "$ALL_RESOLVED" -eq 1 ]; then
+  ar_resolved=0; ar_skipped=0; ar_resolved_list=""; ar_skipped_list=""
+  while IFS= read -r rel_ar; do
+    rel_ar="${rel_ar#./}"
+    is_excluded "$rel_ar" && continue
+    is_hook_artifact "$rel_ar" && continue   # hooks never conflict (atomic-replace)
+    U_ar="$FLAVOR_DIR/$rel_ar"; L_ar="$PROJECT_ROOT/$rel_ar"; B_ar="$BASE_ROOT/$rel_ar"
+    [ -f "$L_ar" ] || continue               # NEW file — nothing to resolve
+    [ -f "$B_ar" ] || continue               # no base — REVIEW, not CONFLICT
+    diff -q "$U_ar" "$L_ar" >/dev/null 2>&1 && continue   # in-sync
+    diff -q "$L_ar" "$B_ar" >/dev/null 2>&1 && continue   # UPDATE-only, no conflict
+    diff -q "$U_ar" "$B_ar" >/dev/null 2>&1 && continue   # local-only edits, no conflict
+    # both sides changed since base — probe whether the 3-way merge conflicts.
+    probe_merged="$(mktemp)"
+    if git merge-file -p -L local -L base -L upstream "$L_ar" "$B_ar" "$U_ar" > "$probe_merged" 2>/dev/null; then
+      rm -f "$probe_merged"; continue        # clean MERGE, not a conflict
+    fi
+    probe_resolved="$(mktemp)"
+    resolve_additive_only_conflicts < "$probe_merged" > "$probe_resolved"
+    rm -f "$probe_merged"
+    if ! content_has_conflict_markers < "$probe_resolved"; then
+      rm -f "$probe_resolved"; continue      # #198 auto-resolves cleanly
+    fi
+    rm -f "$probe_resolved"
+    # genuinely a CONFLICT candidate.
+    if content_has_conflict_markers < "$L_ar"; then
+      echo "  SKIP (still has conflict markers): $rel_ar" >&2
+      ar_skipped_list="${ar_skipped_list}\n    $rel_ar"; ar_skipped=$((ar_skipped+1))
+      continue
+    fi
+    mkdir -p "$(dirname "$B_ar")"; cp "$U_ar" "$B_ar"
+    clear_conflict_pending "$rel_ar"
+    ar_resolved_list="${ar_resolved_list}\n    $rel_ar"; ar_resolved=$((ar_resolved+1))
+  done < <(cd "$FLAVOR_DIR" && find . -type f | sort)
+  echo "--all-resolved: advanced base for $ar_resolved file(s); skipped $ar_skipped still-unresolved file(s)."
+  [ -n "$ar_resolved_list" ] && { echo "Resolved (base advanced to current upstream content):"; printf "%b\n" "$ar_resolved_list"; }
+  [ -n "$ar_skipped_list" ]  && { echo "Skipped (still contain conflict markers — resolve, then re-run --all-resolved or --mark-resolved):"; printf "%b\n" "$ar_skipped_list"; }
+  [ "$ar_resolved" -eq 0 ] && [ "$ar_skipped" -eq 0 ] && echo "No currently-conflicted files found."
+  [ "$ar_skipped" -gt 0 ] && exit 1
   exit 0
 fi
 
@@ -1060,8 +1523,8 @@ elif [ "$APPLY" -eq 1 ];      then echo "  mode:     APPLY (writing changes; bac
 else                               echo "  mode:     dry-run (no changes; --apply to write)"; fi
 echo
 
-n_new=0; n_update=0; n_merged=0; n_conflict=0; n_review=0; n_local=0; n_insync=0
-conflicts=""; reviews=""; news=""
+n_new=0; n_update=0; n_merged=0; n_conflict=0; n_review=0; n_local=0; n_insync=0; n_replaced=0; n_resolved_auto=0
+conflicts=""; reviews=""; news=""; replaced=""; resolved_auto=""
 
 while IFS= read -r rel; do
   rel="${rel#./}"
@@ -1074,15 +1537,27 @@ while IFS= read -r rel; do
 
   if [ ! -f "$L" ]; then
     printf "  %-10s %s\n" "NEW" "$rel"; news="${news}\n    $rel"; n_new=$((n_new+1))
-    if [ "$APPLY" -eq 1 ]; then mkdir -p "$(dirname "$L")"; cp "$U" "$L"; set_base "$U" "$B"; fi
+    if [ "$APPLY" -eq 1 ]; then mkdir -p "$(dirname "$L")"; cp "$U" "$L"; set_base "$U" "$B"; clear_conflict_pending "$rel"; fi
     continue
   fi
 
   if diff -q "$U" "$L" >/dev/null 2>&1; then
-    printf "  %-10s %s\n" "in-sync" "$rel"; n_insync=$((n_insync+1)); set_base "$U" "$B"; continue
+    printf "  %-10s %s\n" "in-sync" "$rel"; n_insync=$((n_insync+1)); set_base "$U" "$B"
+    [ "$APPLY" -eq 1 ] && clear_conflict_pending "$rel"
+    continue
   fi
 
-  # L and U differ
+  # L and U differ — hooks are replaced wholesale (v3.90), never 3-way merged:
+  # guard logic is upstream-authoritative; project behavior lives in
+  # grimoire-config.json. Local copy is backed up and the replacement reported.
+  if is_hook_artifact "$rel"; then
+    printf "  %-10s %s  (hook — upstream-authoritative; local behavior belongs in grimoire-config.json)\n" "REPLACED" "$rel"
+    replaced="${replaced}\n    $rel"; n_replaced=$((n_replaced+1))
+    [ "$SHOW_DIFF" -eq 1 ] && diff -u "$L" "$U" 2>/dev/null | sed 's/^/      /' || true
+    if [ "$APPLY" -eq 1 ]; then backup "$L" "$rel"; cp "$U" "$L"; set_base "$U" "$B"; clear_conflict_pending "$rel"; fi
+    continue
+  fi
+
   if [ ! -f "$B" ]; then
     printf "  %-10s %s  (no base — keeping local; --adopt-base to set provenance)\n" "REVIEW" "$rel"
     reviews="${reviews}\n    $rel"; n_review=$((n_review+1))
@@ -1092,21 +1567,58 @@ while IFS= read -r rel; do
   if diff -q "$L" "$B" >/dev/null 2>&1; then
     printf "  %-10s %s\n" "UPDATE" "$rel"; n_update=$((n_update+1))     # local unchanged since base
     [ "$SHOW_DIFF" -eq 1 ] && diff -u "$L" "$U" 2>/dev/null | sed 's/^/      /' || true
-    if [ "$APPLY" -eq 1 ]; then backup "$L" "$rel"; cp "$U" "$L"; set_base "$U" "$B"; fi
+    if [ "$APPLY" -eq 1 ]; then backup "$L" "$rel"; cp "$U" "$L"; set_base "$U" "$B"; clear_conflict_pending "$rel"; fi
     continue
   fi
   if diff -q "$U" "$B" >/dev/null 2>&1; then
     printf "  %-10s %s\n" "local" "$rel"; n_local=$((n_local+1)); continue   # upstream unchanged; keep local edits
   fi
 
-  # both sides changed since base -> 3-way merge
+  # both sides changed since base -> 3-way merge.
+  #
+  # The component registry (#REG-4, Pillar 4 distribution) is a structured
+  # id-keyed JSON map, not free-form text — route it to the structural merge
+  # engine instead of the textual git merge-file below, which false-conflicts
+  # on two disjoint component additions (both touch the same closing-brace /
+  # trailing-comma region). See component_registry_merge.py's module docstring.
+  if is_component_registry_artifact "$rel" && [ -f "$REGISTRY_MERGE_ENGINE" ] \
+      && command -v python3 >/dev/null 2>&1; then
+    reg_merged="$(mktemp)"
+    reg_conflicts="$(mktemp)"
+    if [ "$(merge_component_registry "$L" "$B" "$U" "$reg_merged" "$reg_conflicts")" = "clean" ]; then
+      printf "  %-10s %s  (component-registry structural merge, #REG-4)\n" "MERGED" "$rel"
+      n_merged=$((n_merged+1))
+      if [ "$APPLY" -eq 1 ]; then backup "$L" "$rel"; cp "$reg_merged" "$L"; set_base "$U" "$B"; clear_conflict_pending "$rel"; fi
+      [ "$SHOW_DIFF" -eq 1 ] && diff -u "$L" "$reg_merged" 2>/dev/null | sed 's/^/      /' || true
+    else
+      reg_ids="$(python3 -c "
+import json, sys
+try:
+    with open(sys.argv[1], encoding='utf-8') as fh:
+        report = json.load(fh)
+    print(', '.join(sorted(c['id'] for c in report.get('conflicts', []))))
+except Exception:
+    pass
+" "$reg_conflicts" 2>/dev/null || true)"
+      printf "  %-10s %s  (component-registry entry conflict — id(s): %s; --out untouched, resolve by hand, #REG-4)\n" \
+        "CONFLICT" "$rel" "${reg_ids:-unknown}"
+      conflicts="${conflicts}\n    $rel"; n_conflict=$((n_conflict+1))
+      # Local is intentionally left untouched (no textual markers embedded in
+      # the JSON, unlike the generic CONFLICT path below) — the structural
+      # engine's own non-destructive contract. Base is NOT advanced either way.
+      if [ "$APPLY" -eq 1 ]; then record_conflict_pending "$rel" "$B" "$U"; fi
+    fi
+    rm -f "$reg_merged" "$reg_conflicts"
+    continue
+  fi
+
   merged="$(mktemp)"
   if git merge-file -p -L local -L base -L upstream "$L" "$B" "$U" > "$merged" 2>/dev/null; then
     printf "  %-10s %s\n" "MERGED" "$rel"; n_merged=$((n_merged+1))
     # #180: a clean (markerless) merge can still be broken — LOCAL may have
     # deleted a definition UPSTREAM still calls, in a non-overlapping region.
     warn_dropped_definitions "$U" "$merged" "$rel"
-    if [ "$APPLY" -eq 1 ]; then backup "$L" "$rel"; cp "$merged" "$L"; set_base "$U" "$B"; fi
+    if [ "$APPLY" -eq 1 ]; then backup "$L" "$rel"; cp "$merged" "$L"; set_base "$U" "$B"; clear_conflict_pending "$rel"; fi
   else
     # #198: diff3 can conflict on a hunk that is actually additive-only — LOCAL
     # predates a section BASE+UPSTREAM both carry, so LOCAL's side of the hunk
@@ -1119,30 +1631,41 @@ while IFS= read -r rel; do
       printf "  %-10s %s  (diff3 additive-only conflict auto-resolved to upstream, #198)\n" "MERGED" "$rel"
       n_merged=$((n_merged+1))
       warn_dropped_definitions "$U" "$merged" "$rel"
-      if [ "$APPLY" -eq 1 ]; then backup "$L" "$rel"; cp "$merged" "$L"; set_base "$U" "$B"; fi
+      if [ "$APPLY" -eq 1 ]; then backup "$L" "$rel"; cp "$merged" "$L"; set_base "$U" "$B"; clear_conflict_pending "$rel"; fi
       [ "$SHOW_DIFF" -eq 1 ] && diff -u "$L" "$merged" 2>/dev/null | sed 's/^/      /' || true
       rm -f "$resolved"
       continue
     fi
     rm -f "$resolved"
-    # #181: if LOCAL has no conflict markers, the prior round's conflict was
-    # already resolved by hand but its base was never advanced — so we are about
-    # to overwrite that manual resolution with fresh markers. Warn loudly and
-    # point at --mark-resolved (the surgical base advance) instead of silently
-    # clobbering. We still proceed (non-destructive: LOCAL is backed up).
-    if [ -f "$L" ] && ! content_has_conflict_markers < "$L"; then
-      echo "WARNING (#181): '$rel' re-conflicts, but your LOCAL copy has NO conflict" >&2
-      echo "  markers — it looks like a prior round you already resolved by hand whose" >&2
-      echo "  base was never advanced. --apply will OVERWRITE that resolution with fresh" >&2
-      echo "  markers (a backup is kept). To keep your resolution, run instead:" >&2
-      echo "    sync-from-upstream.sh --mark-resolved $rel" >&2
+    # #181/#420: if LOCAL has no conflict markers AND this exact (base,
+    # upstream) pairing was already written to LOCAL as a CONFLICT by a prior
+    # --apply run (conflict_pending_matches — the safety gate that stops a
+    # brand-new, never-yet-shown conflict from being silently auto-resolved),
+    # the prior round's conflict was already resolved by hand (or via
+    # --mark-resolved) but its base was never advanced — a fresh 3-way merge
+    # re-conflicts on EVERY subsequent sync even though nothing actually
+    # needs re-resolving. Auto-advance the base to the current upstream
+    # content instead (exactly what --mark-resolved would do) and leave LOCAL
+    # untouched — never overwrite a standing resolution with fresh markers.
+    # This was the "same conflict re-presents on every sync" trap (#420);
+    # reported as RESOLVED, not CONFLICT, and counts toward neither n_merged
+    # nor n_conflict. A GENUINE first-time conflict, or a DIFFERENT conflict
+    # against a base/upstream pairing that was never recorded (e.g. upstream
+    # changed again since the last CONFLICT), always falls through to the
+    # CONFLICT branch below, exactly as before #420.
+    if [ -f "$L" ] && ! content_has_conflict_markers < "$L" && conflict_pending_matches "$rel" "$B" "$U"; then
+      printf "  %-10s %s  (already resolved locally — base auto-advanced, #420)\n" "RESOLVED" "$rel"
+      resolved_auto="${resolved_auto}\n    $rel"; n_resolved_auto=$((n_resolved_auto+1))
+      if [ "$APPLY" -eq 1 ]; then set_base "$U" "$B"; clear_conflict_pending "$rel"; fi
+      rm -f "$merged"
+      continue
     fi
     printf "  %-10s %s  (conflict markers; resolve, do NOT auto-advance base)\n" "CONFLICT" "$rel"
     conflicts="${conflicts}\n    $rel"; n_conflict=$((n_conflict+1))
     # #180: the UPSTREAM side of a conflict may reference a definition LOCAL
     # dropped that ends up outside the marked regions — surface it too.
     warn_dropped_definitions "$U" "$merged" "$rel"
-    if [ "$APPLY" -eq 1 ]; then backup "$L" "$rel"; cp "$merged" "$L"; fi   # base NOT advanced
+    if [ "$APPLY" -eq 1 ]; then backup "$L" "$rel"; cp "$merged" "$L"; record_conflict_pending "$rel" "$B" "$U"; fi   # base NOT advanced
   fi
   [ "$SHOW_DIFF" -eq 1 ] && diff -u "$L" "$merged" 2>/dev/null | sed 's/^/      /' || true
   rm -f "$merged"
@@ -1173,8 +1696,10 @@ if [ "$ADOPT_BASE" -eq 1 ]; then
   fi
   exit 0
 fi
-echo "Summary: NEW=$n_new UPDATE=$n_update MERGED=$n_merged CONFLICT=$n_conflict REVIEW=$n_review local-only-edits=$n_local in-sync=$n_insync"
+echo "Summary: NEW=$n_new UPDATE=$n_update MERGED=$n_merged REPLACED=$n_replaced RESOLVED=$n_resolved_auto CONFLICT=$n_conflict REVIEW=$n_review local-only-edits=$n_local in-sync=$n_insync"
 [ -n "$news" ]      && { echo "New files (generic — re-specialize placeholders after apply):"; printf "%b\n" "$news"; }
+[ -n "$replaced" ]  && { echo "REPLACED hooks (upstream-authoritative; local copies backed up — if a"; echo "  replaced hook carried project-specific behavior, move it into"; echo "  .claude/grimoire-config.json, never back into hook code):"; printf "%b\n" "$replaced"; }
+[ -n "$resolved_auto" ] && { echo "RESOLVED (already hand-resolved locally — base auto-advanced, #420, LOCAL untouched):"; printf "%b\n" "$resolved_auto"; }
 [ -n "$conflicts" ] && { echo "CONFLICTS to resolve (git markers written on --apply):"; printf "%b\n" "$conflicts"; }
 [ -n "$reviews" ]   && { echo "REVIEW (differ, no base — kept local; merge by hand or --adopt-base):"; printf "%b\n" "$reviews"; }
 [ "$n_symbol_warn" -gt 0 ] && { echo "MISSING-SYMBOL WARNINGS (#180 — call-site without definition; verify these merges):"; printf "%b\n" "$symbol_warnings"; }
@@ -1224,6 +1749,24 @@ if [ "$n_conflict" -gt 0 ]; then
   echo "  Resolve them (re-run the sync to advance their base),"
   echo "  then sync again to run the adoption phase."
   exit 0
+fi
+
+# Stale namespacing surfaced mechanically (v3.90) — before the manifest check,
+# so a stale pre-rename manifest path can never hide the survivors.
+_NS_PAIRS="$(stale_namespacing_pairs "$PROJECT_ROOT/.claude/skills")"
+if [ -n "$_NS_PAIRS" ]; then
+  echo
+  echo "----------------------------------------------------------------"
+  echo "Stale skill namespacing detected — bare-named dirs coexist with grm-*:"
+  printf '%s\n' "$_NS_PAIRS" | sed 's/^/    /'
+  echo "  The synced grm-* copies are authoritative; the bare-named twins are"
+  echo "  pre-v3.42 survivors that keep surfacing stale skills. Complete the"
+  echo "  cutover with the namespacing migrate (archives to .grimoire-archive/,"
+  echo "  then removes; rewrites references):"
+  echo "    python3 .claude/skills/grm-sync-from-upstream/grm_namespacing.py --root . --apply"
+  echo "  MIGRATION RULE: it moves user-referenceable dirs — OFFER it with one"
+  echo "  explicit confirmation (all paradigms, Noir included); NEVER auto-run."
+  echo "  Preview first with --dry-run. Full procedure: reference.md Step 4.55."
 fi
 
 MANIFEST="$PROJECT_ROOT/.claude/skills/grm-sync-from-upstream/feature-manifest.md"

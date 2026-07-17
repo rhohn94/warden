@@ -8,6 +8,7 @@ fi
 printf 'error: %s requires python3. Re-run as: python3 %s %s\n' "$0" "$0" "$*" >&2
 exit 1
 ":"""
+# HOOK_CONTRACT: v1 capabilities=[bundled-sync-commit-block]
 """Bundled-sync-commit guard (issue #126, BMI-3 mechanical enforcement).
 
 PreToolUse(Bash) hook that fires on `git commit`. It denies (fail-closed,

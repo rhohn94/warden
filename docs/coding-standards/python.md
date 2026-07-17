@@ -42,9 +42,12 @@ Per-technology coding standards for Python. Read alongside the cross-language
 - Test files live in a top-level `tests/` directory mirroring the source layout:
   `src/mypackage/foo.py` → `tests/test_foo.py`.
 - Use `conftest.py` for shared fixtures; keep fixtures small and focused.
-- Mark slow or integration tests with `@pytest.mark.slow` / `@pytest.mark.integration`
-  and exclude them from the default `pytest` run.
+- Mark slow or integration tests with `@pytest.mark.slow` / `@pytest.mark.integration`.
 - Name tests as plain sentences: `test_returns_empty_list_when_input_is_none`.
+- `recipe.py test` / `just test` run the **full** suite (marked tests included).
+  `recipe.py unit-test` / `just unit-test` (#360) run only the fast subset —
+  `pytest -m "not slow and not integration"` — reusing these same marks; never
+  invent a second marking convention for the fast-subset filter.
 - Achieve ≥ 80 % branch coverage on new code; enforce via `--cov-fail-under=80`.
 
 ## Module & package structure
@@ -108,6 +111,147 @@ centralise emission behind one telemetry module:
   trace/correlation id to downstream calls.
 - **CLI:** wrap the entry point to record command, parsed flags, and exit code.
 
+## Logging
+
+See `../coding-standards.md` §Logging for the standard field contract
+(`ts`/`level`/`target`/`msg`/`correlation_id`/`instance`/`version`, JSON-lines
+to stdout). No Python-backed quick-start template exists in this repo yet to
+carry a scaffolded copy of this module (every current profile ships
+concretely Rust — see `quick-start-templates-design.md`), so this is a
+**copy-paste reference implementation**: paste it as `logging_init.py` into a
+Python project and call `init_logging(...)` once at process start.
+
+```python
+"""logging_init.py — standardized JSON-lines logging (docs/coding-standards.md
+§Logging). ONE call at process start (init_logging); every
+logging.getLogger(...).info(...) call site downstream needs no per-call
+boilerplate.
+
+Emits one JSON object per line to stdout with the standard field contract:
+ts (ms since Unix epoch), level, target, msg, correlation_id, instance,
+version. Level is set via instance config (the LOG_LEVEL env var / config
+file, mirroring the Rust starter module's config.rs LOG_LEVEL knob).
+Rotation stays the deployment supervisor's job — it already captures
+stdout/stderr into logs/ (docs/web-app-deployment-protocol.md §4); this
+module never opens or rotates a file itself.
+
+`level` values are normalized to the same trace/debug/info/warn/error
+vocabulary the Rust starter module emits (Python's own WARNING/CRITICAL
+level names are remapped to warn/error) so a single log viewer (Admin
+Console AC-4) can filter across a mixed Rust/Python fleet without a
+per-language level-name table.
+
+correlation_id is ambient via contextvars (safe across asyncio tasks and
+threads, unlike a plain global) — request-handling code calls
+set_correlation_id()/clear_correlation_id() once per request; every log line
+emitted while it's set carries the id automatically, with no per-log-site
+argument.
+
+Copied per-project code, not a shared package — the cross-repo rule-of-two
+policy (coding-standards.md §Cross-repo extraction policy) hasn't triggered:
+nothing has been hand-rolled twice across sibling repos yet. Extract to a
+standard package only once a second app duplicates this file.
+"""
+from __future__ import annotations
+
+import contextvars
+import json
+import logging
+import os
+import sys
+from typing import Optional
+
+_correlation_id: contextvars.ContextVar[str] = contextvars.ContextVar(
+    "correlation_id", default=""
+)
+
+# Normalizes Python's stdlib level names onto the trace/debug/info/warn/error
+# vocabulary the Rust starter module emits (tracing::Level). Python has no
+# TRACE level; DEBUG doubles for it. CRITICAL collapses onto error — a
+# distinct "critical" tier isn't part of the cross-language contract.
+_OUTPUT_LEVEL_NAMES = {
+    "DEBUG": "debug",
+    "INFO": "info",
+    "WARNING": "warn",
+    "ERROR": "error",
+    "CRITICAL": "error",
+}
+
+# Accepts the same input vocabulary as the Rust side (trace/debug/info/warn/
+# error) plus Python's own names, so a shared LOG_LEVEL config value works
+# for either language's starter module.
+_INPUT_LEVELS = {
+    "trace": logging.DEBUG,
+    "debug": logging.DEBUG,
+    "info": logging.INFO,
+    "warn": logging.WARNING,
+    "warning": logging.WARNING,
+    "error": logging.ERROR,
+    "critical": logging.ERROR,
+}
+
+
+def set_correlation_id(value: str) -> None:
+    """Set the correlation id for every log line emitted in this context
+    (thread/async-task) until cleared. Call once at the top of a
+    request/task; no per-log-site argument needed."""
+    _correlation_id.set(value)
+
+
+def clear_correlation_id() -> None:
+    """Clear the current context's correlation id (e.g. end of a request)."""
+    _correlation_id.set("")
+
+
+class _JsonLineFormatter(logging.Formatter):
+    """Formats one LogRecord as one JSON-lines object with the standard
+    field contract: ts, level, target, msg, correlation_id, instance,
+    version."""
+
+    def __init__(self, instance: str, version: str) -> None:
+        super().__init__()
+        self._instance = instance
+        self._version = version
+
+    def format(self, record: logging.LogRecord) -> str:
+        payload = {
+            "ts": int(record.created * 1000),
+            "level": _OUTPUT_LEVEL_NAMES.get(record.levelname,
+                                              record.levelname.lower()),
+            "target": record.name,
+            "msg": record.getMessage(),
+            "correlation_id": _correlation_id.get(),
+            "instance": self._instance,
+            "version": self._version,
+        }
+        return json.dumps(payload, ensure_ascii=False)
+
+
+def init_logging(level: str = "info", instance: Optional[str] = None,
+                  version: str = "0.0.0") -> None:
+    """ONE call at process start (before any other logging call), no
+    per-log-site boilerplate afterwards.
+
+    `level` is the instance-config-resolved filter string (LOG_LEVEL env var
+    / config file — trace/debug/info/warn/error, matched
+    case-insensitively; an unrecognized value falls back to info). `instance`
+    defaults to the INSTANCE_ID env var, falling back to "local" (mirrors the
+    Rust starter module's instance_id() convention); `version` is stamped
+    onto every emitted line.
+    """
+    if instance is None:
+        instance = os.environ.get("INSTANCE_ID", "local")
+
+    resolved_level = _INPUT_LEVELS.get(level.strip().lower(), logging.INFO)
+
+    handler = logging.StreamHandler(stream=sys.stdout)
+    handler.setFormatter(_JsonLineFormatter(instance=instance, version=version))
+
+    root = logging.getLogger()
+    root.handlers.clear()
+    root.addHandler(handler)
+    root.setLevel(resolved_level)
+```
 
 ## Audit hints
 

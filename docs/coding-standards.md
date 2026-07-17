@@ -54,6 +54,38 @@ A duplicate that is genuinely coincidental (two blocks that look alike but model
 different concerns) is *not* lifted — note why in a comment so the next pass
 doesn't re-flag it.
 
+## Cross-repo extraction policy: rule-of-two vs rule-of-three
+
+The section above governs duplication *within* a repo. Across sibling repos in
+the fleet, the extraction trigger differs by what's actually known — the
+distinction is **"duplication observed" vs "duplication predicted."**
+
+- **Rule-of-three (duplication *predicted*, unchanged).** A genuinely
+  speculative shared crate — nothing exists yet, no duplication has been
+  observed anywhere — waits for a third concrete need before extraction.
+  Speculative generalization ahead of real callers tends to guess the wrong
+  shape, so this hedge stays.
+- **Rule-of-two (duplication *observed*).** Once a cataloged capability (the
+  `provides`/`requires` vocabulary in `component-taxonomy.md` — `auth`,
+  `http-client`, `http-server`, `persistence`, `telemetry`, `messaging`,
+  `config`, `design-language`) has been hand-rolled a **second** time across
+  sibling repos, retroactive tolerance is no longer defensible: the risk isn't
+  hypothetical, it already happened once. Waiting for a third under a
+  rule-of-three is exactly the policy that let the fleet's `auth` capability
+  get hand-rolled five times before extraction (#202-#204's gatekeeper). The
+  **second** hand-rolling of a cataloged capability requires filing an
+  extraction ticket (the #202-#204 standard-package pattern:
+  token-bookkeeper/gatekeeper/recordkeeper) before the work item that
+  introduces it is accepted. A **third** hand-rolling is a planning-gate
+  block, not a warning.
+  <!-- audit: id="cross-repo-duplication" check="a cataloged capability (component-taxonomy provides/requires vocabulary) hand-rolled a second time across sibling repos has a filed extraction ticket before the introducing work item is accepted; a third hand-rolling blocks at the planning gate" severity="warn" applies="all" -->
+
+This rule is mechanism-only here (the hint above, discoverable by any consumer
+that greps `docs/coding-standards.md` for `audit: id=`); it does not require a
+live fleet scan to define. Detecting an actual second/third hand-rolling across
+real repos is `grm-fleet-audit`'s capability-overlap checklist item (its own
+heuristic grep-set data structure).
+
 ## Telemetry instrumentation (default practice)
 
 Projects built on this scaffolding **instrument by default** — telemetry is a
@@ -102,6 +134,54 @@ domain layer (see `architecture-guidelines.md` §Separation of concerns).
 config), data retention / PII / privacy policy, and dashboard/alerting setup.
 Per-language sub-docs note *where* telemetry hooks integrate idiomatically in
 that language.
+
+## Logging
+
+Distinct from §Telemetry above (*what the app did*): logging is the app's
+operational text stream. Every Grimoire-managed project emits **structured,
+JSON-lines logging to stdout** — one object per line, no other format. This
+is a MUST: the Admin Console's log viewer (AC-4, catalog Entry 1) and the
+catalog's boot-line conformance check (Entry 9) both depend on it. Full
+design, rationale, and acceptance evidence:
+`docs/grimoire/design/logging-spec-design.md`.
+
+**Field contract** — every line is one JSON object with exactly:
+
+| Field | Type | Meaning |
+|---|---|---|
+| `ts` | int | Ms since Unix epoch. |
+| `level` | string | `trace`/`debug`/`info`/`warn`/`error` (Python's `WARNING`/`CRITICAL` → `warn`/`error`). |
+| `target` | string | Emitting module/logger name. |
+| `msg` | string | Message text. |
+| `correlation_id` | string | Empty `""` when idle; ambient (`set_correlation_id`), never a call-site arg. |
+| `instance` | string | `INSTANCE_ID` env var, default `"local"`. |
+| `version` | string | The running build's version. |
+
+Extra fields are allowed but never required; a plain-text line (the
+pre-#435 `env_logger` default) is a hard failure.
+<!-- audit: id="logging-json-lines" check="the app's first stdout line at boot is a JSON object carrying exactly ts/level/target/msg/correlation_id/instance/version with the documented types; verified deterministically by logging_conformance.py's offline scan + --boot-probe leg" severity="warn" applies="cli,gui,service,web" -->
+
+**Level via instance config** (Rust `config.rs`'s `LOG_LEVEL`; Python
+`init_logging`'s `level` param), never hardcoded. **Rotation stays the
+supervisor's job** — it already captures stdout/stderr into `logs/`
+(`web-app-deployment-protocol.md` §4); this spec governs stdout's *shape*
+only.
+
+**Starter init modules** (copied code, not a shared crate/package — see
+§Cross-repo extraction policy): ONE call at process start, no per-log-site
+boilerplate after. **Rust** — `logging_init.rs`, ships in the
+`cli`/`gui`/`service` templates (`tracing`/`tracing-subscriber`); call
+`logging_init::init(&cfg.log_level, &logging_init::instance_id(),
+env!("CARGO_PKG_VERSION"))` first in `main`. **Python** —
+`logging_init.py`, a copy-paste reference impl in
+`docs/coding-standards/python.md` §Logging (no Python template exists yet);
+call `logging_init.init_logging(level=..., version=...)` at process start.
+
+**Conformance check.**
+`.claude/skills/grm-required-feature-catalog/logging_conformance.py`
+(catalog Entry 9): an offline call-site scan plus a live `--boot-probe CMD`
+leg spawning the app's real entrypoint, capturing its first stdout line,
+and validating it against the contract above.
 
 ## Content & UI copy (no context leakage)
 
@@ -179,6 +259,76 @@ A blocked merge rolls back to `ORIG_HEAD` (no partial state) and leaves the §5
 row unticked with a recorded reason, re-runnable once the branch is fixed. The
 gate reads config **live** — no schema-version bump, no file-swap.
 
+### Post-commit test + coverage gate (v3.99, #361)
+
+The merge-gate above catches a red suite at merge time. `code-quality.post-commit-test-gate`
+adds an **earlier, automatic** signal at commit time — a REAL git `post-commit`
+hook (unlike this project's other 8 guard hooks, all Claude Code PreToolUse
+hooks that only fire for a Bash tool call Claude Code itself issues, this one
+fires for any commit, from any actor). Off by default (opt-in):
+
+```json
+"code-quality": {
+  "coverage-threshold": 80,
+  "post-commit-test-gate": {"enabled": true, "mode": "force-correct"}
+}
+```
+
+| Field | Values (default **bold**) | Effect |
+|---|---|---|
+| `enabled` | **`false`** / `true` | Opt-in; absent or `false` is a silent no-op. |
+| `mode` | `block` / **`force-correct`** / `advisory` | `force-correct`: report + nonzero exit on red/sub-threshold, never blocks the commit (post-commit fires after the commit already happened). `advisory`: report only, always exits 0. `block`: governs the OPTIONAL `pre-commit` variant below — post-commit itself still force-corrects. |
+
+**What it runs:** `recipe.py unit-test` (#360) plus, if the project has
+declared one, a coverage command via `.claude/recipes.json`'s `extras.coverage`
+entry (the same informational-`extras` convention `smoke-visual` uses — never
+part of the versioned build-recipe INTERFACE):
+
+```json
+"extras": {
+  "coverage": {
+    "command": "pytest --cov=src --cov-report=term-missing",
+    "implemented": true,
+    "parser": "pytest-term-missing"
+  }
+}
+```
+
+`parser` selects one of four built-in output parsers matching the issue's
+per-stack coverage runners: `pytest-term-missing`, `vitest-text`,
+`cargo-llvm-cov`, `go-cover`. No `extras.coverage` entry ⇒ the coverage step
+is skipped (advisory note in the report) — unit-tests still gate on their own.
+
+**Coverage floor** is read from the existing `code-quality.coverage-threshold`
+above — reused, not reinvented. `null` = advisory only, never forces
+correction on coverage (a red suite still does, independently).
+
+**Escape hatch:** `GRIMOIRE_SKIP_POST_COMMIT_GATE=1` (human-set in the shell
+before commit, never automated) — the `post-commit` analog of this project's
+existing `--no-verify` / `RELEASE_SKIP_VERIFY` convention (`release.sh`). The
+OPTIONAL `pre-commit` variant (below) uses git's own `--no-verify` instead.
+
+**OPTIONAL `pre-commit` hard block:** when `mode: "block"`, a second real git
+hook (`.claude/hooks/pre-commit`) runs the same fast unit-test check and
+refuses the commit (nonzero exit) on red — for projects that want a hard gate
+instead of force-correction. `git commit --no-verify` bypasses it. Any mode
+other than `block` degrades this hook to a silent no-op, so wiring it into
+`core.hooksPath` is always safe regardless of the configured mode.
+
+**Activation (one-time, opt-in):** git does not consult `.claude/hooks/` by
+default —
+
+```bash
+git config core.hooksPath .claude/hooks
+```
+
+`grm-install-doctor` audits both the hook's `HOOK_CONTRACT` stamp (byte
+content, same mechanism as the other 8 guard hooks) AND this activation step
+(a correctly-stamped hook git never actually invokes is not truly installed).
+Full design: `docs/grimoire/design/runtime-verification-design.md` §Post-commit
+test + coverage gate. Install steps: `grm-repo-init/SKILL.md` §Post-commit
+test gate (opt-in).
+
 ## Justfile standards
 
 All Grimoire projects must expose three canonical task-runner recipes in their `justfile`:
@@ -192,11 +342,61 @@ All Grimoire projects must expose three canonical task-runner recipes in their `
 **Key rules:**
 - `deploy env` has **no default** — it is a positional required parameter. `just deploy` with no argument exits non-zero, preventing accidental deployments.
 - Unimplemented recipes must carry a `# grimoire:placeholder` comment in the body so `grm-install-doctor` can detect them as PARTIAL rather than OK.
-- The optional `test`, `db-up`, and `db-down` recipes follow the patterns in the quick-start templates.
+- The optional `test`, `unit-test`, `db-up`, and `db-down` recipes follow the patterns in the quick-start templates.
+
+### `unit-test` — the fast subset (#360)
+
+`test filter="" watch=""` runs the **full** suite (unit + integration/e2e/slow).
+`unit-test filter="" watch=""` is the same shape, restricted to fast, isolated
+unit tests only — `test` is unchanged; `unit-test` is strictly a faster subset
+of the same signal, not a replacement for it in a merge gate. Per-stack mapping
+(reuse existing conventions — never invent new marks):
+
+| Stack | `unit-test` command | Excludes |
+|---|---|---|
+| Python | `pytest -m "not slow and not integration"` | tests marked `@pytest.mark.slow` / `@pytest.mark.integration` ([coding-standards/python.md](coding-standards/python.md) §Testing) |
+| JS/TS | `vitest run` (unit config) | the `tests/`/`e2e/` integration directory ([coding-standards/javascript.md](coding-standards/javascript.md) §Testing) |
+| Rust | `cargo test --lib` | crate-root `tests/` integration tests ([coding-standards/rust.md](coding-standards/rust.md) §Testing) |
+| Go | `go test -short ./...` | tests gated behind `testing.Short()` |
+
+`recipe.py unit-test` / `just unit-test` follow the same exit-code contract as
+every other target: child exit code passed through; unimplemented → exit 2
+(advisory), never a silent no-op. Durable design record:
+`docs/grimoire/design/runtime-verification-design.md` §Unit test vs. full test
+run.
 
 Full specification: [`docs/design/justfile-standard-design.md`](design/justfile-standard-design.md).
 
 `grm-install-doctor` enforces this contract. Run it to check for MISSING or PARTIAL recipes.
+
+### `gui-test` — platform-differentiated GUI feature test (#362)
+
+`gui-test baseline="main"` parallels `smoke`: a stable, platform-differentiated
+verb that proves a specific GUI feature actually works, not just that the app
+loads. Two strategies behind the one name:
+
+- **Web** — not a scriptable shell recipe (a shell command cannot drive a
+  browser-automation tool). The GUI test IS the agent session itself
+  exercising the changed flow — navigate to the affected page, drive the
+  actual interaction, read back the resulting DOM/console state — attached as
+  verify-evidence in the completion report. `gui-test` stays a documented,
+  permanently-advisory stub (`# grimoire:placeholder`, exit 2) on a web
+  project rather than faking a pass/fail it cannot observe.
+- **Desktop** — the app boots headlessly (no display required, the same
+  approach `--smoke-test` already uses) and diffs a deterministic capture of
+  what the UI drew against a committed baseline at
+  `tests/gui-baselines/<baseline>.snapshot` (or `.png` for a project that
+  layers on real pixel rendering). A missing baseline is always a hard
+  failure — never a silent pass, matching `smoke-visual`'s convention.
+
+Same exit-code contract as every other target: 0 pass, nonzero probe/diff
+failure, 2 unimplemented-advisory (a non-GUI project never owes this).
+GUI-only vocabulary — pre-filled on `web`/`native` stack presets, absent on
+`server`/`cli`/`library` (no GUI surface to test). Durable design record:
+`docs/grimoire/design/runtime-verification-design.md` §GUI testing.
+
+`grm-install-doctor` enforces this contract the same way it enforces
+`unit-test`'s presence/placeholder classification.
 
 ## Per-language / per-technology standards
 
@@ -224,9 +424,11 @@ skill change**. Current coverage by dimension:
 | Naming / magic numbers | 1 | `coding-standards.md` |
 | Error handling | 1 | `coding-standards.md`, per-language |
 | Duplication (DRY) | 1 | `coding-standards.md`, per-language |
+| Cross-repo duplication (rule-of-two) | 1 | `coding-standards.md` |
 | One class/module per file | 1 | `coding-standards.md` |
 | Dependency hygiene | 1 | per-language |
 | Per-language idioms | ≥1 each | `python.md`, `javascript.md`, `rust.md` |
 | Content / process leakage | 3 | `coding-standards.md` |
+| Structured logging (JSON-lines shape) | 1 | `coding-standards.md` |
 
 Add a row and a hint when a new dimension or language is introduced.

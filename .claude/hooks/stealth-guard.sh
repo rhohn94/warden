@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# HOOK_CONTRACT: v1 capabilities=[stealth-no-push,stealth-no-managed-commit,stealth-commit-hygiene,stealth-no-branch-model,stealth-no-managed-edit]
 """Stealth-mode guard (active only when stealth-mode.value == "on").
 
 PreToolUse Bash + Edit/Write/NotebookEdit hook. NO-OP unless

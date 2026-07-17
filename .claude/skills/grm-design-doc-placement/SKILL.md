@@ -1,6 +1,6 @@
 ---
 name: grm-design-doc-placement
-description: Scan docs/design/ (and docs/grimoire/design/, flat-forever) for placement per docs/design/README.md's Subtrees rule — classify FLAT_SHOULD_BE_SUBTREE / SUBTREE_COULD_FLATTEN / WRONG_TOPIC_SUBTREE; --apply git-mvs and updates README index/breadcrumb links. Report-only by default. Use when auditing or fixing design-doc placement.
+description: Scan docs/design/ (and docs/grimoire/design/, flat-forever) for placement per docs/design/README.md's Subtrees rule; --apply git-mvs and updates README index/breadcrumb links. Report-only by default. Use when auditing or fixing design-doc placement.
 ---
 
 # design-doc-placement

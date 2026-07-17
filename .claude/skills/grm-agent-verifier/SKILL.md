@@ -58,7 +58,12 @@ On invocation the Verifier:
 3. Reads `CLAUDE.md` §"Project commands" to identify the test, build, and
    release commands for the project.
 4. Runs the project commands in order: **test → build → release**. Captures
-   stdout/stderr and exit code for each.
+   stdout/stderr and exit code for each. If the work item is flagged GUI (the
+   `gui`/`gui:web`/`gui:desktop` label, or the item's own declared surface),
+   also runs `recipe.py gui-test` as a fourth step and captures its
+   stdout/stderr/exit code the same way (a non-GUI item skips this step
+   entirely — never run-and-ignored). See
+   `docs/grimoire/design/runtime-verification-design.md` §GUI testing.
 5. Reads the branch diff (relative to its base ref, typically `version/{X.Y}`)
    and maps each acceptance criterion to observable evidence in the output or
    diff.
@@ -88,6 +93,7 @@ The Verifier returns a structured report. Use this format verbatim:
 | test    | <test-command>           | <N>       | PASS/FAIL |
 | build   | <build-command>          | <N>       | PASS/FAIL |
 | release | <release-command>        | <N>       | PASS/FAIL |
+| gui-test (GUI items only) | `recipe.py gui-test`   | <N>       | PASS/FAIL/SKIPPED (non-GUI) |
 
 ### Acceptance criteria
 | # | Criterion                            | Evidence                        | Met? |

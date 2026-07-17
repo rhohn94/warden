@@ -88,19 +88,30 @@ After you answer, onboarding:
 
 ---
 
-## SKIP ONBOARDING — fast path
+## RUN NON-INTERACTIVE ONBOARDING — fast path
 
 If you already know your settings and want to skip the interview, include the
-literal text `SKIP ONBOARDING` anywhere in your first prompt:
+literal text `RUN NON-INTERACTIVE ONBOARDING` anywhere in your first prompt
+(the legacy literal `SKIP ONBOARDING` is also accepted, unconditionally):
 
 ```
-SKIP ONBOARDING — this is a headless CLI tool named "Acme"
+RUN NON-INTERACTIVE ONBOARDING — this is a headless CLI tool named "Acme"
 ```
 
-Grimoire detects the phrase (case-sensitive), infers config values from the
+Grimoire detects the trigger (case-sensitive), infers config values from the
 rest of your prompt, writes `.claude/grimoire-config.json`, and runs
 `grm-repo-init` + `grm-workflow-bootstrap` non-interactively — prompting only for
 settings that cannot be inferred (test/build/release commands, etc.).
+
+**Committing the trigger works too.** A root `KICKOFF.md` or
+`FIRST-RELEASE-PROMPT.md` containing the trigger is read *before* your live
+prompt — so a bare "go" (or any prompt at all) is enough to drive the same
+non-interactive bootstrap once that file is committed. This is what makes a
+kickoff artifact self-executing rather than needing the phrase retyped live
+every time. Until bootstrap completes, a guard blocks commits that reach
+outside `.claude/`/`docs/`/a short root-file list (i.e. real source/feature
+work), pointing back at this fast path — framework/doc commits (including the
+kickoff file itself) are never blocked.
 
 **Inference rules (highest-precedence first):**
 
@@ -114,7 +125,7 @@ settings that cannot be inferred (test/build/release commands, etc.).
 | Issue tracker | Match of `github` (+ nearby `owner/repo`) → GitHub; else omitted (roadmap default) |
 | Release-phase model | `Auto` only when named near "release"/"phase"/"orchestration" **and** the paradigm resolves to Noir; else `Default` |
 
-After SKIP ONBOARDING completes, review `.claude/grimoire-config.json` and
+After the fast path completes, review `.claude/grimoire-config.json` and
 adjust any inferred values if needed.
 
 ---

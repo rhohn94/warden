@@ -1,0 +1,3 @@
+# config_loader.rs's highest-priority FILE layer (deploy-environment-design.md
+# §2 / config-loader-design.md §1): developer-local overrides, never committed.
+local.toml

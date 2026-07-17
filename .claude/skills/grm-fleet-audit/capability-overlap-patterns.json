@@ -1,0 +1,75 @@
+{
+  "schema-version": 1,
+  "_comment": "Heuristic grep-set for grm-fleet-audit's capability-overlap checklist item (#412, v3.97; pairs with the rule-of-two extraction policy, #411). One entry per component-taxonomy capability (docs/grimoire/design/component-taxonomy.md §3 is the single source of truth for the key set -- capability_overlap.py surfaces, never silently drops, a key here that the taxonomy doc no longer lists). Each capability maps to a 'patterns' array of Python `re` regex strings (case-sensitive, matched per line) that heuristically signal a HAND-ROLLED implementation of that capability -- code built directly from a raw ecosystem primitive inside a repo's own source, rather than consumed from a shared internal component via vendor.toml/grm-sync-deps. A repo counts as ONE hand-rolled implementation of a capability if ANY pattern matches ANY line in ANY of its files (repo-level dedup, not a match-count) -- see capability_overlap.py's CapabilityOverlapScanner.scan(). This is a heuristic surface for human triage, not a certainty signal: a hit warrants a look (and, at >=2 repos, an extraction-ticket draft), never an automatic file-and-forget. To add a capability: add one key matching a component-taxonomy §3 term with a non-empty 'patterns' array. To add a pattern to an existing capability: append a regex string; prefer a construct that signals 'this repo built the subsystem' (a middleware class, a connection constructor, a route-registration call, a repository/store class) over a bare common-utility call (e.g. avoid something as generic as a raw `os.environ.get(` line) to keep the false-positive rate low.",
+  "capabilities": {
+    "auth": {
+      "patterns": [
+        "bcrypt\\.hashpw\\(",
+        "hashlib\\.pbkdf2_hmac\\(",
+        "jwt\\.encode\\(",
+        "class \\w*Auth\\w*Middleware",
+        "def authenticate\\(",
+        "password_hash\\("
+      ]
+    },
+    "http-client": {
+      "patterns": [
+        "requests\\.(get|post|put|delete|patch)\\(",
+        "urllib\\.request\\.urlopen\\(",
+        "axios\\.(get|post|create)\\(",
+        "reqwest::Client::new\\("
+      ]
+    },
+    "http-server": {
+      "patterns": [
+        "Flask\\(__name__\\)",
+        "FastAPI\\(\\)",
+        "express\\(\\)",
+        "actix_web::App::new\\(",
+        "@app\\.route\\("
+      ]
+    },
+    "persistence": {
+      "patterns": [
+        "sqlite3\\.connect\\(",
+        "psycopg2\\.connect\\(",
+        "CREATE TABLE",
+        "sqlx::sqlite::SqlitePool",
+        "class \\w*Repository\\b"
+      ]
+    },
+    "telemetry": {
+      "patterns": [
+        "structlog\\.get_logger\\(",
+        "prometheus_client\\.",
+        "opentelemetry\\.",
+        "winston\\.createLogger\\(",
+        "tracing::info!\\("
+      ]
+    },
+    "messaging": {
+      "patterns": [
+        "pika\\.BlockingConnection\\(",
+        "kafka\\.KafkaProducer\\(",
+        "amqp\\.connect\\(",
+        "class \\w*EventBus\\b"
+      ]
+    },
+    "config": {
+      "patterns": [
+        "configparser\\.ConfigParser\\(",
+        "dotenv\\.load_dotenv\\(",
+        "class \\w*ConfigLoader\\b",
+        "viper\\.New\\("
+      ]
+    },
+    "design-language": {
+      "patterns": [
+        "--color-primary",
+        "styled-components",
+        "class \\w*DesignTokens\\b",
+        "tailwind\\.config"
+      ]
+    }
+  }
+}

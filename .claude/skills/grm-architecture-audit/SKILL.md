@@ -1,6 +1,6 @@
 ---
 name: grm-architecture-audit
-description: Evaluate a managed project's architecture and standard structure as deterministic fitness functions from .claude/architecture-rules.json (layers, allowed edges, forbidden imports, no-cycles, structure block) — report each violation (file:line — rule-id) over the import graph and directory layout. Read-only by default; optional --gate escalates. Use when auditing architecture fitness, layer boundaries, or standard-structure conformance.
+description: Evaluate a managed project's architecture and standard structure as deterministic fitness functions from .claude/architecture-rules.json — report each violation over the import graph and directory layout. Read-only by default; optional --gate escalates. Use when auditing architecture fitness, layer boundaries, or standard-structure conformance.
 ---
 
 # architecture-audit
@@ -50,7 +50,12 @@ the full schema):
 - `structure` — the standard project layout (full contract:
   `docs/project-structure.md`): `required` (top-level dirs that must exist),
   `aliases` (nonstandard dir name → its standard home), `gitignored` (dirs that
-  must not be tracked by git). Absent → skip structure conformance (Step 3a).
+  must not be tracked by git), `required-file-content` (#447 — a list of
+  `{id, path, contains, severity, message}` rules: `path` is a repo-relative
+  file that must exist and contain the literal `contains` substring, e.g. a
+  Cargo-based scaffold's `Cargo.toml` carrying `[profile.dev] debug =
+  "line-tables-only"`; a missing file is flagged the same as missing content).
+  Absent → skip structure conformance (Step 3a).
 - `opt_out` (+ optional `opt_out-reason`) — a project's explicit, tracked
   decision to decline architecture fitness enforcement. Surfaced distinctly
   from an absent rules file; runs no checks.
@@ -94,6 +99,13 @@ the tracked check). If absent, skip — report nothing.
 3. **`structure-tracked-output`** — for each name in `gitignored` that git is
    tracking (appears in `git ls-files`), emit a violation (`warn`):
    `<dir>/ is build output and must not be committed`.
+4. **`required-file-content`** (#447) — for each rule, if `path` is missing or
+   does not contain the literal `contains` substring, emit a violation using
+   the rule's own `id`/`severity`/`message` (defaults: `structure-content` /
+   `warn` / a generic "missing required content" message). Generic by design —
+   not Cargo-specific in code; the per-family quick-start templates
+   (`cli`/`gui`/`lib`/`service`) each seed one entry checking their
+   `Cargo.toml` for `[profile.dev] debug = "line-tables-only"`.
 
 Findings use the same `path — rule-id — message` shape. Remediation for
 nonstandard / output findings is the **`grm-structure-migrate`** skill.

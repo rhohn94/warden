@@ -1,7 +1,11 @@
 # Quick-start task runner (just — https://github.com/casey/just).
 #
 # Dev-DB recipes use a Dockerized Postgres shared across git worktrees. See the
-# "Multi-worktree shared-container behaviour" note below the db recipes.
+# "Multi-worktree shared-container behaviour" note below the db recipes. NOTE:
+# the scaffolded service (a healthz-only starter) does NOT depend on the DB
+# yet — `run`/`test` do not require `db-up`. db-up/db-down/compose.yaml ship
+# ready for when you wire real persistence (recordkeeper et al.); add the
+# `: db-up` dependency back to `run`/`test` at that point.
 
 set shell := ["bash", "-uc"]
 
@@ -76,30 +80,40 @@ db-down:
 # data. `just db-down` stops (not removes) the container; the volume survives.
 
 # ---------------------------------------------------------------------------
-# App lifecycle (depend on db-up so the DB is ready first)
+# App lifecycle
 # ---------------------------------------------------------------------------
 
-# The full build-recipe vocabulary (RSS-3, #321): every INTERFACE target has a
-# standard `just` recipe here (the one place recipes live). `recipe.py <t>` routes
-# to `just <t>` via .claude/recipes.json. Placeholder bodies carry
-# `# grimoire:placeholder` until wired; sync-deps/vendor-check delegate to the
-# framework scripts. Authority: docs/design/justfile-standard-design.md.
-
-# build — compile/package the project into dist/ artifacts.
-# env: "dev" skips optimisations; "prod" for release artifacts.
+# build — compile the service. `just` binds recipe args POSITIONALLY (not
+# `key=value`) — accept the documented `env=prod` spelling too by stripping a
+# leading `env=` (matches `deploy`'s `dry_run=` handling below, and makes
+# package.sh's own `PACKAGE_BUILD_CMD` default actually trigger a release build).
 build env="dev":
-    # grimoire:placeholder
-    @echo "TODO: replace with build command (e.g. npm run build, cargo build, python -m build)"
+    #!/usr/bin/env bash
+    set -euo pipefail
+    e="{{env}}"; e="${e#env=}"
+    if [ "$e" = "prod" ]; then cargo build --release; else cargo build; fi
 
 # run — start the service in dev mode (canonical name; `recipe.py server` and
-# `recipe.py run` both resolve here). Run `just build` first if your project
-# requires compiled artifacts before the process can start. When you wire the
-# real run command, background it and write its PID to $GRIMOIRE_RUN_PIDFILE
-# (default .grimoire-run.pid) so `just stop` (scripts/stop.sh) can find and kill
-# it, e.g.: `nohup <entrypoint> & echo $! > "${GRIMOIRE_RUN_PIDFILE:-.grimoire-run.pid}"`.
+# `recipe.py run` both resolve here). Depends on `db-up` (starts/reuses the
+# compose datastore). Auto-seeds in dev only (fail-closed outside dev, #438)
+# once `fixtures/` is adopted — see docs/design/fixtures-convention-design.md.
+# `|| true` keeps `run` working exactly as before on a project that hasn't
+# adopted it yet. Backgrounds the real process (nohup + disown for real
+# detachment) and writes its PID so `just stop` (scripts/stop.sh) can find it.
 run env="dev" port="3000": db-up
-    # grimoire:placeholder
-    @echo "TODO: replace with the run command (e.g. the service entrypoint) on port {{port}}, env {{env}}."
+    #!/usr/bin/env bash
+    set -euo pipefail
+    e="{{env}}"; e="${e#env=}"
+    if [ "$e" = "dev" ]; then
+        python3 .claude/skills/grm-build-recipe/recipe.py seed --env dev --if-empty || true
+    fi
+    if [ "$e" = "prod" ]; then cargo build --release; bin="target/release/service-app"
+    else cargo build; bin="target/debug/service-app"; fi
+    pidfile="${GRIMOIRE_RUN_PIDFILE:-.grimoire-run.pid}"
+    nohup "$bin" --port "{{port}}" >.grimoire-run.log 2>&1 &
+    disown
+    echo $! > "$pidfile"
+    echo "service-app launched on port {{port}} (pid $(cat "$pidfile")); output at .grimoire-run.log."
 
 # stop — kill running instance(s) of this project's process (#322, INTERFACE v6).
 # Resolution order: port param -> $GRIMOIRE_APP_PORT -> the pidfile `run` writes
@@ -108,56 +122,88 @@ run env="dev" port="3000": db-up
 stop port="":
     scripts/stop.sh {{port}}
 
-# test — run the test suite (depends on db-up so the DB is ready first).
-test filter="" watch="": db-up
-    # grimoire:placeholder
-    @echo "TODO: replace with the test command (e.g. pytest {{filter}})."
+# test — run the test suite (unit + the process-spawning integration test in
+# tests/service_integration.rs; cargo drives both).
+test filter="" watch="":
+    cargo test {{filter}}
 
-# seed — populate a local data store with fixtures.
+# unit-test — fast, isolated subset only: in-module #[cfg(test)] unit tests
+# via `cargo test --lib` (#360). Excludes the process-spawning integration
+# test in tests/service_integration.rs — that stays in `just test`'s full run.
+unit-test filter="" watch="":
+    cargo test --lib {{filter}}
+
+# seed — populate a local data store with fixtures (fixtures/ convention;
+# see docs/design/fixtures-convention-design.md). Delegates to the framework's
+# generic seed-dispatch engine — same delegation pattern as sync-deps/
+# vendor-check below. Fail-closed outside dev: recipe.py refuses env != dev
+# without an explicit --allow-non-dev override.
 seed fixture="" env="dev":
-    # grimoire:placeholder
-    @echo "TODO: replace with the seed command (fixture {{fixture}}, env {{env}})."
+    python3 .claude/skills/grm-build-recipe/recipe.py seed --fixture {{fixture}} --env {{env}}
 
 # migrate — run pending schema / data migrations.
 migrate env="dev":
-    # grimoire:placeholder
-    @echo "TODO: replace with the migrate command (env {{env}})."
+    @echo "The healthz-only starter has no data store to migrate by default (env {{env}}) — wire recordkeeper/db-up first."
 
 # lint — static analysis / formatting checks.
 lint:
-    # grimoire:placeholder
-    @echo "TODO: replace with the lint command (e.g. ruff check ., cargo clippy)."
+    cargo clippy --all-targets -- -D warnings
 
 # clean — remove build artifacts.
 clean:
-    # grimoire:placeholder
-    @echo "TODO: replace with the clean command (e.g. rm -rf dist/)."
+    cargo clean
+    rm -rf dist
 
-# package — assemble a versioned, deployable release bundle (web-app-shape;
-# optional for a service). See the web quick-start template for a real
-# scripts/package.sh reference implementation.
+# package — assemble a versioned, deployable release bundle in dist/.
+# Delegates to the shared scripts/package.sh (resolves VERSION + TRIPLE, builds,
+# stages dist/<name>-v{VER}-{TRIPLE}/, emits grimoire-build-info.json +
+# release.json + SHA256SUMS, tars deterministically). Parameterized via
+# scripts/package-manifest.sh. version/target default to "" so package.sh
+# auto-detects from the manifest.
 package version="" target="":
-    # grimoire:placeholder
-    @echo "TODO: replace with the package command (version {{version}}, target {{target}})."
+    #!/usr/bin/env bash
+    set -euo pipefail
+    args=()
+    [ -n "{{version}}" ] && args+=(--version "{{version}}")
+    [ -n "{{target}}" ] && args+=(--triple "{{target}}")
+    scripts/package.sh ${args[@]+"${args[@]}"}
 
-# deploy — push artifacts to a live environment.
-# env: REQUIRED (no default — forces explicit choice); one of: dev | staging | prod.
-# dry_run: "true" to plan without executing side effects.
+# deploy — push a packaged bundle to a named environment. env: REQUIRED (no
+# default — forces explicit choice); dry_run: "true" to plan every action
+# without executing side effects. Delegates to the shared scripts/deploy.sh.
 deploy env dry_run="false":
-    # grimoire:placeholder
-    @echo "TODO: replace with deploy command (e.g. fly deploy --env {{env}})"
+    #!/usr/bin/env bash
+    set -euo pipefail
+    dr="{{dry_run}}"; dr="${dr#dry_run=}"
+    if [ "$dr" = "true" ]; then scripts/deploy.sh {{env}} --dry-run; else scripts/deploy.sh {{env}}; fi
 
-# smoke — runtime verification (boot + probe the served surface). See the web
-# quick-start template for a /healthz reference implementation.
+# smoke — boot-free liveness check: GET /healthz and assert a 2xx JSON body
+# with {status, version} (web-app-deployment-protocol.md §5) — the SAME
+# contract the web quick-start template's `just smoke` recipe asserts. port
+# selects the local dev server port (defaults to 3000). Override the base URL
+# via SMOKE_BASE_URL (else http://localhost:{{port}}, with $GRIMOIRE_APP_PORT
+# honoured when port is left at its default).
 smoke port="3000":
-    # grimoire:placeholder
-    @echo "TODO: replace with the smoke check (probe http://localhost:{{port}} for 2xx)."
+    #!/usr/bin/env bash
+    set -euo pipefail
+    base="${SMOKE_BASE_URL:-http://localhost:${GRIMOIRE_APP_PORT:-{{port}}}}"
+    url="$base/healthz"
+    echo "smoke: GET $url (port={{port}})"
+    body="$(curl -fsS "$url")" || { echo "smoke: /healthz did not return 2xx" >&2; exit 1; }
+    echo "$body" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert "status" in d and "version" in d, "healthz JSON must carry {status, version}: %r" % d; print("smoke: OK status=%s version=%s" % (d["status"], d["version"]))'
 
-# release — the changelog-derived release ceremony (web-app-shape; optional for a
-# service). See the web quick-start template for a scripts/release.sh reference.
+# gui-test — platform-differentiated GUI feature test (#362); a backend
+# service has no GUI surface to test.
+gui-test baseline="main":
+    @echo "A backend service has no GUI surface to gui-test (baseline {{baseline}})."
+
+# release — the changelog-derived release ceremony (no args). Delegates to the
+# shared scripts/release.sh (derives VERSION from docs/version-history.md,
+# guards, bumps Cargo.toml, tests + builds, archives via `just package`,
+# commits + tags, then publishes once the tag reaches the remote — see the
+# script header for the full ceremony).
 release *ARGS:
-    # grimoire:placeholder
-    @echo "TODO: replace with the release ceremony (see the web template's scripts/release.sh)."
+    scripts/release.sh {{ARGS}}
 
 # sync-deps — reconcile / vendor first-party deps from a release channel.
 # Delegates to the framework consume-side script; mode selects --check/--update/--offline.
@@ -168,3 +214,35 @@ sync-deps mode="":
 # to the framework script; full selects the whole-vendor audit.
 vendor-check full="":
     python3 .claude/skills/grm-dependency-audit/dependency_channel_conformance.py --root . {{full}}
+
+# trim — safe worktree reap (dry-run by default) + this worktree's own cargo-
+# artifact sweep (#446). Human/master-invoked convenience, not an automated
+# call site — unlike worktree_reap.py's own destructive-by-default CLI
+# posture (every other #449 call site already wraps it in its own
+# confirmation layer, disk-branch-hygiene-design.md §Scope), `trim` inverts
+# that: dry-run (preview only) unless `--confirm` is passed. `--dry-run` is
+# accepted explicitly too (the acceptance-tested spelling) and always wins
+# over `--confirm` if both are given. `--landed-ref REF` overrides what
+# "landed" means for the #444 predicate (default `dev`; pass
+# `--landed-ref version/3.95` during an in-flight release). Auto-discovers
+# dead agent-branch worktrees (`claude/…`, #456 namespace) — never touches a
+# human branch/worktree.
+#
+# CAVEAT — the cargo sweep is scoped to THIS worktree only: a worktree that
+# gets reaped above already loses its whole target/ for free via
+# `git worktree remove`, so there is nothing extra to sweep there. Sweeping
+# THIS worktree's own target/ cannot generically know whether a build here
+# is still needed, so it stays behind the same explicit `--confirm` gate
+# (never runs on a bare `just trim` or `--dry-run`) and is documented here as
+# a known, deliberate limitation rather than solved automatically.
+trim *ARGS:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    python3 .claude/skills/grm-worktree-preflight/trim.py {{ARGS}}
+    a=" {{ARGS}} "
+    if [[ "$a" == *" --confirm "* && "$a" != *" --dry-run "* ]]; then
+        echo "trim: sweeping this worktree's own cargo build artifacts (cargo clean)…"
+        cargo clean
+    else
+        echo "trim: DRY-RUN — would also run 'cargo clean' in this worktree (pass --confirm to sweep it; forces a full rebuild on the next 'just build')."
+    fi

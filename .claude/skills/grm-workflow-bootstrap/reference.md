@@ -346,21 +346,28 @@ questions; offer a sensible default as the first option where one exists.
    | 16 | TUI dep | `rich`, `textual`, `blessed`, `bubbletea`, `ratatui` | terminal UI (TUI) | Yes (TUI) |
    | 17 | Config file | `vite.config.*`, `next.config.*`, `nuxt.config.*`, `svelte.config.*`, `angular.json`, `astro.config.*` | confirms/disambiguates the web stack | Yes |
    | 18 | Config file | `tailwind.config.*`, `postcss.config.*` | web styling (corroborating, not deciding) | (boost web) |
-   | 19 | Server-only deps, no view layer | `express`/`fastify`/`flask`/`gin` with **no** rows 1–18 hit | likely headless service | Lean "No, headless" |
+   | 19 | Server-only deps, no view layer | `express`/`fastify`/`flask`/`gin`/`axum`/`actix-web`/`rocket` with **no** rows 1–18 hit and **no** row 21 hit | likely headless service | Lean "No, headless" |
    | 20 | Library manifest, no app entry | published-package shape, no UI dep | likely headless library | Lean "Not yet" / "No" |
+   | 21 | Cargo.toml dep + view-layer peer | `axum`/`actix-web`/`rocket` dep **plus** a view-layer peer (`askama`/`tera`/`maud`/`minijinja` dep, or a `templates/` directory) | Rust server-rendered web app | Yes (server-rendered) |
 
    *Precedence (deterministic, highest wins):*
 
    1. **Explicit native/mobile + framework dep** (rows 1–3) — strongest;
       names a concrete platform.
-   2. **Declared runtime dep in a manifest** (rows 4–16) — a dependency
-      the project chose to install.
+   2. **Declared runtime dep in a manifest** (rows 4–16, 21) — a dependency
+      the project chose to install. Row 21 (Rust server-rendered) is checked
+      before row 19 falls back to a headless lean: the same
+      `axum`/`actix-web`/`rocket` dep with a view-layer peer present hits row
+      21 (Yes, server-rendered), not row 19 — distinct from row 6's
+      native-GUI-only Rust coverage (`egui`/`iced`/`tauri`/`slint`, no server
+      framework involved). The bare server dep with **no** view-layer peer
+      stays row 19 (headless).
    3. **Config-file presence** (rows 17–18) — corroborates/disambiguates
       a manifest hit; a lone config file with no dep is a weak signal.
    4. **File-extension census** — used to disambiguate between multiple
       manifest hits or when no manifest exists.
    5. **Negative/headless leans** (rows 19–20) — applied only when **no**
-      positive GUI signal (rows 1–18) fired.
+      positive GUI signal (rows 1–18, 21) fired.
 
    Meta-frameworks (row 15) resolve their base via the underlying dep
    (Next ⇒ React, Nuxt ⇒ Vue) and report the meta-framework as the
@@ -420,7 +427,8 @@ questions; offer a sensible default as the first option where one exists.
 
      - **Web slice** — rows 8–13/15 (browser/meta web frameworks), corroborated
        by rows 17–18, **or** a server web framework (Flask/Django/Express/
-       FastAPI/Rails/Gin) serving HTML/templates → **persist** `web-app =
+       FastAPI/Rails/Gin) serving HTML/templates, **or** row 21 (Rust
+       `axum`/`actix-web`/`rocket` + a view-layer peer) → **persist** `web-app =
        { value: "yes", stack: <confirmed stack> }` into
        `.claude/grimoire-config.json` via a **pure-data write** (write only the
        `web-app` key; leave every other field and `schema-version` untouched —
@@ -470,8 +478,8 @@ agents at runtime; replacing them breaks the templates.
 | Answer | Files to patch |
 |---|---|
 | Active paradigm | `CLAUDE.md` — fill the `## Paradigm` stamp's `{ACTIVE}` token (see Rules below) |
-| Test command  | `CLAUDE.md`, `grm-release-phase`, `grm-release-phase-merge` — every `{test-command}` |
-| Build command | `CLAUDE.md`, `grm-release-phase`, `grm-release-phase-merge` — every `{build-command}` |
+| Test command  | `CLAUDE.md` — every `{test-command}`. Not `grm-release-phase` / `grm-release-phase-merge` (#465) — those resolve `python3 .claude/skills/grm-build-recipe/recipe.py test` from `.claude/recipes.json` at run time, no bootstrap patch needed |
+| Build command | `CLAUDE.md` — every `{build-command}`. Not `grm-release-phase` / `grm-release-phase-merge` (#465) — same `recipe.py build` resolution |
 | Release command | `CLAUDE.md`, `grm-project-release`, `docs/grimoire/version-design.md` — every `{release-command}` |
 | Type-check command | `CLAUDE.md` commands table — `{typecheck-command}` (blank ⇒ set `code-quality.typecheck.value: "off"`; folded into the build gate otherwise) |
 | Lint command | `CLAUDE.md` commands table — `{lint-command}` (blank ⇒ no lint gate) |

@@ -1,6 +1,6 @@
 ---
 name: grm-code-health
-description: Emit a code-health report for a managed project in two sections — dead code + duplication (vulture / ts-prune / cargo-udeps + a jscpd-style duplication pass) and complexity + maintainability (radon / ts-complexity / gocyclo) with a delta against a stored baseline. Read-only report by default; an optional gate warns/blocks on a regression or new finding. Use when checking code health, finding dead code, or detecting duplication.
+description: Emit a code-health report for a managed project in two sections — dead code + duplication, and complexity + maintainability — with a delta against a stored baseline. Read-only report by default; an optional gate warns/blocks on a regression or new finding. Use when checking code health, finding dead code, or detecting duplication.
 ---
 
 # code-health

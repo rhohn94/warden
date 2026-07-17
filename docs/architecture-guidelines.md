@@ -17,6 +17,51 @@ to think about structure, boundaries, and dependencies.
 - **Low coupling, high cohesion** — depend on interfaces, not implementations.
 - **Explicit dependencies** — no hidden globals; pass collaborators in.
 
+## Standards doctrine: a mandate ships with its check
+
+A rule stated only in prose drifts: nothing catches a violation, so
+enforcement depends on whoever happens to re-read the doc. Fleet-wide review
+of this project's own standards found this to be the single most uniform
+predictor of whether a rule actually held — mechanically gated standards
+hold, prose/ticket-governed ones drift. Codified as doctrine:
+
+Every mandated standard (a "MUST"-worded rule, a required catalog entry) in
+this codebase's documentation **MUST ship with**:
+
+1. **A deterministic check** — a script, regex, or audit-hint rule that
+   evaluates the standard mechanically, without human judgment. The
+   `<!-- audit: id="..." check="..." severity="..." applies="..." -->`
+   annotations throughout §Preferred patterns below are one worked instance;
+   a `grm-doc-assurance` check function is another.
+2. **A named gate that runs it** — the check must be wired into a skill or
+   pipeline step that actually executes on a normal workflow path
+   (`grm-architecture-audit`, `grm-coding-practices-audit`,
+   `grm-doc-assurance`, a merge-gate dial, …), not left as a script nobody
+   invokes.
+3. **A severity ramp** — a newly introduced standard starts at `WARN`
+   (visible, non-blocking) so existing violations can be found and cleaned up
+   without breaking every branch at once; once that cleanup lands, the
+   standard is promoted to `block` (or `error`) so new violations can no
+   longer merge. Jumping straight to `block` on introduction is a common way
+   a well-intentioned rule gets bypassed or reverted under pressure instead
+   of adopted.
+
+A rule that cannot yet be checked mechanically is not exempt from being
+written down — it is instead **explicitly labeled aspirational** (e.g. "—
+aspirational, no check yet") so a reader can tell "this is enforced" from
+"this is a hope" at a glance. An aspirational mandate should carry a plan or
+a tracked follow-up to acquire its check rather than staying aspirational
+indefinitely.
+
+**Meta-check (release-gate).** `grm-doc-assurance`'s `check-for-checks`
+(WARN-tier) scans `docs/coding-standards.md` and the required-feature catalog
+(`.claude/skills/grm-required-feature-catalog/required-feature-catalog.md`) for a
+MUST-clause-shaped rule or catalog entry with no paired reference to a
+deterministic check — catching a violation of this very doctrine at
+release-gate time instead of relying on a reviewer to notice. See
+`.claude/skills/grm-doc-assurance/doc_assurance.py`'s `check_for_checks`
+docstring for the detection heuristic and its documented limitations.
+
 ## Preferred patterns (worked examples)
 
 Each pattern below states the rule, *why* it exists, a brief illustrative

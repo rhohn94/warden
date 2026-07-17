@@ -8,9 +8,23 @@ Provides three assertions for the chip-free Noir era (post v3.32):
   - assert_branch_advanced: assert a feature branch carries new commits beyond
     the staging tip.
 
-CLI: python3 verify_isolation.py --result-file <path> --staging-branch <ref>
-     Exit 0 = footer present and HEAD on expected staging branch.
-     Exit nonzero = footer absent or HEAD drifted (do not merge).
+run_batch_assertions() (#423) combines all three into one mandatory,
+loudly-failing gate over an entire dispatch batch, so the checks above no
+longer need to be invoked manually one at a time after every batch.
+
+CLI:
+  Single item:
+    python3 verify_isolation.py --result-file <path> --staging-branch <ref>
+    Exit 0 = footer present and HEAD on expected staging branch.
+    Exit nonzero = footer absent or HEAD drifted (do not merge).
+
+  Batch (mandatory post-dispatch gate, #423):
+    python3 verify_isolation.py --batch-manifest <path.json> --staging-branch <ref>
+    <path.json> is a JSON list of {"branch": <feature-branch>,
+    "result_file": <path-or-null>} objects, one per dispatched item in the
+    batch. Runs all three assertions (footer presence per item, HEAD-on-
+    staging once for the batch, branch-advanced per item) and exits nonzero
+    with every violation listed if any check fails. Do NOT merge on nonzero.
 
 Design reference (§7) lives in the upstream Grimoire repository
 (framework-internal -- not shipped).
@@ -19,6 +33,7 @@ Design reference (§7) lives in the upstream Grimoire repository
 from __future__ import annotations
 
 import argparse
+import json
 import re
 import subprocess
 import sys
@@ -113,6 +128,73 @@ def assert_branch_advanced(staging_branch: str, feature_branch: str) -> bool:
         return False
 
 
+def run_batch_assertions(entries: list[dict], staging_branch: str) -> tuple[bool, list[str]]:
+    """Run all three post-dispatch assertions over one dispatch batch (#423).
+
+    This is the mandatory, mechanical replacement for manually re-invoking
+    parse_isolation_footer / check_head_on_staging / assert_branch_advanced
+    one at a time after every batch.
+
+    Args:
+        entries: one dict per dispatched item in the batch, each with:
+            - "branch": the feature branch the item was expected to advance
+              (required for the branch-advanced check; skipped if falsy).
+            - "result_file": path to the agent's raw result text, or None/
+              absent to skip the footer check for that item (e.g. the item
+              used the serial-in-place fallback, which has no Agent result).
+        staging_branch: the expected master staging ref (e.g. "version/3.34").
+            Checked once for the whole batch, since all dispatched items in a
+            batch share the same integration-master worktree/HEAD.
+
+    Returns:
+        (all_passed, violations) — violations is a human-readable description
+        per failure found (empty list when all_passed is True). Every
+        violation is actionable: it names which check failed and for which
+        branch/ref.
+    """
+    violations: list[str] = []
+
+    # Check 2 (HEAD unchanged): once per batch, not per item.
+    if not check_head_on_staging(staging_branch):
+        violations.append(
+            f"HEAD drift: master HEAD is not on staging branch {staging_branch!r}. "
+            "Do NOT merge any branch in this batch until HEAD is repaired."
+        )
+
+    for entry in entries:
+        branch = entry.get("branch")
+        result_file = entry.get("result_file")
+        label = branch or "<unnamed item>"
+
+        # Check 1 (footer presence): only when a result file was captured.
+        if result_file:
+            try:
+                with open(result_file, "r", encoding="utf-8") as fh:
+                    result_text = fh.read()
+            except OSError as exc:
+                violations.append(
+                    f"{label!r}: cannot read result file {result_file!r}: {exc}"
+                )
+            else:
+                if parse_isolation_footer(result_text) is None:
+                    violations.append(
+                        f"{label!r}: footerless agent result — worktreePath/"
+                        "worktreeBranch absent. Treat as in-place execution; "
+                        "do NOT merge."
+                    )
+
+        # Check 3 (branch advanced): only when a branch name was given.
+        if branch:
+            if not assert_branch_advanced(staging_branch, branch):
+                violations.append(
+                    f"{branch!r}: zero commits beyond {staging_branch!r} — "
+                    "branch did not advance. Do NOT merge; re-dispatch or "
+                    "investigate."
+                )
+
+    return (len(violations) == 0, violations)
+
+
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
@@ -134,6 +216,17 @@ def _run_cli(argv: list[str]) -> int:
         help="Expected HEAD staging branch (e.g. version/3.34).",
     )
     parser.add_argument(
+        "--batch-manifest",
+        metavar="PATH",
+        help=(
+            "Path to a JSON list of {\"branch\": <feature-branch>, "
+            "\"result_file\": <path-or-null>} objects — one per dispatched "
+            "item in the batch. Runs the mandatory combined post-dispatch "
+            "gate (footer presence + HEAD-on-staging + branch-advanced) "
+            "instead of the single-item mode. Requires --staging-branch."
+        ),
+    )
+    parser.add_argument(
         "--self-test",
         action="store_true",
         help="Run offline unit tests using inline fixtures (no git required).",
@@ -143,8 +236,45 @@ def _run_cli(argv: list[str]) -> int:
     if args.self_test:
         return _run_self_test()
 
+    if args.batch_manifest:
+        if not args.staging_branch:
+            parser.error("--staging-branch is required with --batch-manifest.")
+        try:
+            with open(args.batch_manifest, "r", encoding="utf-8") as fh:
+                entries = json.load(fh)
+        except (OSError, json.JSONDecodeError) as exc:
+            print(f"ERROR: cannot read/parse batch manifest: {exc}", file=sys.stderr)
+            return 2
+        if not isinstance(entries, list):
+            print(
+                "ERROR: batch manifest must be a JSON list of "
+                "{branch, result_file} objects.",
+                file=sys.stderr,
+            )
+            return 2
+
+        passed, violations = run_batch_assertions(entries, args.staging_branch)
+        if passed:
+            print(
+                f"OK: all post-dispatch assertions passed for {len(entries)} "
+                f"batch item(s) against staging branch {args.staging_branch!r}."
+            )
+            return 0
+
+        print(
+            f"FAIL: {len(violations)} post-dispatch assertion violation(s) — "
+            "do NOT merge:",
+            file=sys.stderr,
+        )
+        for violation in violations:
+            print(f"  - {violation}", file=sys.stderr)
+        return 1
+
     if not args.result_file or not args.staging_branch:
-        parser.error("--result-file and --staging-branch are required (unless --self-test).")
+        parser.error(
+            "--result-file and --staging-branch are required "
+            "(unless --self-test or --batch-manifest)."
+        )
 
     try:
         with open(args.result_file, "r", encoding="utf-8") as fh:
@@ -342,6 +472,96 @@ def _run_self_test() -> int:
         failures.append(f"assert_branch_advanced: expected False on git error, got {result_bool!r}")
     else:
         print("PASS: assert_branch_advanced — returns False on git error")
+
+    # --- run_batch_assertions (offline stub, #423) ---
+    import tempfile
+    import os
+
+    # Case: all-pass batch (HEAD on staging, footer present, branch advanced).
+    def _fake_run_all_ok(cmd, **kwargs):  # noqa: ANN001
+        class FakeResult:
+            returncode = 0
+            stdout = "version/3.93\n" if "symbolic-ref" in cmd else "2\n"
+            stderr = ""
+        return FakeResult()
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        result_path = os.path.join(tmpdir, "result.txt")
+        with open(result_path, "w", encoding="utf-8") as fh:
+            fh.write("Done.\nworktreePath: /tmp/wt/x\nworktreeBranch: feat/x\n")
+
+        _subprocess.run = _fake_run_all_ok  # type: ignore[assignment]
+        passed, violations = run_batch_assertions(
+            [{"branch": "feat/x", "result_file": result_path}], "version/3.93"
+        )
+        _subprocess.run = original_run
+        if not (passed is True and violations == []):
+            failures.append(
+                f"run_batch_assertions: expected all-pass batch to pass, got "
+                f"passed={passed!r} violations={violations!r}"
+            )
+        else:
+            print("PASS: run_batch_assertions — all-pass batch returns (True, [])")
+
+        # Case: HEAD drift is caught once for the whole batch.
+        def _fake_run_head_drift(cmd, **kwargs):  # noqa: ANN001
+            class FakeResult:
+                returncode = 0
+                stdout = "stray-branch\n" if "symbolic-ref" in cmd else "2\n"
+                stderr = ""
+            return FakeResult()
+
+        _subprocess.run = _fake_run_head_drift  # type: ignore[assignment]
+        passed, violations = run_batch_assertions(
+            [{"branch": "feat/x", "result_file": result_path}], "version/3.93"
+        )
+        _subprocess.run = original_run
+        if passed is not False or not any("HEAD drift" in v for v in violations):
+            failures.append(
+                f"run_batch_assertions: expected HEAD-drift violation, got "
+                f"passed={passed!r} violations={violations!r}"
+            )
+        else:
+            print("PASS: run_batch_assertions — HEAD drift produces a violation")
+
+        # Case: footerless item is caught per-item.
+        footerless_path = os.path.join(tmpdir, "footerless.txt")
+        with open(footerless_path, "w", encoding="utf-8") as fh:
+            fh.write("Done, no footer.\n")
+
+        _subprocess.run = _fake_run_all_ok  # type: ignore[assignment]
+        passed, violations = run_batch_assertions(
+            [{"branch": "feat/y", "result_file": footerless_path}], "version/3.93"
+        )
+        _subprocess.run = original_run
+        if passed is not False or not any("footerless" in v for v in violations):
+            failures.append(
+                f"run_batch_assertions: expected footerless violation, got "
+                f"passed={passed!r} violations={violations!r}"
+            )
+        else:
+            print("PASS: run_batch_assertions — footerless item produces a violation")
+
+        # Case: branch not advanced is caught per-item.
+        def _fake_run_not_advanced(cmd, **kwargs):  # noqa: ANN001
+            class FakeResult:
+                returncode = 0
+                stdout = "version/3.93\n" if "symbolic-ref" in cmd else "0\n"
+                stderr = ""
+            return FakeResult()
+
+        _subprocess.run = _fake_run_not_advanced  # type: ignore[assignment]
+        passed, violations = run_batch_assertions(
+            [{"branch": "feat/z", "result_file": result_path}], "version/3.93"
+        )
+        _subprocess.run = original_run
+        if passed is not False or not any("did not advance" in v for v in violations):
+            failures.append(
+                f"run_batch_assertions: expected not-advanced violation, got "
+                f"passed={passed!r} violations={violations!r}"
+            )
+        else:
+            print("PASS: run_batch_assertions — non-advanced branch produces a violation")
 
     # Summary.
     if failures:

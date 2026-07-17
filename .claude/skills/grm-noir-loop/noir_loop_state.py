@@ -9,17 +9,31 @@ subagent reads this file into its own context, so it MUST stay small; an
 over-budget write is REFUSED (never silently truncated) so subagents reading it
 stay near-clean.
 
+**Blocked-on-human escape + cycle budget (#422, v3.93).** Every `--advance`
+recomputes a `progress_hash` over the open-work set + the current blocker
+string. If that hash repeats unchanged for `STALL_LIMIT` consecutive advances,
+`blocked_on_human` flips true — the loop made the same no-progress observation
+several times in a row (the same human-gated item, the same blocker) and should
+stop with a clear report instead of spinning forever (the #422 "8 Stop-hook
+cycles" incident). Independently, `cycle_budget_exceeded` flips true once
+`iteration` reaches the configurable `max_cycles` cap — a backstop that fires
+even while the loop is still making real progress, so no run is unbounded.
+Callers (the release-master / orchestrator) read both flags off `--read` /
+`--advance` output and hand off to `grm-stop-point` when either is set.
+
 Design: docs/grimoire/design/noir-iterative-loop-design.md.
 Standard: Python 3 stdlib-only (docs/grimoire/design/scripting-unification-design.md).
 
 State file (`.claude/cache/noir-loop-state.json`, gitignored):
   schema_version, iteration, updated_at (ISO-8601 UTC), last_summary,
-  open_work[], next_steps[].
+  open_work[], next_steps[], progress_hash, stall_count, blocked_on_human,
+  blocker, max_cycles, cycle_budget_exceeded.
 
 Usage:
-  noir_loop_state.py --init [--force] [--root DIR]
+  noir_loop_state.py --init [--force] [--max-cycles N] [--root DIR]
   noir_loop_state.py --read [--root DIR]
-  noir_loop_state.py --advance --summary S [--open A --open B] [--next X] [--root DIR]
+  noir_loop_state.py --advance --summary S [--open A --open B] [--next X]
+                      [--blocker TEXT] [--max-cycles N] [--root DIR]
   noir_loop_state.py --validate [--root DIR]
   noir_loop_state.py --self-test
 Exit 0 on success; 2 on bad input / validation / budget violation.
@@ -28,6 +42,7 @@ from __future__ import annotations
 
 import argparse
 import datetime
+import hashlib
 import json
 import os
 import sys
@@ -45,6 +60,23 @@ STATE_REL = os.path.join(".claude", "cache", "noir-loop-state.json")
 MAX_STATE_BYTES = 4096
 INITIAL_ITERATION = 0
 JSON_INDENT = 2
+# Number of consecutive `--advance` calls with an IDENTICAL progress_hash
+# before the loop declares itself blocked-on-human and stops (#422). Chosen
+# as 3: 1 tolerates zero repetition (too eager — a single coincidental repeat
+# while unrelated work lands would false-trigger); 2 is defensible but still
+# risks tripping on a one-off transient repeat; 3 requires a genuinely
+# sustained stall while still catching it in a handful of cycles — well
+# below the 8-cycle bounce that motivated this issue.
+STALL_LIMIT = 3
+# Backstop cap on total loop iterations regardless of progress — a runaway
+# loop still stops even if it keeps finding *different* busywork each cycle.
+# This is only the default seed; callers may override per-state via
+# `--max-cycles`, which persists in the state file once set.
+DEFAULT_MAX_CYCLES = 20
+# Truncated sha256 hex length for progress_hash — short enough to keep the
+# state file's byte budget cheap, long enough that an accidental collision
+# between two genuinely different states is not a practical concern here.
+PROGRESS_HASH_LEN = 16
 
 
 class StateError(Exception):
@@ -78,6 +110,12 @@ class NoirLoopState:
             "last_summary": "",
             "open_work": [],
             "next_steps": [],
+            "progress_hash": "",
+            "stall_count": 0,
+            "blocked_on_human": False,
+            "blocker": "",
+            "max_cycles": DEFAULT_MAX_CYCLES,
+            "cycle_budget_exceeded": False,
         })
 
     @classmethod
@@ -131,6 +169,31 @@ class NoirLoopState:
             raise StateError("last_summary must be a string")
         self._as_str_list(d.get("open_work"), "open_work")
         self._as_str_list(d.get("next_steps"), "next_steps")
+
+        # Progress-tracking fields (#422) are additive/optional so an older
+        # state file (pre-dating this change) still loads — self-heal missing
+        # ones to their defaults rather than hard-failing a stale cache.
+        d.setdefault("progress_hash", "")
+        d.setdefault("stall_count", 0)
+        d.setdefault("blocked_on_human", False)
+        d.setdefault("blocker", "")
+        d.setdefault("max_cycles", DEFAULT_MAX_CYCLES)
+        d.setdefault("cycle_budget_exceeded", False)
+        if not isinstance(d["progress_hash"], str):
+            raise StateError("progress_hash must be a string")
+        if not isinstance(d["stall_count"], int) or isinstance(d["stall_count"], bool) \
+                or d["stall_count"] < 0:
+            raise StateError("stall_count must be a non-negative integer")
+        if not isinstance(d["blocked_on_human"], bool):
+            raise StateError("blocked_on_human must be a boolean")
+        if not isinstance(d["blocker"], str):
+            raise StateError("blocker must be a string")
+        if not isinstance(d["max_cycles"], int) or isinstance(d["max_cycles"], bool) \
+                or d["max_cycles"] < 1:
+            raise StateError("max_cycles must be a positive integer")
+        if not isinstance(d["cycle_budget_exceeded"], bool):
+            raise StateError("cycle_budget_exceeded must be a boolean")
+
         self._check_budget()
         return True
 
@@ -143,17 +206,79 @@ class NoirLoopState:
                 % (size, MAX_STATE_BYTES))
 
     # ── Mutation ──
-    def advance(self, summary, open_work=None, next_steps=None):
-        """Bump iteration, set the summary, replace work lists, restamp time."""
+    def advance(self, summary, open_work=None, next_steps=None, blocker=None,
+                max_cycles=None):
+        """Bump iteration, set the summary, replace work lists, restamp time,
+        and recompute the progress-hash / stall / cycle-budget stop flags.
+
+        `blocker` (optional) is the current human-blocking condition — pass a
+        non-empty string when the iteration is stuck on the same human-gated
+        item, or "" to explicitly clear it. Omitted (None) keeps the prior
+        value, since a release-master that doesn't mention a blocker isn't
+        necessarily saying "cleared" vs. "unchanged."
+        `max_cycles` (optional) overrides the cycle-budget cap; omitted keeps
+        the prior value (or the default seed on a fresh state).
+        """
         if not isinstance(summary, str) or not summary.strip():
             raise StateError("--advance requires a non-empty --summary")
         self._data["iteration"] = int(self._data["iteration"]) + 1
         self._data["last_summary"] = summary.strip()
         self._data["open_work"] = self._as_str_list(open_work, "open_work")
         self._data["next_steps"] = self._as_str_list(next_steps, "next_steps")
+        if blocker is not None:
+            if not isinstance(blocker, str):
+                raise StateError("blocker must be a string")
+            self._data["blocker"] = blocker.strip()
+        else:
+            self._data.setdefault("blocker", "")
+        if max_cycles is not None:
+            self._set_max_cycles(max_cycles)
+        else:
+            self._data.setdefault("max_cycles", DEFAULT_MAX_CYCLES)
+        self._update_progress()
         self._data["updated_at"] = self._now()
         self.validate()
         return self
+
+    def _set_max_cycles(self, max_cycles):
+        """Validate + set the cycle-budget cap (a positive integer)."""
+        if not isinstance(max_cycles, int) or isinstance(max_cycles, bool) or max_cycles < 1:
+            raise StateError("--max-cycles must be a positive integer")
+        self._data["max_cycles"] = max_cycles
+
+    def _update_progress(self):
+        """Recompute progress_hash + stall_count and the two derived stop
+        flags (blocked_on_human, cycle_budget_exceeded) — the #422 mechanism.
+
+        A hash that matches the immediately-prior hash extends the current
+        "no progress" streak; any change (new/removed open-work item, a
+        different blocker) resets the streak to 1 (this iteration is the
+        first observation of a new state). `blocked_on_human` flips true once
+        the streak reaches STALL_LIMIT consecutive identical observations.
+        `cycle_budget_exceeded` is independent — it fires once `iteration`
+        reaches `max_cycles`, whether or not progress is being made.
+        """
+        old_hash = self._data.get("progress_hash", "")
+        new_hash = self._compute_progress_hash(self._data["open_work"], self._data["blocker"])
+        if old_hash and new_hash == old_hash:
+            stall = int(self._data.get("stall_count", 0)) + 1
+        else:
+            stall = 1
+        self._data["progress_hash"] = new_hash
+        self._data["stall_count"] = stall
+        self._data["blocked_on_human"] = stall >= STALL_LIMIT
+        self._data["cycle_budget_exceeded"] = (
+            self._data["iteration"] >= self._data.get("max_cycles", DEFAULT_MAX_CYCLES))
+
+    @staticmethod
+    def _compute_progress_hash(open_work, blocker):
+        """Deterministic short hash over the "relevant state" for this
+        iteration: the open-work set (order-independent — sorted) and the
+        current blocker string. Two iterations that see the same open items
+        and the same blocker hash identically, which is exactly the "no
+        real-world change" signal #422 wants detected mechanically."""
+        canonical = "|".join(sorted(open_work)) + "::" + (blocker or "").strip()
+        return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:PROGRESS_HASH_LEN]
 
     # ── Serialization / persistence ──
     def serialize(self):
@@ -210,12 +335,15 @@ def _warn_on_continuity_loss(root):
 
 
 # ── Command handlers ────────────────────────────────────────────────────────
-def cmd_init(root: str, force: bool) -> NoirLoopState:
+def cmd_init(root: str, force: bool, max_cycles: int | None = None) -> NoirLoopState:
     path = _state_path(root)
     if os.path.exists(path) and not force:
         # Idempotent: refuse to clobber existing state unless --force.
         return NoirLoopState.load(path)
     state = NoirLoopState.fresh()
+    if max_cycles is not None:
+        state._set_max_cycles(max_cycles)  # noqa: SLF001 — same-module helper
+        state._update_progress()
     state.save(path)
     return state
 
@@ -232,10 +360,11 @@ def cmd_read(root: str) -> NoirLoopState:
 
 
 def cmd_advance(root: str, summary: str, open_work: list | None = None,
-                 next_steps: list | None = None) -> NoirLoopState:
+                 next_steps: list | None = None, blocker: str | None = None,
+                 max_cycles: int | None = None) -> NoirLoopState:
     path = _state_path(root)
     state = cmd_read(root)
-    state.advance(summary, open_work, next_steps)
+    state.advance(summary, open_work, next_steps, blocker, max_cycles)
     state.save(path)
     return state
 
@@ -361,6 +490,93 @@ def _self_test():
             finally:
                 sys.stderr = old_stderr
 
+        # ── Progress-hash / stall / blocked-on-human (#422) ──────────────
+        with tempfile.TemporaryDirectory() as d:
+            cmd_init(d, force=False)
+            # Same open_work + same blocker, advanced repeatedly: stall_count
+            # climbs 1, 2, 3 and blocked_on_human flips true at STALL_LIMIT.
+            s1 = cmd_advance(d, "iter 1", open_work=["issue #99 blocked"],
+                              blocker="waiting on human decision")
+            if s1.as_dict()["stall_count"] != 1:
+                failures.append("first advance should start a stall run of 1: %r"
+                                 % s1.as_dict())
+            if s1.as_dict()["blocked_on_human"]:
+                failures.append("blocked_on_human should not fire after 1 advance")
+            s2 = cmd_advance(d, "iter 2", open_work=["issue #99 blocked"],
+                              blocker="waiting on human decision")
+            if s2.as_dict()["stall_count"] != 2:
+                failures.append("identical 2nd advance should bump stall_count to 2: %r"
+                                 % s2.as_dict())
+            if s2.as_dict()["blocked_on_human"]:
+                failures.append("blocked_on_human should not fire before STALL_LIMIT")
+            s3 = cmd_advance(d, "iter 3", open_work=["issue #99 blocked"],
+                              blocker="waiting on human decision")
+            if s3.as_dict()["stall_count"] != STALL_LIMIT:
+                failures.append("3rd identical advance should reach STALL_LIMIT: %r"
+                                 % s3.as_dict())
+            if not s3.as_dict()["blocked_on_human"]:
+                failures.append("blocked_on_human should fire at STALL_LIMIT: %r"
+                                 % s3.as_dict())
+            # Real progress (different open_work) resets the streak and
+            # un-sticks blocked_on_human.
+            s4 = cmd_advance(d, "iter 4 — unblocked", open_work=["new item"], blocker="")
+            if s4.as_dict()["stall_count"] != 1:
+                failures.append("changed state should reset stall_count to 1: %r"
+                                 % s4.as_dict())
+            if s4.as_dict()["blocked_on_human"]:
+                failures.append("blocked_on_human should clear once progress resumes")
+            if s4.as_dict()["progress_hash"] == s3.as_dict()["progress_hash"]:
+                failures.append("progress_hash should change when open_work/blocker change")
+
+        # ── Cycle-budget cap (#422) ───────────────────────────────────────
+        with tempfile.TemporaryDirectory() as d:
+            cmd_init(d, force=False, max_cycles=2)
+            c1 = cmd_advance(d, "cycle 1", open_work=["a"])
+            if c1.as_dict()["max_cycles"] != 2:
+                failures.append("--max-cycles at init should persist: %r" % c1.as_dict())
+            if c1.as_dict()["cycle_budget_exceeded"]:
+                failures.append("cycle_budget_exceeded should not fire before the cap")
+            c2 = cmd_advance(d, "cycle 2", open_work=["b"])  # iteration now == max_cycles
+            if not c2.as_dict()["cycle_budget_exceeded"]:
+                failures.append("cycle_budget_exceeded should fire once iteration "
+                                 "reaches max_cycles: %r" % c2.as_dict())
+            # Fires even though open_work kept changing (real progress) —
+            # the budget is an independent backstop, not tied to staleness.
+            if c2.as_dict()["stall_count"] != 1:
+                failures.append("cycle-budget case should still show real progress "
+                                 "(stall_count 1), proving the two mechanisms are "
+                                 "independent: %r" % c2.as_dict())
+
+        # ── --max-cycles input validation ─────────────────────────────────
+        with tempfile.TemporaryDirectory() as d:
+            cmd_init(d, force=False)
+            for bad in (0, -1):
+                try:
+                    cmd_advance(d, "bad", max_cycles=bad)
+                    failures.append("non-positive --max-cycles should raise (%r)" % bad)
+                except StateError:
+                    pass
+
+        # ── Legacy state file (pre-#422, missing the new fields) loads and
+        # self-heals to defaults rather than hard-failing. ──────────────────
+        with tempfile.TemporaryDirectory() as d:
+            legacy_path = _state_path(d)
+            os.makedirs(os.path.dirname(legacy_path), exist_ok=True)
+            with open(legacy_path, "w", encoding="utf-8") as fh:
+                json.dump({
+                    "schema_version": SCHEMA_VERSION,
+                    "iteration": 5,
+                    "updated_at": "2026-01-01T00:00:00Z",
+                    "last_summary": "pre-#422 state",
+                    "open_work": ["carryover"],
+                    "next_steps": [],
+                }, fh)
+            legacy = NoirLoopState.load(legacy_path)
+            ld = legacy.as_dict()
+            if ld.get("blocked_on_human") is not False or ld.get("stall_count") != 0 \
+                    or ld.get("max_cycles") != DEFAULT_MAX_CYCLES:
+                failures.append("legacy state should self-heal missing #422 fields: %r" % ld)
+
     if failures:
         print("SELF-TEST FAILED:")
         for f in failures:
@@ -369,7 +585,10 @@ def _self_test():
     print("noir_loop_state self-test: OK (fresh defaults, init idempotency, "
           "advance bump+replace+restamp, read round-trip, empty-summary raise, "
           "schema-version raise, over-budget refusal+intact-file, type validation, "
-          "determinism, missing-file raise, continuity-loss warning)")
+          "determinism, missing-file raise, continuity-loss warning, "
+          "progress-hash stall tracking, blocked-on-human at STALL_LIMIT, "
+          "progress-reset unsticking, cycle-budget cap + independence from "
+          "stall tracking, max-cycles validation, legacy-state self-heal)")
     return 0
 
 
@@ -387,6 +606,12 @@ def main(argv: list[str] | None = None) -> int:
                     help="an open-work item (repeatable)")
     ap.add_argument("--next", action="append", dest="next_steps", default=None,
                     help="a next-step item (repeatable)")
+    ap.add_argument("--blocker", default=None,
+                    help="current human-blocking condition (with --advance); "
+                         "omit to keep the prior value, pass '' to clear it")
+    ap.add_argument("--max-cycles", dest="max_cycles", type=int, default=None,
+                    help="override the cycle-budget cap (persists once set; "
+                         "default %d)" % DEFAULT_MAX_CYCLES)
     ap.add_argument("--self-test", action="store_true")
     args = ap.parse_args(argv)
 
@@ -394,13 +619,14 @@ def main(argv: list[str] | None = None) -> int:
         return _self_test()
     try:
         if args.init:
-            state = cmd_init(args.root, args.force)
+            state = cmd_init(args.root, args.force, args.max_cycles)
         elif args.read:
             state = cmd_read(args.root)
         elif args.advance:
             if not args.summary:
                 ap.error("--advance requires --summary")
-            state = cmd_advance(args.root, args.summary, args.open_work, args.next_steps)
+            state = cmd_advance(args.root, args.summary, args.open_work, args.next_steps,
+                                 args.blocker, args.max_cycles)
         elif args.validate:
             state = cmd_validate(args.root)
         else:

@@ -8,10 +8,17 @@
 #
 # It resolves VERSION + TRIPLE, builds, stages a versioned dist dir
 # `dist/<name>-v{VER}-{TRIPLE}/`, copies the binary + assets into it, emits
-# `release.json` (the §2 manifest) + `SHA256SUMS` (integrity floor), and tars the
-# stage DETERMINISTICALLY (zeroed mtime/uid/gid, sorted entries) so the same tree
-# at the same commit yields byte-identical bytes — the same determinism contract
-# `build_distributables.py` uses (mtime=0, uid/gid=0, uname/gname="", sorted).
+# `grimoire-build-info.json` (the §8 provenance stamp) + `release.json` (the §2
+# manifest) + `SHA256SUMS` (integrity floor), and tars the stage
+# DETERMINISTICALLY (zeroed mtime/uid/gid, sorted entries) — the same tar-
+# ENCODING contract `build_distributables.py` uses (mtime=0, uid/gid=0,
+# uname/gname="", sorted), so two runs over IDENTICAL staged bytes produce a
+# byte-identical archive. NOTE: the staged bytes themselves are not invocation-
+# invariant — `grimoire-build-info.json`'s `build-timestamp` field (§8, "the
+# moment the package recipe ran") intentionally differs run-to-run by design,
+# so the overall bundle is reproducible in STRUCTURE, not in content, across
+# separate invocations at different times. The self-test's cross-run tarball
+# comparison is therefore an informational note, never a hard failure.
 #
 # PARAMETERIZED, not hardcoded to one project. The app name / binary name / asset
 # globs / build command come from (highest wins):
@@ -136,6 +143,55 @@ with open(os.path.join(stage, "release.json"), "w") as fh:
 PY
 }
 
+# Write grimoire-build-info.json (docs/web-app-deployment-protocol.md §8) — the
+# Grimoire PROVENANCE stamp, a SIBLING of release.json (deployment/integrity
+# manifest), not a merge into it. Snapshots framework-version + a verbatim
+# .claude/grimoire-config.json, a UTC build timestamp, and the source VCS ref
+# (tag@sha when HEAD is exactly tagged, else the bare sha). `changelog` (§8,
+# optional) is a build-time snapshot of the changelog file's raw text — included
+# only when that file is resolvable, NEVER fabricated, so the Admin Console /
+# changelog surface renders an honest empty state when it is absent. Called
+# BEFORE write_release_json so the stamp is picked up by its assets[] walk (and
+# is therefore covered by SHA256SUMS like any other bundled file, per §8).
+write_build_info_json() {
+    local stage_dir="$1"
+    local config="${PACKAGE_GRIMOIRE_CONFIG:-.claude/grimoire-config.json}"
+    local changelog="${PACKAGE_CHANGELOG:-docs/changelog.md}"
+    local source_ref
+    source_ref="$(git rev-parse HEAD 2>/dev/null || echo unknown)"
+    if git describe --tags --exact-match HEAD >/dev/null 2>&1; then
+        source_ref="$(git describe --tags --exact-match HEAD 2>/dev/null)@${source_ref}"
+    fi
+    python3 - "$stage_dir" "$config" "$changelog" "$source_ref" <<'PY'
+import datetime, json, sys
+stage, config_path, changelog_path, source_ref = sys.argv[1:5]
+
+framework_version = None
+grimoire_config = {}
+try:
+    with open(config_path, encoding="utf-8") as fh:
+        grimoire_config = json.load(fh)
+    framework_version = grimoire_config.get("framework-version")
+except (OSError, ValueError):
+    pass  # missing/malformed config degrades only this field — never fatal
+
+info = {
+    "framework-version": framework_version,
+    "grimoire-config": grimoire_config,
+    "build-timestamp": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    "source-ref": source_ref,
+}
+try:
+    with open(changelog_path, encoding="utf-8") as fh:
+        info["changelog"] = fh.read()
+except OSError:
+    pass  # optional per §8 — omitted (not fabricated) when unresolvable
+
+with open(stage + "/grimoire-build-info.json", "w") as fh:
+    fh.write(json.dumps(info, indent=2, sort_keys=True) + "\n")
+PY
+}
+
 # Write SHA256SUMS over every bundled file except itself, canonical `<hex>  <name>`
 # form (sorted) so `sha256sum -c` verifies it from inside the stage dir.
 write_checksums() {
@@ -241,7 +297,9 @@ run_package() {
         cp -R "$MIGRATIONS_DIR" "$stage/$MIGRATIONS_DIR"
     fi
 
-    # 4. Emit release.json (§2) + SHA256SUMS (integrity floor).
+    # 4. Emit grimoire-build-info.json (§8, provenance) BEFORE release.json so its
+    #    assets[] walk covers it, then release.json (§2) + SHA256SUMS (integrity floor).
+    write_build_info_json "$stage"
     write_release_json "$stage" "$version" "$triple" "$binary_name" "$min_schema"
     write_checksums "$stage"
 
@@ -297,10 +355,72 @@ PY
     else
         echo "self-test: release.json not produced" >&2; fail=1
     fi
+    # grimoire-build-info.json (§8) present, valid, required fields — and
+    # covered by SHA256SUMS + listed in release.json's assets[] (both files are
+    # siblings bundled into the SAME stage, not merged).
+    local bi="$td/dist/demo-v1.2.3-x86_64-linux/grimoire-build-info.json"
+    if [ -f "$bi" ]; then
+        python3 - "$bi" <<'PY' || fail=1
+import json, sys
+m = json.load(open(sys.argv[1]))
+req = {"framework-version", "grimoire-config", "build-timestamp", "source-ref"}
+assert req.issubset(m), "grimoire-build-info.json missing fields: %s" % (req - set(m))
+assert m["source-ref"], "source-ref empty"
+PY
+    else
+        echo "self-test: grimoire-build-info.json not produced" >&2; fail=1
+    fi
+    if ! grep -q '  grimoire-build-info.json$' "$td/dist/demo-v1.2.3-x86_64-linux/SHA256SUMS" 2>/dev/null; then
+        echo "self-test: SHA256SUMS does not cover grimoire-build-info.json" >&2; fail=1
+    fi
+    if [ -f "$td/dist/demo-v1.2.3-x86_64-linux/release.json" ]; then
+        python3 - "$td/dist/demo-v1.2.3-x86_64-linux/release.json" <<'PY' || fail=1
+import json, sys
+m = json.load(open(sys.argv[1]))
+names = {a["name"] for a in m["assets"]}
+assert "grimoire-build-info.json" in names, "grimoire-build-info.json missing from release.json assets[]: %s" % names
+PY
+    fi
     # SHA256SUMS present and lists the binary.
     if ! grep -q '  app$' "$td/dist/demo-v1.2.3-x86_64-linux/SHA256SUMS" 2>/dev/null; then
         echo "self-test: SHA256SUMS missing or does not list the binary" >&2; fail=1
     fi
+
+    # Provenance round trip: a real git repo + a real grimoire-config.json
+    # populate framework-version + a tag@sha source-ref (not the "unknown"
+    # fallback from the git-less scenario above).
+    local td2; td2="$(mktemp -d)"
+    ( cd "$td2"
+      git init -q; git config user.email t@t; git config user.name t
+      mkdir -p bin .claude scripts
+      printf 'binary-bytes\n' > bin/app
+      cat > .claude/grimoire-config.json <<'EOF'
+{"framework-version": "v9.9", "work-paradigm": {"value": "Noir"}}
+EOF
+      cat > scripts/package-manifest.sh <<'EOF'
+PACKAGE_NAME="demo2"
+PACKAGE_BINARY="bin/app"
+PACKAGE_VERSION="1.0.0"
+PACKAGE_SKIP_BUILD="1"
+PACKAGE_TRIPLE="x86_64-linux"
+EOF
+      git add -A; git commit -qm seed
+      git tag -a v1.0.0 -m v1.0.0 )
+    ( cd "$td2" && bash "$script_path" >/dev/null 2>&1 ) || { echo "self-test: provenance-scenario package run failed" >&2; fail=1; }
+    local bi2="$td2/dist/demo2-v1.0.0-x86_64-linux/grimoire-build-info.json"
+    if [ -f "$bi2" ]; then
+        python3 - "$bi2" <<'PY' || fail=1
+import json, sys
+m = json.load(open(sys.argv[1]))
+assert m["framework-version"] == "v9.9", m["framework-version"]
+assert m["grimoire-config"]["work-paradigm"]["value"] == "Noir", m["grimoire-config"]
+assert m["source-ref"].startswith("v1.0.0@"), "expected a tag@sha source-ref: %s" % m["source-ref"]
+PY
+    else
+        echo "self-test: provenance-scenario grimoire-build-info.json not produced" >&2; fail=1
+    fi
+    rm -rf "$td2"
+
     # Determinism: a second run over the same tree yields a byte-identical tar
     # (only meaningful when the tar supports the determinism flags — GNU tar or a
     # libarchive new enough for --mtime).
@@ -315,7 +435,7 @@ PY
     if [ "$fail" -ne 0 ]; then
         echo "package.sh self-test: FAILED" >&2; return 1
     fi
-    echo "package.sh self-test: OK (stage + release.json + SHA256SUMS + tar round trip)"
+    echo "package.sh self-test: OK (stage + grimoire-build-info.json + release.json + SHA256SUMS + tar round trip, provenance from a real git+config repo)"
     return 0
 }
 

@@ -1,0 +1,10 @@
+{
+  "id": "lib-app",
+  "summary": "Scaffolded reusable library crate (grm-quick-start-template `lib` profile) — rename `id`/update `summary` to match this crate's real purpose once its public API stabilizes; keep `id` in sync with Cargo.toml's `[package] name` and publish.toml's `[publish] name`.",
+  "profiles": ["lib"],
+  "compat": {
+    "language": ["rust"]
+  },
+  "stability": "experimental",
+  "source": "./"
+}

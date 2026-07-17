@@ -661,6 +661,20 @@ class DependencyChannelConformance:
         deps = data.get("deps")
         return deps if isinstance(deps, dict) else {}
 
+    def dep_declared(self, dep: str) -> bool:
+        """Public — True when *dep* has a `[deps.<dep>]` entry in vendor.toml.
+
+        Added for #434's `standard_package_conformance.py` (the required-
+        feature-catalog's per-standard-package conformance probe, Entries
+        3/4/5): a catalog entry's "not yet adopted" state (dep never declared)
+        is a distinct, non-failing outcome from "declared but drifted" — the
+        caller needs a cheap public check for the former before running the
+        full `run()` sweep. Kept trivial deliberately rather than exposing
+        `_load_manifest()` itself, so this class's internal loader shape stays
+        free to change without breaking that caller.
+        """
+        return dep in self._load_manifest()
+
     def _load_lock(self) -> dict[str, Any]:
         """Parse `vendor.lock` → its `deps` map. Empty dict when absent."""
         path = os.path.join(self.root, self.VENDOR_LOCK)

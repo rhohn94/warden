@@ -8,6 +8,7 @@ fi
 printf 'error: %s requires python3. Re-run as: python3 %s %s\n' "$0" "$0" "$*" >&2
 exit 1
 ":"""
+# HOOK_CONTRACT: v1 capabilities=[push-block-default,push-allowlist,marker-gated-push,destructive-flag-block,autonomous-push]
 """Push guard (marker + whitelist gated).
 
 PreToolUse Bash hook. Blocks `git push` unless BOTH:

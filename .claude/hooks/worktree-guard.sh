@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# HOOK_CONTRACT: v1 capabilities=[worktree-confinement,cross-worktree-hijack-block,worktree-cleanup-allow]
 """Worktree-discipline guard (deny-by-default).
 
 Blocks tool calls whose target path escapes the active worktree into the

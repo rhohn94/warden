@@ -20,7 +20,7 @@ migrate-mode detection engine (#320), extending it with the migrate-only
 
 Degrades gracefully: an absent `.claude/architecture-rules.json` is reported as
 a visible WARN with a pointer to adopt one of the per-family starter rulesets
-(`.claude/quick-start-templates/{service,web,gui,lib}/files/.claude/architecture-rules.json`)
+(`.claude/quick-start-templates/{service,web,gui,lib,cli}/files/.claude/architecture-rules.json`)
 or `.claude/architecture-rules.example.json`; the process still exits 0 (never
 fails a project that has not opted in — the WARN just replaces silence with a
 visible nudge, #314). A project that has deliberately declined may set
@@ -421,6 +421,37 @@ def check_structure(root: str, rules: dict) -> list:
                     Finding(f"{dirname}/", 0, "structure-tracked-output", "warn",
                             f"{dirname}/ is build output and must not be committed")
                 )
+
+    findings.extend(_check_required_file_content(root, structure))
+    return findings
+
+
+def _check_required_file_content(root: str, structure: dict) -> list:
+    """`structure.required-file-content` (#447) — a small, generic content
+    fitness function: each rule names a repo-relative `path` and a literal
+    `contains` substring that must appear in it (e.g. the seeded
+    `[profile.dev] debug = "line-tables-only"` in a Cargo-based scaffold's
+    Cargo.toml). Missing file and missing substring are both findings — a
+    scaffold that deleted the manifest is exactly as non-conformant as one
+    that stripped the setting out of it."""
+    findings = []
+    for rule in structure.get("required-file-content", []):
+        rel = rule.get("path")
+        needle = rule.get("contains")
+        if not rel or not needle:
+            continue
+        rule_id = rule.get("id", "structure-content")
+        severity = rule.get("severity", "warn")
+        message = rule.get("message") or f"missing required content: {needle!r}"
+        full = os.path.join(root, rel)
+        try:
+            with open(full, encoding="utf-8") as fh:
+                text = fh.read()
+        except OSError:
+            findings.append(Finding(rel, 0, rule_id, severity, f"file not found ({message})"))
+            continue
+        if needle not in text:
+            findings.append(Finding(rel, 0, rule_id, severity, message))
     return findings
 
 
@@ -504,7 +535,7 @@ NO_RULES_NOTICE = (
     "no rules declared — architecture fitness is not enforced for this "
     "project. Adopt a starter ruleset: copy the per-family template shipped "
     "by grm-quick-start-template "
-    "(.claude/quick-start-templates/{service,web,gui,lib}/files/.claude/architecture-rules.json) "
+    "(.claude/quick-start-templates/{service,web,gui,lib,cli}/files/.claude/architecture-rules.json) "
     "or .claude/architecture-rules.example.json to "
     ".claude/architecture-rules.json and adapt it, or explicitly decline by "
     "adding \"opt_out\": true (+ \"opt_out-reason\") to a committed rules file."
@@ -602,6 +633,7 @@ def _build_fixture(tmp_root: str) -> None:
       - one forbidden-import hit (a `prisma` import from presentation)
       - one cycle (application -> domain -> application)
       - a nonstandard `vendor/` top-level dir + a tracked `dist/` file
+      - a `Cargo.toml` missing the required `[profile.dev]` content (#447)
     """
     _write(os.path.join(tmp_root, "src/ui/cart.py"),
            "from src.services.checkout import total\n"
@@ -616,6 +648,7 @@ def _build_fixture(tmp_root: str) -> None:
     _write(os.path.join(tmp_root, "vendor/pkg.py"), "# vendored\n")
     _write(os.path.join(tmp_root, "tests/test_x.py"), "import unittest\n")
     _write(os.path.join(tmp_root, "docs/README.md"), "# docs\n")
+    _write(os.path.join(tmp_root, "Cargo.toml"), "[package]\nname = \"fixture\"\n")
 
     rules = {
         "schema-version": 1,
@@ -623,6 +656,11 @@ def _build_fixture(tmp_root: str) -> None:
             "required": ["src", "tests", "docs"],
             "aliases": {"vendor": "lib/third-party"},
             "gitignored": ["dist"],
+            "required-file-content": [
+                {"id": "cargo-profile-dev-debug", "path": "Cargo.toml",
+                 "contains": "debug = \"line-tables-only\"", "severity": "warn",
+                 "message": "Cargo.toml missing [profile.dev] debug = \"line-tables-only\""},
+            ],
         },
         "layers": {
             "presentation": ["src/ui/**"],
@@ -750,6 +788,21 @@ def self_test() -> int:
               any(f.rule_id == "structure-nonstandard" for f in structure))
         check("required dirs (src/tests/docs) all present -> no structure-required finding",
               not any(f.rule_id == "structure-required" for f in structure))
+        check("Cargo.toml missing [profile.dev] flagged (required-file-content, #447)",
+              any(f.rule_id == "cargo-profile-dev-debug" and f.path == "Cargo.toml"
+                  for f in structure))
+
+        # required-file-content: present content -> no finding; absent file -> flagged too.
+        content_rules = {"required-file-content": [
+            {"id": "needs-x", "path": "present.txt", "contains": "needle"},
+            {"id": "needs-y", "path": "absent.txt", "contains": "needle"},
+        ]}
+        _write(os.path.join(tmp, "present.txt"), "has the needle right here\n")
+        content_findings = _check_required_file_content(tmp, content_rules)
+        check("required-file-content: present + matching -> no finding",
+              not any(f.rule_id == "needs-x" for f in content_findings))
+        check("required-file-content: missing file -> flagged",
+              any(f.rule_id == "needs-y" for f in content_findings))
 
         rc = run_audit(tmp)
         check("run_audit on violating fixture still exits 0 without --gate", rc == 0)

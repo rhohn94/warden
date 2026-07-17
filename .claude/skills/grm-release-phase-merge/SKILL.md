@@ -33,15 +33,12 @@ both dial values (see §Push to origin — not here).
 ## Before every merge run
 
 > **Preferred interface — `merge_preflight` (grimoire-release MCP, v3.27).** When
-> `mcp.enabled` and registered (root `.mcp.json`), run **`merge_preflight`**
-> with the staging ref for a structured verdict
-> `{head_ok, branches:[{branch,exists,ahead,ok}], blocked:[…]}` — the
-> HEAD==staging check plus per-branch exists/ahead assertions, deterministic
-> and **read-only**; act on the verdict (`head_ok:false` = HEAD-drift, see
-> stranded-branch recovery below). **CLI fallback:** `python3
-> .claude/skills/grm-release-agent-tracker/release_plan.py merge-preflight --staging
-> version/{X.Y}`. Numbered steps below are the fallback procedure. Design:
-> `docs/design/grimoire-release-server-design.md`.
+> `mcp.enabled`, run **`merge_preflight`** with the staging ref for a
+> structured, read-only verdict `{head_ok, branches, blocked}` — act on it
+> (`head_ok:false` = HEAD-drift, see stranded-branch recovery below). **CLI
+> fallback:** `python3 .claude/skills/grm-release-agent-tracker/release_plan.py
+> merge-preflight --staging version/{X.Y}` (numbered steps below are the
+> fallback). Design: `docs/design/grimoire-release-server-design.md`.
 
 1. **HEAD-verification gate (MANDATORY — #35).** Assert HEAD is exactly the
    intended staging branch before *every* merge:
@@ -75,15 +72,11 @@ both dial values (see §Push to origin — not here).
    structured output is the authoritative list (see §Write-capable workflow
    agent branches in `reference.md`).
 
-> **Before-promotion divergence gate (BMI-2).** `merge_preflight` runs a
-> model-aware divergence check and folds a real fork into `head_ok:false`
-> (report under `divergence`); CLI fallback `python3
-> .claude/skills/grm-release-agent-tracker/release_plan.py divergence-check`
-> (exit 2 on divergence; integration line from `branch-model.integration-branch`,
-> default `dev`). HALTs iff `main` carries tree content unreachable from the
-> integration line (never false-positives on promotion-merge-only `main`). On a
-> HALT: merge `main` INTO the integration line (merge-forward) — never
-> `reset --hard` across the fork. Design: `integration-branch-integrity-design.md` §2/§5.
+> **Before-promotion divergence gate (BMI-2).** `merge_preflight` folds a real
+> fork into `head_ok:false`; CLI fallback `divergence-check`. On a HALT: merge
+> `main` INTO the integration line (never `reset --hard` across the fork).
+> Full mechanism, exit codes, and design citation in `reference.md`
+> §Before-promotion divergence gate (BMI-2).
 
 ---
 
@@ -125,8 +118,11 @@ If there are conflicts:
 ### 3. Run tests
 
 ```bash
-{test-command}
+python3 .claude/skills/grm-build-recipe/recipe.py test
 ```
+
+Resolves the real command from `.claude/recipes.json` (`grm-build-recipe`
+dispatcher, `≡ just test`) — never a literal placeholder.
 
 If tests pass: continue.
 
@@ -158,39 +154,40 @@ Run in order; first failing **blocking** check stops the merge:
 **On any blocking stop:** `git reset --hard ORIG_HEAD` — undo the merge, leave
 §5 row unticked, record reason in §5 follow-ups. Re-runnable once branch fixed.
 
-### 3b. Doc-assurance --strict gate (v3.36+)
+### 3b. Doc-assurance baseline gate (v3.36+; baseline ratchet #426, v3.93)
 
-Run `python3 .claude/skills/grm-doc-assurance/doc_assurance.py --strict` as part
-of the release closeout. Response policy based on findings:
+Run `python3 .claude/skills/grm-doc-assurance/doc_assurance.py --strict
+--baseline .claude/cache/doc-findings-baseline.json` as part of the release
+closeout. The baseline ratchet
+(`docs/grimoire/design/doc-assurance-design.md` §Baseline ratchet) turns the
+raw finding count into a trend — **print that trend line verbatim in the
+closeout report** instead of an apologetic "pre-existing, not mine"
+paragraph. New findings (relative to the baseline) get filed via
+`grm-feedback-to-issue` and fail the closeout under `--strict`; baselined and
+resolved findings never do. Full trend-line wording for every case (seed /
+unchanged / new / ratcheted-down) in `reference.md` §Baseline ratchet
+trend-line formats.
 
-- **block** (or `--strict` flag active): If findings from `check_hierarchy` or
-  `check_relative_links` are present, fail the closeout. File each finding via
-  `grm-feedback-to-issue` with label `doc-quality` and type `documentation` before
-  blocking.
-- **warn** (default): Run, print findings, proceed. Route warn-tier findings
-  through `grm-feedback-to-issue` with `doc-quality` area label.
+**Independent, stricter gate — unchanged:** `hierarchy` / `relative-links`
+findings under `doc-hierarchy.enforcer.value: block` (or `--strict`, which
+escalates `warn`→`block`) remain an unconditional block regardless of
+baseline status. File each such finding via `grm-feedback-to-issue` before
+blocking, same as before.
+
 - **Stealth Mode:** Under `stealth-mode.value: "on"`, suppress the
   `grm-feedback-to-issue` auto-filing step (per `stealth-guard.sh` restrictions on
   commit-class actions). Run the check; do not auto-file.
 
-### 4. Tick §5 ledger
+### 4. Tick §5 ledger — edit only, do not commit yet
 
-```bash
-git add docs/release-planning/release-planning-v{X.Y}.md
-git commit -m "docs(release-v{X.Y}): tick §5 — {branch} merged ({short-sha})"
-```
+Flip this branch's row (`☐`→`☑` + short-sha note) via the MCP `tick_rows` tool
+or the CLI fallback — **file edit only, no commit here.** Accumulate ticks
+across the whole sweep and commit **once**, in the Phase completion check
+below, per `grm-ledger-tick/SKILL.md` step 6 ("Commit — once per sweep, not
+per branch"). Ledger-tick mechanics (locating §5, tick format, follow-ups,
+source-of-truth conflicts) are documented there, not restated here.
 
-Proceed to the next branch without pausing.
-
----
-
-## Phase completion check
-
-After the last branch in a phase is merged and tested:
-
-1. Run `{build-command}` to confirm the integrated build is clean.
-2. Proceed immediately to `grm-release-phase` for the next phase (or the final
-   merge if all phases are ☑).
+Proceed to the next branch without pausing and without committing.
 
 ---
 
@@ -198,8 +195,8 @@ After the last branch in a phase is merged and tested:
 
 Pre-merge checklist (verify silently):
 
-- [ ] `{test-command}` green on `version/{X.Y}`
-- [ ] `{build-command}` clean
+- [ ] `python3 .claude/skills/grm-build-recipe/recipe.py test` green on `version/{X.Y}`
+- [ ] `python3 .claude/skills/grm-build-recipe/recipe.py build` clean
 - [ ] All §5 rows ☑ Merged
 - [ ] `version-history.md` entry written on `version/{X.Y}`
 - [ ] **Before-promotion divergence gate clean** — `divergence-check` reports no
@@ -211,7 +208,7 @@ Execute autonomously:
 ```bash
 git switch dev
 git merge --no-ff version/{X.Y}
-{test-command}
+python3 .claude/skills/grm-build-recipe/recipe.py test
 ```
 
 If tests pass:
@@ -226,13 +223,12 @@ Update `docs/roadmap.md`: change `v{X.Y}` from `(planning in flight)` to
 **Telemetry (best-effort, v3.14 #82).** After `version/{X.Y}` → `dev`
 completes, emit the per-run metadata artifact via
 `python3 .claude/skills/grm-token-measure/run_metadata.py --emit ...`; full
-invocation in `reference.md` §Telemetry artifact. Never gates the release. If
-the merge loop aborts instead (test failure, unresolved conflict) before
-reaching this step, emit `outcome=fail` via the sibling
-`telemetry_entry.py --emit --outcome fail` CLI mode (same file, §Telemetry
-artifact) — this is the `telemetry-errors` boundary rule
-(`docs/coding-standards.md` §Telemetry) applied to this release boundary.
-Still never gates the release; a failed emit is swallowed.
+invocation in `reference.md` §Telemetry artifact. Never gates the release. On
+an abort (test failure, unresolved conflict) before this step, emit
+`outcome=fail` via the sibling `telemetry_entry.py --emit --outcome fail` CLI
+mode instead (same file, §Telemetry artifact) — the `telemetry-errors`
+boundary rule (`docs/coding-standards.md` §Telemetry). Never gates; a failed
+emit is swallowed.
 
 **Branch + worktree cleanup is a post-release step, not this skill's job.** See
 `grm-project-release` §Post-release cleanup and `docs/grimoire/integration-workflow.md`
@@ -240,39 +236,22 @@ Still never gates the release; a failed emit is swallowed.
 
 ---
 
-## Push to origin — not here
-
-**This skill pushes nothing.** After the `version/{X.Y}` → `dev` integration,
-`dev` stays local. Pushing happens **once, at `grm-project-release`**, in a single
-human-gated prompt that pushes `dev` + `main` + the version tag together (see
-`docs/grimoire/integration-workflow.md` §Pushing to origin). Propose no `dev` push from
-this skill; the push gate is never lifted in Noir but it fires at release, not
-here.
-
----
-
 ## Write-capable workflow agent branches
 
-When a write-capable Workflow completes, its structured `branches` output
-(each with a `mergeAfter` list and `status`) replaces the §Before every merge
-run step 2 (release-agent-tracker) as the authoritative branch list. Surface
-any `failed` entries before starting the merge run, then merge the
-`completed` entries in `mergeAfter` topological order using the same
-per-branch procedure above. Full detail (output schema, triage, safety
-invariants table) in `reference.md` §Write-capable workflow agent branches.
+A write-capable Workflow's structured `branches` output (per-branch
+`mergeAfter` + `status`) replaces the §Before every merge run step 2
+(release-agent-tracker) as the authoritative branch list — surface `failed`
+entries first, then merge `completed` entries in `mergeAfter` topological
+order via the same per-branch procedure above. Full detail (output schema,
+triage, safety invariants) in `reference.md` §Write-capable workflow agent
+branches (full procedure).
 
 ---
 
-## Anti-patterns
+## Reference (load on demand)
 
-- Pausing for per-merge confirmation (Noir is autonomous — merge unless in
-  a stop condition).
-- Guessing at ambiguous merge conflicts — stop and surface.
-- Pushing without human confirmation — push is always human-gated.
-- Leaving `dev` broken — debug before switching branches.
-- Silently skipping `failed` branches from a workflow output — always surface
-  failures before starting the merge sequence.
-- Merging a branch before its `mergeAfter` dependencies are merged — always
-  respect the topological order from the conflict map.
-- Using `grm-release-agent-tracker` for write-capable workflow branches — the
-  workflow's structured output is the authoritative branch list for that source.
+- `Phase completion check` — see `reference.md`
+- `Push to origin — not here` — see `reference.md`
+- `Anti-patterns` — see `reference.md`
+- `Before-promotion divergence gate (BMI-2)` — full mechanism, see `reference.md`
+- `Baseline ratchet trend-line formats` — see `reference.md`

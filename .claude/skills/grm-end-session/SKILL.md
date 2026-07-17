@@ -94,8 +94,18 @@ For each work-item branch/worktree of the just-shipped release:
 4. `git worktree prune`.
 5. `git branch -d` the merged feature branches and stale `worktree-*` placeholder
    branches (`-D` only with explicit user confirmation).
+6. **Stale remote branches — report only, never delete (#455).** After local
+   cleanup, run `.claude/skills/grm-worktree-preflight/stale_remote_report.py`
+   (`--format text`, default `--min-age-days`) and fold its output into the
+   end-of-session report below. This script never mutates the remote — it
+   only flags agent-created branches already merged with no local copy left
+   (likely safe for a human to delete) and separately flags any old/inactive
+   branch regardless of provenance. Remote branch deletion itself stays a
+   human action (`git push origin --delete <branch>`), never performed by
+   this skill or the script.
 
-Report the tally: worktrees removed, branches deleted, work preserved/skipped.
+Report the tally: worktrees removed, branches deleted, work preserved/skipped,
+and the stale-remote-branch findings from step 6.
 
 ---
 

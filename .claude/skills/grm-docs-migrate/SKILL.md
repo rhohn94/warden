@@ -1,6 +1,6 @@
 ---
 name: grm-docs-migrate
-description: Detect and migrate old-style docs to the wiki hierarchy — detect mode classifies FLAT_TIER/ORPHAN/ABSOLUTE_LINK/PROSE_LINK/NO_BREADCRUMB findings; --apply archives then auto-resolves NO_BREADCRUMB (inserts breadcrumbs) and ABSOLUTE_LINK (rewrites to relative). PROSE_LINK/ORPHAN/FLAT_TIER are detection-only (manual fix). Downstream-safe. Use when migrating docs or fixing breadcrumbs / absolute links.
+description: Detect and migrate old-style docs to the wiki hierarchy — detect mode flags flat-tier/orphan/absolute-link/prose-link/missing-breadcrumb findings; --apply auto-resolves the breadcrumb and absolute-link cases (the rest are detection-only, manual fix). Downstream-safe. Use when migrating docs or fixing breadcrumbs / absolute links.
 ---
 
 # docs-migrate

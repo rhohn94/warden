@@ -94,6 +94,14 @@ into the relevant `release-planning-v{X.Y}.md` ledger.
   delete it if there are none.
 * **Do not use bare backtick paths** (`docs/design/foo.md`) to cross-reference
   other docs — always use a markdown relative link (`[foo design](foo.md)`).
+* **No `Status:` line, ever**, in any position — completion state goes to
+  the release-plan §5 ledger via **`grm-ledger-tick`**, never the doc.
+* **Never check an Acceptance box** (`- [x]`) — it's a template, not a
+  progress tracker; leave every box `- [ ]`.
+* **No work-item/branch map** (`## File-level changes`, a branch table) and
+  **no per-release changelog section** ("Phase N closed", "shipped in vX.Y",
+  a struck-through **Delivered** marker) — design docs are timeless.
+  Enforced by `doc_assurance.py`'s `design-doc-purity` check (#358).
 
 ## See also
 

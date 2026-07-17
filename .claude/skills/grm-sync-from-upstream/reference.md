@@ -97,17 +97,34 @@ in `docs/grimoire/design/component-catalog-architecture-design.md` Pillar 1) is 
 component-catalog architecture. It distributes over **this existing sync channel,
 with no hosted endpoint**.
 
-- It is **not excluded** (it is not in `is_excluded`), so the file-merge walk
-  carries it like any other managed file: a `NEW` registry from upstream is
-  added; a registry both sides changed is **3-way merged** against the recorded
-  base, so **local components are preserved and upstream components are
-  added/updated** — never clobbered. A genuine same-region collision (e.g. both
-  sides edited the same component entry) surfaces as a `CONFLICT` for hand
-  resolution, exactly like any other file.
-- Because the JSON is a `components` map keyed by component-id, disjoint
-  additions on each side merge cleanly (`MERGED`); the merge is *by version*
-  through the normal diff — re-syncing an **unchanged** upstream registry is a
-  **no-op**.
+- It is **not excluded** (it is not in `is_excluded`), so `NEW` / `in-sync` /
+  `UPDATE` (upstream changed, local didn't) / `local` (local changed, upstream
+  didn't) classification is the normal file-merge walk, unchanged.
+- **Only** the "both sides changed since base" step is special-cased (#REG-4,
+  v3.97). A plain textual `git merge-file` 3-way merge — the mechanism every
+  *other* synced file uses — was the originally-designed approach here too,
+  but it **false-conflicts on two disjoint component additions**: both sides'
+  diffs touch the same closing-brace/trailing-comma region of the JSON
+  `components` map, so `git merge-file` reports a `CONFLICT` even though the
+  additions are semantically unrelated (verified empirically — reproduce with
+  `component_registry_merge.py --self-test`, case "disjoint additions").
+  `merge_component_registry()` in `sync-from-upstream.sh` routes this one
+  artifact to `component_registry_merge.py` instead: a **structural,
+  per-component-id** 3-way merge —
+  - a component present on only one side (added/edited by exactly one side
+    since base) is kept, never lost;
+  - a component **unchanged locally since base** fast-forwards to upstream's
+    value (including an upstream deletion);
+  - a component **unchanged upstream since base** keeps the local value
+    (including a local deletion);
+  - a component changed to **different** content on **both** sides — a
+    genuine same-id collision, including two independent additions of the
+    same id with no recorded base entry — is a real `CONFLICT`: nothing is
+    written to the local file (no textual diff3 markers embedded in the
+    JSON, which would corrupt every *other* entry's schema), a structured
+    `--conflicts-out` report names the colliding id with both sides' values,
+    and resolution is manual, exactly like any other file's `CONFLICT`.
+  Re-syncing an **unchanged** upstream registry is still a **no-op**.
 - The **derived matrix** (`.claude/cache/component-compatibility.json`) is
   **not** distributed — `.claude/cache/` is gitignored and regenerable from the
   registry by the `grm-component-registry` skill after a sync changes it.
@@ -119,56 +136,101 @@ with no hosted endpoint**.
 
 ---
 
-### Merge-walk warnings (#180 / #181)
+### Merge-walk warnings and auto-resolution (#180 / #181 / #420)
 
-Two best-effort warnings the file-merge walk can emit. Both warn loudly and are
-written to the summary; **neither blocks** the sync.
+**MISSING-SYMBOL (#180) — call-site without definition.** A best-effort warning;
+never blocks. A 3-way merge computes `diff(BASE,LOCAL)` and `diff(BASE,UPSTREAM)`
+and applies both. When LOCAL deleted a helper definition and UPSTREAM only
+touched a *different*, non-overlapping region that still *calls* that helper,
+the two diffs don't overlap — so `git merge-file` emits **no conflict marker**
+and the merged file ends up with a call-site whose definition is gone. The
+result looks syntactically complete but is broken at runtime. After each
+`MERGED`/`CONFLICT` result the script scans the merged output for any symbol
+UPSTREAM **defines** that the merged output **calls** (whole-word) but
+**defines nowhere**, and lists it. It is a heuristic (definition shapes:
+`name()` / `function name` / `def name` / `class name`); it will not catch
+every language idiom. On a hit: verify, and usually re-add the dropped
+definition from `.scaffold-base/<file>`.
 
-**MISSING-SYMBOL (#180) — call-site without definition.** A 3-way merge computes
-`diff(BASE,LOCAL)` and `diff(BASE,UPSTREAM)` and applies both. When LOCAL deleted
-a helper definition and UPSTREAM only touched a *different*, non-overlapping
-region that still *calls* that helper, the two diffs don't overlap — so
-`git merge-file` emits **no conflict marker** and the merged file ends up with a
-call-site whose definition is gone. The result looks syntactically complete but
-is broken at runtime. After each `MERGED`/`CONFLICT` result the script scans the
-merged output for any symbol UPSTREAM **defines** that the merged output
-**calls** (whole-word) but **defines nowhere**, and lists it. It is a heuristic
-(definition shapes: `name()` / `function name` / `def name` / `class name`); it
-will not catch every language idiom. On a hit: verify, and usually re-add the
-dropped definition from `.scaffold-base/<file>`.
-
-**MANUALLY-RESOLVED-BUT-BASE-NOT-ADVANCED (#181).** A resolved `CONFLICT` file's
-base is deliberately *not* advanced (so an unresolved conflict is never lost). If
-you hand-resolved it but did not advance the base, the next `--apply` sees the
-same BASE-vs-LOCAL-vs-UPSTREAM and re-conflicts — overwriting your resolution. So
-on `--apply`, when a file is about to re-`CONFLICT` but the LOCAL copy has **no**
-conflict markers, the script warns and points at `--mark-resolved`.
+**RESOLVED — auto-advance on re-presentation (#181/#420).** A resolved
+`CONFLICT` file's base is deliberately *not* advanced when first written (so an
+unresolved conflict is never lost) — but that used to mean the SAME conflict
+re-`CONFLICT`ed on **every subsequent sync**, overwriting your hand resolution
+with fresh markers each time, even though nothing needed re-resolving. Fixed in
+#420: the script fingerprints the exact `(base, upstream)` pairing the moment
+it writes a `CONFLICT` (an untracked sentinel under
+`.scaffold-conflict-pending/`, never synced or committed — like
+`.scaffold-sync-state.json`). On a later `--apply`, if that EXACT pairing
+re-presents and the LOCAL copy no longer contains conflict markers, the base is
+auto-advanced to the current upstream content and LOCAL is left completely
+untouched — reported as `RESOLVED`, not `CONFLICT`. Any change on either side
+(a further upstream edit, or a base that already moved) invalidates the
+fingerprint, so a genuinely new/different conflict on the same path is always
+shown with markers again, never silently discarded.
 
 **`--mark-resolved <file>`** advances the recorded base for **one** file to the
-current upstream content, so future syncs stop re-merging it. Use it after a
-blended resolution, or for a file **permanently diverged by design** (e.g. a
-project-local branch name baked into a template). Unlike `--adopt-base` (every
-file at once) it touches only that file's base; it refuses while conflict markers
-are present, and accepts a project-relative or absolute path.
+current upstream content immediately, without waiting for the next sync. Use it
+after a blended resolution, or for a file **permanently diverged by design**
+(e.g. a project-local branch name baked into a template). Unlike `--adopt-base`
+(every file at once) it touches only that file's base; it refuses while
+conflict markers are present, and accepts a project-relative or absolute path.
+
+**`--all-resolved` (#420)** is the batch form: it applies the same rule as
+`--mark-resolved` to **every** file the report loop would currently classify
+`CONFLICT`, in one invocation. A file whose LOCAL copy still contains conflict
+markers is reported and **skipped**, never force-resolved (the command exits
+`1` if any were skipped, `0` if every conflicted file was resolved or none were
+found); a file that already looks hand-resolved gets its base advanced, exactly
+like the single-file form. Use it after resolving several `CONFLICT` files by
+hand in one pass, instead of running `--mark-resolved` once per file.
 
 ### What the script tells you
 
-The script prints the `framework-version` recorded in
-`.claude/grimoire-config.json` (or notes it is absent), emits the manifest
-path, and summarizes the evaluation procedure. It does **not** run `detect`
-predicates itself — that is your job as the agent.
+`sync-from-upstream.sh` prints the `framework-version` recorded in
+`.claude/grimoire-config.json` (or notes it is absent) and emits the manifest
+path. It does **not** run `detect` predicates itself.
 
-### How to evaluate the manifest
+### How to evaluate the manifest (#396 — `adoption_delta.py`)
 
-1. Read `.claude/skills/grm-sync-from-upstream/feature-manifest.md`.
+Run `adoption_delta.py` instead of reading the whole manifest table — it does
+the delta computation below in-process and prints only the undecided rows:
+
+```bash
+python3 .claude/skills/grm-sync-from-upstream/adoption_delta.py \
+    --manifest .claude/skills/grm-sync-from-upstream/feature-manifest.md \
+    --project-root . --format table
+```
+
+What it does (mirrors the manual procedure this replaces):
+
+1. Parses `feature-manifest.md`'s table rows (feature-id, introduced-in,
+   summary, detect, adopt, migrate) — loudly (`ManifestError`, non-zero exit)
+   on a structurally malformed row (wrong column count, an empty required
+   field, or an unparseable `introduced-in` version) rather than silently
+   skipping it.
 2. **Delta computation:**
-   - *With `framework-version`*: collect entries where `introduced-in` >
-     `framework-version`. Run each entry's `detect` predicate; skip entries
-     where `detect` returns true (already adopted).
-   - *Without `framework-version`*: collect **all** entries. Run each
-     `detect`; skip entries that return true.
-3. Sort remaining entries by `introduced-in` ascending (oldest first —
-   later features may depend on config set by earlier ones).
+   - *With `framework-version`* (read from `--project-root`'s
+     `.claude/grimoire-config.json`, or pass `--framework-version` directly):
+     collects entries where `introduced-in` > `framework-version`. Runs each
+     entry's `detect` predicate; excludes entries where `detect` returns true
+     (already adopted).
+   - *Without `framework-version`*: collects **all** entries, same `detect`
+     run.
+3. Sorts remaining entries by `introduced-in` ascending (oldest first — later
+   features may depend on config set by earlier ones) and prints only those.
+
+`detect` predicates are hand-written prose, not a formal DSL. `adoption_delta.py`
+implements a best-effort predicate executor for the shapes that actually occur
+in the manifest today (`` `path` exists ``, `` `path` contains `literal` ``,
+`` `dir` contains only `prefix`-prefixed... ``, `` no `path` ``, a
+`--self-test` command that passes, combined via AND/OR/parens) — see the
+script's module docstring and
+`docs/grimoire/design/token-efficiency-design.md` §Adoption-delta script for
+the full grammar. A row whose `detect` text doesn't reduce to a recognized
+shape is marked `detect_status: "unparseable"` and is **always included** in
+the output (never silently dropped) — read that row's `detect` text yourself
+and check it by hand; this is intentionally conservative (a false "already
+adopted" is worse than one extra row to eyeball).
 
 ### Advancing `framework-version`
 
@@ -230,8 +292,9 @@ single integration line and off a divergent tree. `--apply` enforces:
   (`branch-model.integration-branch`, default `dev`), not `main` or another
   branch. Switch to it and re-run.
 - **Rule 3b — no real fork.** `main` must not carry tree content the integration
-  line lacks. By default the two lines must also be **tree-identical** (a clean
-  release boundary). This is the load-bearing safety property: a genuine fork —
+  line lacks. The integration line being merely **ahead** of `main` (no
+  unreachable work on `main`'s side) proceeds by default (#419) — tree-identical
+  is not required. This is the load-bearing safety property: a genuine fork —
   `main` holding work the integration line would lose — is always refused.
 - **Rule 3c — separate commits.** Commit the framework-sync output as its OWN
   commit before running `grm-design-language-adapt` (Aura vendoring); never
@@ -242,28 +305,65 @@ single integration line and off a divergent tree. `--apply` enforces:
   touch-set at once. This reminder is the operator-facing half; the hook is
   the mechanical backstop that fires even if the reminder is ignored.
 
-**The `--allow-ahead` escape hatch (consumer-sync catch-22, #144/#146/#162/#173).**
+**Ahead-by-default (#419, v3.92) — the consumer-sync catch-22, retired.**
 After any sync, the integration line carries the prior sync's own
 `framework-version` bump (and any committed conflict resolution from Step 4), so
-it is one or more commits **ahead** of `main`. Under the strict "tree-identical"
-boundary, the *next* sync is then blocked until you cut a release — even though
-no real fork exists. This also bites in environments where merging `dev -> main`
-is restricted (CI, audit/upgrade tasks).
-
-Pass `--allow-ahead` to relax Rule 3b from "tree-identical" to the model-aware
-divergence predicate: the integration line being merely **ahead** of `main` is
-permitted, while a real fork (`main` carrying unreachable work) is **still
-refused** with a merge-forward instruction. It is safe because it never disables
-the fork guard — it only stops penalizing the normal post-sync "ahead" state.
-Use it for back-to-back syncs and constrained environments:
+it is one or more commits **ahead** of `main`. Earlier versions of this rule
+required the two lines to be tree-identical by default and demanded a
+`--allow-ahead` flag to relax that — a flag whose name reads as a
+[Safety Bypass Flag] to an autonomous harness classifier regardless of what it
+actually did, and was observed teaching agents the bad habit of hunting a
+script for a bypass-shaped escape hatch (#393). #419 retires the flag entirely:
+Rule 3b now checks **only** the fork predicate
+(`main_only_cherry_lines` / `cherry_lines_show_unreachable_work`) — the
+integration line being merely **ahead** of `main` (a prior sync's own commit,
+an un-promoted `framework-version` bump, or normal in-between-releases drift)
+**proceeds by default**, no flag or token required. A real fork (`main`
+carrying unreachable work) is **still refused** unconditionally, with a
+merge-forward instruction — that check is the entire safety property and was
+never relaxed by the flag, and isn't relaxed by its removal either:
 
 ```bash
-.claude/skills/grm-sync-from-upstream/sync-from-upstream.sh --apply --allow-ahead
+.claude/skills/grm-sync-from-upstream/sync-from-upstream.sh --apply
 ```
 
-When a HALT *does* fire under `--allow-ahead`, `main` has genuinely diverged:
-reconcile by merging `main` **into** the integration line (merge-forward); never
-`reset --hard` across the fork (it discards the losing line's commits).
+When a HALT fires, `main` has genuinely diverged: reconcile by merging `main`
+**into** the integration line (merge-forward); never `reset --hard` across the
+fork (it discards the losing line's commits).
+
+**The sync-continuation token (v3.90) — now a boundary record, not a gate.**
+Before #419, the catch-22 above also bit *within a single sync flow*: the
+`--apply` commit itself put the line ahead, so the same flow's follow-up runs
+(a re-sync after resolving CONFLICT files, the adoption-phase re-run) demanded
+`--allow-ahead` too. A clean-boundary `--apply` records `main`'s SHA in
+`.scaffold-sync-state.json` (untracked local state; never synced, never
+committed) purely as an operator-facing record of the last known boundary —
+nothing in the guard path branches on it anymore, since #419 made every
+ahead-only state proceed unconditionally once the fork predicate passes.
+
+**Self-update on stale local copies (v3.91, #443).** A sync normally updates
+itself as part of a project's regular `--apply` file-walk, but that update
+only takes effect on the *next* invocation — the current one still runs
+whatever guard logic the local copy shipped with. A repo whose local
+`sync-from-upstream.sh` predates a boundary-guard fix (the ahead-by-default
+change above, or any future one) can never sync the fix in, because the OLD
+guard's stricter refusal blocks the very `--apply` that would deliver it —
+verified in sim-game: `dev` ahead by exactly the sync commit, `main`
+byte-identical to the merge base — the precisely-sanctioned scenario — still
+hard-blocked by a pre-v3.90 guard. Before the BMI-3 guard runs, `--apply` now best-effort fetches
+this script's newest bytes from upstream's `main` branch (always the newest
+tooling — `UPSTREAM_REF` may pin an old release tag) and re-executes them:
+GitHub remotes via `raw.githubusercontent.com` (no clone needed), local-path
+transports by reading the file straight off disk. Any failure — no `curl`, a
+non-GitHub/non-local-path remote, offline, identical content — silently falls
+through to running the local copy; this is an opportunistic upgrade, never a
+hard requirement. `SYNC_FROM_UPSTREAM_SELF_UPDATED=1` guards against a
+self-update loop. A repo whose local copy predates v3.91 entirely (lacking
+this self-update step itself) is outside what code alone can fix — it still
+needs one human-present sync or one gated release to receive v3.91, same as
+any other pre-fix straggler; from v3.91 onward, this class of trap can no
+longer recur silently.
+
 ## Step 4.55 — Complete the grm- skill namespacing (remove bare-named survivors)
 
 The file-walk **adds** the upstream `grm-*` skills but never deletes the old
@@ -298,3 +398,13 @@ step) so the pristine source reflects the cleaned tree.
 **Under Stealth Mode:** suppress the offer (skill writes must not reach source
 control); leave survivors untouched.
 
+
+## Feature manifest — v3.53 additions
+
+`manifest-version: 62` at the time. v3.53 shipped one new adoption feature:
+
+- **`standard-justfile-recipes`** — Justfile contract: `build`, `run`, and
+  `deploy` recipes with standard argument signatures. Projects with a `justfile`
+  that still carry a `grimoire:placeholder` marker on those recipes are offered
+  the adoption step, which instructs implementing them per
+  `docs/design/justfile-standard-design.md` and verifying with `grm-install-doctor`.

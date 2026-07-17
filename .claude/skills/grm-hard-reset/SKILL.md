@@ -1,6 +1,6 @@
 ---
 name: grm-hard-reset
-description: Re-initialize a Grimoire scaffold to its pristine, not-yet-onboarded state while ARCHIVING (never deleting) every project-local file to a timestamped .grimoire-archive/<ts>/, restoring framework files to golden, re-arming the onboarding sentinel, and handing back to onboarding. Destructive-adjacent — archives before clearing and requires explicit per-action confirmation. Use only on deliberate intent to factory-reset or re-onboard the project.
+description: Re-initialize a Grimoire scaffold to its pristine, not-yet-onboarded state while ARCHIVING (never deleting) every project-local file, restoring framework files to golden, re-arming the onboarding sentinel, and handing back to onboarding. Destructive-adjacent — archives before clearing and requires explicit per-action confirmation. Use only on deliberate intent to factory-reset or re-onboard the project.
 ---
 
 # Hard-reset

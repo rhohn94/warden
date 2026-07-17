@@ -1,6 +1,6 @@
 ---
 name: grm-orchestrate-release
-description: Drive one full release end-to-end autonomously — planning, work dispatch, testing, merging, releasing, push, and cleanup — with zero permission prompts and zero per-step confirmations. Noir-only; composes the existing pipeline skills (planning → agreement → phase → phase-merge → project-release → cleanup) rather than reimplementing them. Use when the user says "orchestrate a release", "run a full release", or wants a hands-off release cycle.
+description: Drive one full release end-to-end autonomously — planning, work dispatch, testing, merging, releasing, push, and cleanup — with zero permission prompts and zero per-step confirmations. Noir-only; composes the existing pipeline skills rather than reimplementing them. Use when the user says "orchestrate a release", "run a full release", or wants a hands-off release cycle.
 ---
 
 # Orchestrate release — autonomous end-to-end driver
@@ -71,10 +71,22 @@ Pause and surface — never push through:
 - **Gated push prompt** (stage 6, `autonomous-push.enabled` false): the
   `AskUserQuestion` pause here is expected, not a failure — it is the single
   designed interruption of an otherwise autonomous run.
+- **Blocked on human** (#422): under `grm-noir-loop`, if `noir_loop_state.py`'s
+  `blocked_on_human` flag is true (the progress-hash over open work + the
+  current blocker repeated unchanged for `STALL_LIMIT` consecutive
+  iterations — the same human-gated item, cycle after cycle) — stop and hand
+  off to `grm-stop-point` rather than spinning on a blocker only a human can
+  clear.
+- **Cycle budget exceeded** (#422): if `noir_loop_state.py`'s
+  `cycle_budget_exceeded` flag is true (`iteration` reached the configurable
+  `max_cycles` cap), stop and hand off to `grm-stop-point` — a backstop
+  against runaway loops even when each cycle is making real progress.
 
 On a stop, report state precisely (what landed, what's pending, which §5 rows
 are ticked) so the session can resume with `grm-release-phase-merge` or
-`grm-end-session` rather than restarting.
+`grm-end-session` rather than restarting. For the two `#422` conditions above,
+resume by running **`grm-stop-point`** instead — it packages the wind-down
+(merge what's ready, tick the ledger, report, park blocked items) in one call.
 
 ## Why there are no permission prompts
 
@@ -106,3 +118,8 @@ are ticked) so the session can resume with `grm-release-phase-merge` or
   release-master MAY use this skill to run its single release.
 - `grm-end-session` — the recovery/wind-down finale when a release is already
   mid-flight; this skill starts from zero instead.
+- `grm-stop-point` — the wind-down to run on a **stop condition** specifically
+  (blocked-on-human, cycle-budget, or any other stop above): merge what's
+  ready, tick the ledger, report, park anything blocked with an issue
+  comment. Narrower than `grm-end-session` (which also releases/pushes/cleans
+  up worktrees) — use it when you need to park cleanly, not finish the release.

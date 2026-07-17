@@ -115,6 +115,16 @@ without a transcript — Σ skill descriptions + `CLAUDE.md` + per-skill body si
 with over-budget bodies flagged. Run it to re-baseline `token-efficiency-baseline.md`:
 `python3 .claude/skills/grm-token-measure/footprint.py`.
 
+**Scope vs. `grm-doc-assurance`'s `skill-budget` check (#399).** Bare
+`footprint.py` scans one tree only (`--root`, default `.`) — by design, since
+it feeds the root-only dogfood baseline above. `grm-doc-assurance`'s
+`skill-budget` check is the authoritative per-skill gate and scans **every**
+shipped flavor (root + claude-code + codex + copilot), because that is the
+content that actually ships. Pass `--root claude-code` (etc.) here to
+reproduce that check's numbers for a given flavor — same byte-counting
+(`os.path.getsize` on `SKILL.md`, `reference.md` excluded either way), so the
+two tools never disagree once pointed at the same root.
+
 ## Per-run telemetry artifact
 
 `run_metadata.py` (third script in this directory) emits one structured JSON

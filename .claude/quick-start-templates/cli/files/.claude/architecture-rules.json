@@ -1,0 +1,39 @@
+{
+  "schema-version": 1,
+  "_comment": "Starter architecture-fitness ruleset for the cli quick-start family (grm-quick-start-template, #432). Bin-shaped: src/main.rs wires clap parsing (commands/) to real logic (core/) — argument parsing never embeds business logic, and core/ never depends on clap. Adapt the layer globs to the project's real module layout. To decline enforcement entirely, replace this file's contents with { \"schema-version\": 1, \"opt_out\": true, \"opt_out-reason\": \"...\" } — grm-architecture-audit surfaces that decision explicitly instead of silently passing. Design: docs/grimoire/design/architecture-fitness-design.md §Scaffold defaults.",
+  "structure": {
+    "spec": "docs/project-structure.md",
+    "required": ["src", "docs", "tests"],
+    "aliases": {
+      "vendor": "lib/third-party",
+      "deps": "lib/third-party",
+      "third_party": "lib/third-party",
+      "test": "tests",
+      "spec": "tests",
+      "script": "scripts",
+      "source": "src",
+      "build": "dist",
+      "out": "dist",
+      "static": "assets",
+      "resources": "assets"
+    },
+    "gitignored": ["dist", "build"],
+    "required-file-content": [
+      { "id": "cargo-profile-dev-debug", "path": "Cargo.toml",
+        "contains": "debug = \"line-tables-only\"", "severity": "warn",
+        "message": "Cargo.toml should set [profile.dev] debug = \"line-tables-only\" — shrinks target/debug while keeping backtrace-quality debug info (#447)" }
+    ]
+  },
+  "layers": {
+    "commands": ["src/main.rs", "src/commands/**", "src/cli/**"],
+    "core": ["src/core/**", "src/domain/**"]
+  },
+  "allowed-edges": [
+    ["commands", "core"]
+  ],
+  "forbidden-imports": [
+    { "id": "no-clap-in-core", "from": "core", "pattern": "clap::", "severity": "warn" },
+    { "id": "no-internal-reach", "pattern": "/internal/|/_private/", "severity": "warn" }
+  ],
+  "forbid-cycles": true
+}

@@ -1,6 +1,6 @@
 ---
 name: grm-model-effort-profile-switch
-description: Switch the active model/effort distribution profile by validating model-effort-profile.value against the registry .claude/model-effort-profiles.json and writing it to .claude/grimoire-config.json. Idempotent — exits early if the requested profile is already active. The resolver reads the field live, so no file-swap is performed. Use when onboarding selects a cost posture or the user wants a different model/effort distribution.
+description: Switch the active model/effort distribution profile by validating model-effort-profile.value against the registry .claude/model-effort-profiles.json and writing it to .claude/grimoire-config.json. Idempotent — exits early if the requested profile is already active. Use when onboarding selects a cost posture or the user wants a different model/effort distribution.
 ---
 
 # Model/effort profile switch

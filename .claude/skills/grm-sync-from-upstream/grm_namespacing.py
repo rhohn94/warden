@@ -21,6 +21,21 @@ rewrite tiers (see the design doc, grm-namespacing-design.md):
       (a) a backticked token EXACTLY equal to a known name: `<name>` -> `grm-<name>`
       (b) `<name> skill` / `skill <name>` / `the <name> skill` patterns.
 
+  Tier 3 — denylist / lookalike guard (#466; see design doc §Tier 3): even
+      Tier 2's conservatism isn't enough for two cases discovered on a
+      downstream consumer sync:
+      (a) a small file-path DENYLIST for known meta-files whose OLD-name
+          tokens are prose describing the migration itself (a self-test
+          fixture simulating pre-migration state, a stable feature-id
+          column, bare-name migration guidance) — never a live reference.
+          These files are skipped by the rewriter entirely.
+      (b) a LOOKALIKE_NAMES set of skill base-names that also carry a
+          legitimate non-skill sense in this framework's own vocabulary (a
+          `just` recipe target, a config-dial key). For a lookalike name,
+          the aggressive Tier-2a bare-backtick rewrite is suppressed — only
+          the unambiguous Tier-2b "<name> skill" / "skill <name>" phrasing
+          still fires, since that phrasing can only mean the skill.
+
 Directory renames preserve git history via `git mv` (falling back to os.rename
 when the path is untracked / not in a repo).
 
@@ -58,6 +73,84 @@ PREFIX = "grm-"
 
 # Directories never touched (anywhere in the tree), matched by name alone.
 EXCLUDED_DIR_NAMES = {".git", ".grimoire-archive", ".grimoire-golden", "dist", "node_modules", "__pycache__"}
+
+# Canonical renames beyond the plain grm- prefix (#308, agent-role convention):
+# the role skills were later renamed grm-<role> -> grm-agent-<role>. A
+# pre-namespacing project still holds the ORIGINAL bare role dirs, so the
+# migrate must land them on TODAY'S canonical names — a plain prefix would
+# mint a ghost (grm-scout/) beside the real synced skill (grm-agent-scout/).
+# A stale grm-era ghost dir (grm-scout/ itself, synced between v3.42 and #308)
+# is healed the same way.
+CANONICAL_RENAMES = {
+    "scout": "agent-scout",
+    "reporter": "agent-reporter",
+    "reviewer": "agent-reviewer",
+    "verifier": "agent-verifier",
+    "triager": "agent-triager",
+    "qa-agent": "agent-qa",
+    "researcher": "agent-researcher",
+    "environment-manager": "agent-environment-manager",
+    "status-broker": "agent-status-broker",
+}
+
+
+def canonical_base(name: str) -> str:
+    """Today's canonical base for a bare (or stale grm-era) skill name."""
+    return CANONICAL_RENAMES.get(name, name)
+
+
+# -- Tier 3: denylist / lookalike guard (#466) ------------------------------
+#
+# Tier 2's conservatism (backticked-exact-token / "<name> skill" phrasing)
+# still corrupts two classes of content the reference-rewriter cannot
+# disambiguate from a live reference:
+#
+#   (a) DENYLISTED_FILE_SUFFIXES — files that are themselves ABOUT the
+#       migration: a self-test fixture that deliberately constructs
+#       pre-migration (OLD-name) paths to simulate the transitional state,
+#       a stable feature-id column key, or prose enumerating the OLD bare
+#       names as migration guidance. Rewriting these turns correct
+#       self-tests into crashes and collapses illustrative "OLD -> NEW"
+#       examples into self-referential no-ops. Matched by path SUFFIX (not
+#       exact root-relative path) so the same denylist protects every flavor
+#       mirror (root, claude-code/) without per-flavor duplication.
+#
+#   (b) LOOKALIKE_NAMES — skill base-names that also have a legitimate
+#       non-skill sense in this framework's own vocabulary: a `just` recipe
+#       target (`sync-deps`, `iterate`) or a config-dial / role noun
+#       (`project-manager`, `github-pr`). `` `sync-deps` `` inside a recipe
+#       table means the just-recipe, not the `grm-sync-deps` skill, and
+#       Tier-2a's bare-backtick rule cannot tell the two senses apart. For a
+#       lookalike name, only the unambiguous Tier-2b "<name> skill" /
+#       "skill <name>" phrasing is still rewritten.
+
+DENYLISTED_FILE_SUFFIXES: tuple[str, ...] = (
+    "grm-sync-from-upstream/grm_namespacing.py",
+    "grm-sync-from-upstream/feature-manifest.md",
+    "grm-sync-from-upstream/reference.md",
+    "grm-workflow-bootstrap/generate_golden.py",
+    # Discovered during #466's fix (not in the original report): the
+    # append-only engineering ledger records each release's OLD -> NEW name
+    # the day it happened ("`doc-assurance` -> `grm-doc-assurance`" entries,
+    # and bug-postmortem prose contrasting a broken OLD-named reference
+    # against the fixed NEW one). Same failure class as feature-manifest.md's
+    # id column: rewriting the OLD side collapses the historical record into
+    # a self-referential no-op.
+    "docs/version-history.md",
+)
+
+LOOKALIKE_NAMES: frozenset[str] = frozenset({
+    "sync-deps",        # just-recipe target vs. the grm-sync-deps skill
+    "iterate",          # just-recipe target / generic verb vs. grm-iterate
+    "project-manager",  # work-paradigm role noun vs. grm-project-manager
+    "github-pr",        # generic feature name vs. the grm-github-pr skill
+})
+
+
+def is_denylisted_file(rel_posix: str) -> bool:
+    """True if *rel_posix* (repo-root-relative, POSIX separators) is a known
+    meta-file about the migration itself, exempt from all reference rewrites."""
+    return any(rel_posix.endswith(suffix) for suffix in DENYLISTED_FILE_SUFFIXES)
 
 # Relative path segment that marks the vendored third-party tree.  Any directory
 # whose path contains this segment is treated as a boundary the same way a git
@@ -281,10 +374,17 @@ class GrmNamespacer:
                 if child.name in EXCLUDED_DIR_NAMES:
                     continue
                 if child.name.startswith(PREFIX):
-                    continue  # idempotent: already namespaced
-                if child.name not in self.names:
+                    # Idempotent: already namespaced — unless it is a stale
+                    # grm-era ghost of a #308-renamed role skill (grm-scout/),
+                    # which heals to today's canonical name the same way a
+                    # bare dir does.
+                    if child.name[len(PREFIX):] not in CANONICAL_RENAMES:
+                        continue
+                elif child.name not in self.names:
                     continue
-                dst = parent / (PREFIX + child.name)
+                dst = parent / (PREFIX + canonical_base(child.name[len(PREFIX):]
+                                                        if child.name.startswith(PREFIX)
+                                                        else child.name))
                 src_rel = str(child.relative_to(self.root))
                 dst_rel = str(dst.relative_to(self.root))
                 if dst.exists():
@@ -339,10 +439,16 @@ class GrmNamespacer:
         # `grm-release-phase`.
         ordered = sorted(self.names, key=len, reverse=True)
         alt = "|".join(re.escape(n) for n in ordered)
+        # Tier 3b: lookalike names are excluded from the aggressive Tier-2a
+        # bare-backtick alternation — only unambiguous "<name> skill" /
+        # "skill <name>" phrasing (Tier 2b, which still uses the full `alt`)
+        # may rewrite them. An empty alternation must never match anything.
+        safe = [n for n in ordered if n not in LOOKALIKE_NAMES]
+        alt_safe = "|".join(re.escape(n) for n in safe) if safe else r"(?!x)x"
         # Tier 1: skills/<name>/  -> skills/grm-<name>/   (only when not already grm-)
         path_re = re.compile(rf"(skills/)(?!grm-)({alt})(/)")
-        # Tier 2a: backticked exact token `<name>` (not already grm-)
-        backtick_re = re.compile(rf"`(?!grm-)({alt})`")
+        # Tier 2a: backticked exact token `<name>` (not already grm-, not a lookalike)
+        backtick_re = re.compile(rf"`(?!grm-)({alt_safe})`")
         # Tier 2b: "<name> skill" / "the <name> skill" / "skill <name>"
         name_skill_re = re.compile(rf"(?<![\w-])(?!grm-)({alt})(\s+skill\b)")
         skill_name_re = re.compile(rf"(\bskill\s+)(?!grm-)({alt})(?![\w-])")
@@ -359,6 +465,11 @@ class GrmNamespacer:
             for fn in filenames:
                 p = Path(dirpath) / fn
                 if p.suffix in TEXT_SUFFIXES or fn in TEXT_NAMES:
+                    # Tier 3a: skip known meta-files about the migration
+                    # itself — their OLD-name tokens are never live references.
+                    rel_posix = p.relative_to(self.root).as_posix()
+                    if is_denylisted_file(rel_posix):
+                        continue
                     yield p
 
     def rewrite_references(self) -> None:
@@ -370,13 +481,15 @@ class GrmNamespacer:
                 continue
             new = text
             count = 0
-            new, n = path_re.subn(lambda m: f"{m.group(1)}{PREFIX}{m.group(2)}{m.group(3)}", new)
+            # Every substitution lands on TODAY'S canonical base (#308 role
+            # renames), not just the prefixed original.
+            new, n = path_re.subn(lambda m: f"{m.group(1)}{PREFIX}{canonical_base(m.group(2))}{m.group(3)}", new)
             count += n
-            new, n = backtick_re.subn(lambda m: f"`{PREFIX}{m.group(1)}`", new)
+            new, n = backtick_re.subn(lambda m: f"`{PREFIX}{canonical_base(m.group(1))}`", new)
             count += n
-            new, n = name_skill_re.subn(lambda m: f"{PREFIX}{m.group(1)}{m.group(2)}", new)
+            new, n = name_skill_re.subn(lambda m: f"{PREFIX}{canonical_base(m.group(1))}{m.group(2)}", new)
             count += n
-            new, n = skill_name_re.subn(lambda m: f"{m.group(1)}{PREFIX}{m.group(2)}", new)
+            new, n = skill_name_re.subn(lambda m: f"{m.group(1)}{PREFIX}{canonical_base(m.group(2))}", new)
             count += n
             if count and new != text:
                 rel = str(p.relative_to(self.root))
@@ -399,6 +512,78 @@ class GrmNamespacer:
 
 
 # -- self-test -------------------------------------------------------------
+
+
+def _test_tier3_denylist_and_lookalike() -> list[str]:
+    """Regression test for #466: the denylist protects known meta-files from
+    ANY rewrite, and the lookalike guard suppresses the bare-backtick rule
+    (Tier 2a) for a name that also has a legitimate non-skill sense, while
+    still allowing the unambiguous "<name> skill" phrasing (Tier 2b) through."""
+    failures: list[str] = []
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+
+        # A known skill whose base name is a LOOKALIKE (also a just-recipe
+        # target / config-dial key in real usage): sync-deps.
+        (root / ".claude" / "skills" / "sync-deps").mkdir(parents=True)
+        (root / ".claude" / "skills" / "sync-deps" / "SKILL.md").write_text(
+            "---\nname: sync-deps\n---\n", encoding="utf-8"
+        )
+        # A non-lookalike known skill for contrast.
+        (root / ".claude" / "skills" / "doc-assurance").mkdir(parents=True)
+        (root / ".claude" / "skills" / "doc-assurance" / "SKILL.md").write_text(
+            "---\nname: doc-assurance\n---\n", encoding="utf-8"
+        )
+
+        # Tier 3a fixture: a file whose path ends in a denylisted suffix,
+        # containing prose that would otherwise trip Tier 1 AND Tier 2 —
+        # simulating the self-test / feature-manifest / reference.md content
+        # the real denylisted files carry.
+        deny_dir = root / ".claude" / "skills" / "grm-sync-from-upstream"
+        deny_dir.mkdir(parents=True)
+        deny_file = deny_dir / "feature-manifest.md"
+        deny_file.write_text(
+            "| `sync-deps` | stable id column, must stay bare |\n"
+            "| `doc-assurance` | another stable id, e.g. `doc-assurance` -> `grm-doc-assurance` |\n"
+            "See skills/doc-assurance/SKILL.md for the pre-migration form.\n",
+            encoding="utf-8",
+        )
+        deny_original = deny_file.read_text()
+
+        # Tier 3b fixture: a normal (non-denylisted) referencing file mixing
+        # a bare lookalike backtick (must NOT rewrite), a lookalike used with
+        # explicit "skill" phrasing (MUST rewrite), and a non-lookalike bare
+        # backtick (MUST still rewrite — Tier 2a unaffected for safe names).
+        ref = root / "docs" / "recipes.md"
+        ref.parent.mkdir(parents=True)
+        ref.write_text(
+            "The `sync-deps` recipe delegates to the sync-deps skill.\n"
+            "Also see the `doc-assurance` skill.\n",
+            encoding="utf-8",
+        )
+
+        GrmNamespacer(root, apply=True).run()
+
+        # 1. Denylisted file untouched byte-for-byte.
+        if deny_file.read_text() != deny_original:
+            failures.append("TIER3-DENYLIST: denylisted feature-manifest.md was rewritten")
+
+        # 2. Bare lookalike backtick NOT rewritten (recipe sense preserved).
+        out = ref.read_text()
+        if "The `sync-deps` recipe" not in out:
+            failures.append("TIER3-LOOKALIKE: bare `sync-deps` backtick was rewritten (false positive)")
+
+        # 3. Lookalike WITH explicit unbackticked "<name> skill" phrasing
+        #    (Tier 2b, unambiguous) still rewritten.
+        if "grm-sync-deps skill" not in out:
+            failures.append("TIER3-LOOKALIKE: `sync-deps` skill phrasing was NOT rewritten")
+
+        # 4. Non-lookalike bare backtick still rewritten as before (Tier 2a
+        #    unaffected for safe names).
+        if "the `grm-doc-assurance` skill" not in out:
+            failures.append("TIER3-LOOKALIKE: non-lookalike `doc-assurance` backtick regressed")
+
+    return failures
 
 
 def _test_submodule_boundary() -> list[str]:
@@ -584,6 +769,39 @@ def _self_test() -> int:
     # 9. Submodule-boundary regression (#178): renames must not cross into
     #    git submodule trees or lib/third-party/ vendored deps.
     failures.extend(_test_submodule_boundary())
+
+    # 9.5. Tier 3 denylist / lookalike-guard regression (#466): known
+    #      meta-files are skipped entirely; a lookalike name's bare backtick
+    #      is not rewritten, but its "<name> skill" phrasing still is.
+    failures.extend(_test_tier3_denylist_and_lookalike())
+
+    # 10. Canonical role renames (#308): a stale grm-era ghost (grm-scout/)
+    #     heals to grm-agent-scout/ — archived+removed when the canonical twin
+    #     exists, renamed onto the canonical name when alone.
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        (root / ".claude" / "skills" / "grm-scout").mkdir(parents=True)
+        (root / ".claude" / "skills" / "grm-scout" / "SKILL.md").write_text(
+            "---\nname: grm-scout\n---\nGHOST\n", encoding="utf-8")
+        (root / ".claude" / "skills" / "grm-agent-scout").mkdir(parents=True)
+        (root / ".claude" / "skills" / "grm-agent-scout" / "SKILL.md").write_text(
+            "---\nname: grm-agent-scout\n---\nREAL\n", encoding="utf-8")
+        GrmNamespacer(root, apply=True).run()
+        if (root / ".claude" / "skills" / "grm-scout").exists():
+            failures.append("GHOST: stale grm-scout/ survived beside grm-agent-scout/")
+        real = (root / ".claude" / "skills" / "grm-agent-scout" / "SKILL.md").read_text()
+        if "REAL" not in real:
+            failures.append("GHOST: canonical grm-agent-scout/ content was clobbered")
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        (root / ".claude" / "skills" / "grm-scout").mkdir(parents=True)
+        (root / ".claude" / "skills" / "grm-scout" / "SKILL.md").write_text(
+            "---\nname: grm-scout\n---\nLONE\n", encoding="utf-8")
+        GrmNamespacer(root, apply=True).run()
+        if not (root / ".claude" / "skills" / "grm-agent-scout").is_dir():
+            failures.append("GHOST: lone grm-scout/ was not renamed to grm-agent-scout/")
+        if (root / ".claude" / "skills" / "grm-scout").exists():
+            failures.append("GHOST: lone grm-scout/ still present after canonical rename")
 
     if failures:
         print("SELF-TEST FAILED:")

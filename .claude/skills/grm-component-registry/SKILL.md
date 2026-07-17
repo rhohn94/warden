@@ -1,6 +1,6 @@
 ---
 name: grm-component-registry
-description: Build or update the versioned component registry .claude/component-registry.json from the project's component.json / front-matter sources. Versions each component (declared version or content-hash), diffs against the prior registry (added/changed/removed/unchanged), and validates tags against the component-taxonomy authority (unknown tags surfaced, never dropped). Idempotent. Use when building, updating, or diffing the component registry.
+description: Build or update the versioned component registry .claude/component-registry.json from the project's component.json / front-matter sources — versions each component, diffs against the prior registry, and validates tags against the component-taxonomy authority (unknown tags surfaced, never dropped). Idempotent. Use when building, updating, or diffing the component registry.
 ---
 
 # Component registry

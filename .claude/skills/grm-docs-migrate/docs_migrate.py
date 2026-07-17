@@ -5,9 +5,19 @@ Downstream-safe: walks up from cwd to find `.claude/grimoire-config.json` to
 locate the project root (never looks for `claude-code/`). Read-only by default;
 archives before any rewrite. Idempotent — second run is a no-op.
 
+Finding codes: FLAT_TIER, ORPHAN, ABSOLUTE_LINK, PROSE_LINK, NO_BREADCRUMB
+(wiki-hierarchy, pre-#415) plus the design-doc-purity codes (#415, v3.98,
+scoped to docs/design/**, suppressed under Stealth Mode): STATUS_HEADER and
+CHECKED_ACCEPTANCE (auto-fixed by --apply, same mechanism as NO_BREADCRUMB /
+ABSOLUTE_LINK) and RELEASE_NARRATION / WORK_ITEM_MAP (detect-only, human
+judgment — never auto-fixed). This is the consumer-side one-time cleanup half
+of design-doc-purity; the detect half is `doc_assurance.py design-doc-purity`
+(see feature-manifest.md's `design-doc-purity` row).
+
 Exit codes:
   0 — no findings / apply succeeded / self-test passed
-  1 — findings present (detect mode) / apply had unresolvable refs
+  1 — findings present (detect mode) / apply had unresolvable refs or a
+      purity auto-fix failure
   2 — hard error (bad args, unreadable tree, internal failure)
 
 Usage:
@@ -32,12 +42,53 @@ ABSOLUTE_LINK = "ABSOLUTE_LINK" # contains absolute internal link (starts with /
 PROSE_LINK   = "PROSE_LINK"     # bare backtick ref to a known docs filename
 NO_BREADCRUMB = "NO_BREADCRUMB" # missing breadcrumb up-link
 
-# Files exempt from breadcrumb and ORPHAN checks (path-locked by framework)
+# design-doc-purity codes (#415, v3.98): the consumer-side one-time cleanup
+# half of the design-doc-purity feature (detect half lives in doc_assurance.py
+# check_design_doc_purity, #358). Scoped to docs/design/** only (see
+# DocClassifier._is_design_tier), mirroring doc_assurance.py's pattern set so
+# a doc cleaned by --apply here also passes `doc_assurance.py
+# design-doc-purity --strict` afterward.
+STATUS_HEADER      = "STATUS_HEADER"       # `Status:` line in opening ~10 lines
+CHECKED_ACCEPTANCE = "CHECKED_ACCEPTANCE"  # a checked '- [x]' box anywhere in the doc
+RELEASE_NARRATION  = "RELEASE_NARRATION"   # "shipped in vX.Y" / "Delivered" phrasing
+WORK_ITEM_MAP      = "WORK_ITEM_MAP"       # file-level work-item-map / "Phase N closed" heading
+
+# Files exempt from breadcrumb and ORPHAN checks (path-locked by framework).
+# Also honored by the design-doc-purity codes above (same _is_exempt gate) —
+# the one exemption/allowlist mechanism this script has, reused rather than
+# duplicated.
 EXEMPT_PATTERNS = (
     "release-planning-v",   # path-locked by release-plan-guard.sh
     "version-history.md",   # operator-facing, stays at docs/ top level
     "qa-ledger.md",         # ledger artifact, path-locked
 )
+
+# design-doc-purity detection patterns — deliberately duplicated from
+# doc_assurance.py's check_design_doc_purity (rather than imported) because
+# docs_migrate.py is downstream-safe and must run in a consumer project that
+# has no claude-code/ tree at all. Keep in sync by hand if either check's
+# patterns change (see docs_migrate.py header + design-doc-purity-design.md).
+_PURITY_STATUS_RE = re.compile(r"^>?\s*\**Status\**\s*:", re.I | re.M)
+_PURITY_CHECKED_BOX_RE = re.compile(r"^\s*-\s\[[xX]\]", re.M)
+_PURITY_NARRATION_RE = re.compile(
+    r"shipped in v\d|landed in v\d|closed in v\d|implemented\s*\(#"
+    r"|—\s*done\b|\(addressed in v\d",
+    re.I,
+)
+_PURITY_DELIVERED_MARKER_RE = re.compile(
+    r"\*{0,2}Delivered\*{0,2}\s*$",
+    re.M | re.I,
+)
+_PURITY_WORKMAP_HEADING_RE = re.compile(
+    r"^#{1,6}\s.*(file-level changes|work-item map)", re.M | re.I
+)
+_PURITY_PHASE_CLOSED_HEADING_RE = re.compile(
+    r"^#{1,6}\s.*phase\s+\d+\s+closed", re.M | re.I
+)
+# Auto-fix regex: uncheck a checked Acceptance box in place (keeps the line,
+# flips [x]/[X] -> [ ]) rather than deleting it — the criterion itself is
+# still a valid template line, only its completion state is pollution.
+_PURITY_CHECKED_BOX_SUB_RE = re.compile(r"^(\s*-\s)\[[xX]\]", re.M)
 
 # Regex for an existing breadcrumb line (canonical form from WH-0 decision)
 BREADCRUMB_RE = re.compile(r">\s*\*\*Up:\*\*\s*\[")
@@ -65,6 +116,28 @@ def _strip_code(text: str) -> str:
 
 class RootNotFoundError(SystemExit):
     """Raised when the project root cannot be located."""
+
+
+def _scalar(v):
+    """Unwrap a config value that may be a bare scalar or a {"value": ...}
+    block. Mirrors install_doctor.py's `_scalar` (kept as a tiny separate
+    copy — this script does not otherwise depend on that skill dir)."""
+    return v.get("value") if isinstance(v, dict) else v
+
+
+def _stealth_mode_on(root: str) -> bool:
+    """Read .claude/grimoire-config.json's stealth-mode.value. Suppresses
+    the design-doc-purity codes (#415): Stealth Mode's contract is zero
+    AI/agent fingerprints in committed artifacts, and an automated purity
+    sweep (plus the archive + MANIFEST.md it writes) is exactly that kind of
+    fingerprint — so it does not run findings/fixes while Stealth is on.
+    Never raises: a missing/unreadable config reads as stealth-off."""
+    cfg_path = os.path.join(root, ".claude", "grimoire-config.json")
+    try:
+        cfg = json.loads(open(cfg_path, encoding="utf-8").read())
+    except (OSError, json.JSONDecodeError):
+        return False
+    return _scalar(cfg.get("stealth-mode")) == "on"
 
 
 def find_root(start: str = ".") -> str:
@@ -101,6 +174,7 @@ class DocClassifier:
         self._all_docs = self._collect_docs()
         self._known_basenames = {os.path.basename(p) for p in self._all_docs}
         self._index_set = self._collect_index_links()
+        self._stealth_on = _stealth_mode_on(root)
 
     def _collect_docs(self):
         """All .md files under docs_root, excluding README.md files."""
@@ -145,6 +219,32 @@ class DocClassifier:
         basename = os.path.basename(path)
         return any(ex in basename for ex in EXEMPT_PATTERNS)
 
+    def _is_design_tier(self, path: str) -> bool:
+        """True for docs/design/** (any depth), matching doc_assurance.py's
+        design-doc-purity scope. README.md index pages are excluded by the
+        caller before this is ever checked (same as the existing checks)."""
+        rel = os.path.relpath(path, self.docs_root)
+        return rel.split(os.sep)[0] == "design"
+
+    def _classify_purity(self, path: str, text: str) -> list:
+        """design-doc-purity findings (#415), scoped to docs/design/** and
+        suppressed entirely under Stealth Mode (see _stealth_mode_on)."""
+        findings = []
+        if self._stealth_on or not self._is_design_tier(path):
+            return findings
+        head = "\n".join(text.splitlines()[:10])
+        if _PURITY_STATUS_RE.search(head):
+            findings.append(STATUS_HEADER)
+        if _PURITY_CHECKED_BOX_RE.search(text):
+            findings.append(CHECKED_ACCEPTANCE)
+        stripped = _strip_code(text)
+        if _PURITY_NARRATION_RE.search(stripped) or _PURITY_DELIVERED_MARKER_RE.search(stripped):
+            findings.append(RELEASE_NARRATION)
+        if (_PURITY_WORKMAP_HEADING_RE.search(stripped)
+                or _PURITY_PHASE_CLOSED_HEADING_RE.search(stripped)):
+            findings.append(WORK_ITEM_MAP)
+        return findings
+
     def classify_file(self, path: str) -> list:
         """Return list of finding codes for a docs file."""
         findings = []
@@ -186,6 +286,8 @@ class DocClassifier:
                 if not re.search(r"\(" + re.escape(bn) + r"\)", text):
                     findings.append(PROSE_LINK)
                     break
+
+        findings.extend(self._classify_purity(path, text))
 
         return findings
 
@@ -358,6 +460,28 @@ def _rewrite_absolute_links(text: str, path: str, root: str) -> tuple:
     return new_text, unresolved
 
 
+# ── design-doc-purity auto-fixers (#415) ────────────────────────────────────
+
+def _strip_status_header(text: str) -> str:
+    """Drop a `Status:` line found in the opening 10 raw lines (STATUS_HEADER,
+    auto-strippable) — same 10-line window doc_assurance.py's
+    check_design_doc_purity scans, so a stripped doc passes that check."""
+    lines = text.splitlines(keepends=True)
+    out = []
+    for i, ln in enumerate(lines):
+        if i < 10 and _PURITY_STATUS_RE.search(ln):
+            continue
+        out.append(ln)
+    return "".join(out)
+
+
+def _uncheck_boxes(text: str) -> str:
+    """Flip every checked '- [x]'/'- [X]' Acceptance box to '- [ ]'
+    (CHECKED_ACCEPTANCE, auto-uncheckable) — never deletes the criterion
+    line, only its stray completion state."""
+    return _PURITY_CHECKED_BOX_SUB_RE.sub(r"\1[ ]", text)
+
+
 # ── Apply engine ─────────────────────────────────────────────────────────────
 
 class MigrateApplier:
@@ -369,6 +493,7 @@ class MigrateApplier:
         self.dry_run = dry_run
         self.archiver = Archiver(root)
         self.unresolved_total = []
+        self.purity_fix_failures = []
 
     def apply(self, findings: dict) -> int:
         """Apply migrations for all found files. Returns exit code."""
@@ -401,6 +526,22 @@ class MigrateApplier:
                 text, ur = _rewrite_absolute_links(text, path, self.root)
                 unresolved.extend(ur)
 
+            # design-doc-purity auto-fixes (#415). Loud-fallback: if a code
+            # was detected but the fixer finds nothing to change (detector
+            # and fixer regexes have drifted apart), never silently no-op —
+            # record it so the run fails loudly instead of reporting a false
+            # clean bill of health.
+            if STATUS_HEADER in codes:
+                before = text
+                text = _strip_status_header(text)
+                if text == before:
+                    self.purity_fix_failures.append((rel, STATUS_HEADER))
+            if CHECKED_ACCEPTANCE in codes:
+                before = text
+                text = _uncheck_boxes(text)
+                if text == before:
+                    self.purity_fix_failures.append((rel, CHECKED_ACCEPTANCE))
+
             if text == original:
                 continue  # idempotent — nothing changed
 
@@ -428,6 +569,10 @@ class MigrateApplier:
 
         _print_manual_categories_summary(findings)
 
+        if self.purity_fix_failures:
+            _print_purity_fix_failure_banner(self.purity_fix_failures)
+            return 1
+
         if self.unresolved_total:
             _print_unresolved_banner(self.unresolved_total)
             return 1
@@ -436,16 +581,20 @@ class MigrateApplier:
 
 
 # Finding categories --apply auto-resolves vs. leaves for manual handling.
-AUTO_RESOLVED_CATEGORIES = (NO_BREADCRUMB, ABSOLUTE_LINK)
-DETECTION_ONLY_CATEGORIES = (PROSE_LINK, ORPHAN, FLAT_TIER)
+# STATUS_HEADER / CHECKED_ACCEPTANCE (#415) auto-resolve the same way
+# NO_BREADCRUMB / ABSOLUTE_LINK already do; RELEASE_NARRATION / WORK_ITEM_MAP
+# are detect-only (human judgment — see docs_migrate.py header + #415).
+AUTO_RESOLVED_CATEGORIES = (NO_BREADCRUMB, ABSOLUTE_LINK, STATUS_HEADER, CHECKED_ACCEPTANCE)
+DETECTION_ONLY_CATEGORIES = (PROSE_LINK, ORPHAN, FLAT_TIER, RELEASE_NARRATION, WORK_ITEM_MAP)
 
 
 def _print_manual_categories_summary(findings: dict) -> None:
     """Print which detected categories --apply does NOT auto-resolve.
 
-    --apply only rewrites NO_BREADCRUMB and ABSOLUTE_LINK.  PROSE_LINK, ORPHAN,
-    and FLAT_TIER are detection-only (manual fix), so an operator must not assume
-    a clean --apply means zero findings remain (#188)."""
+    --apply rewrites NO_BREADCRUMB, ABSOLUTE_LINK, STATUS_HEADER, and
+    CHECKED_ACCEPTANCE. PROSE_LINK, ORPHAN, FLAT_TIER, RELEASE_NARRATION, and
+    WORK_ITEM_MAP are detection-only (manual fix), so an operator must not
+    assume a clean --apply means zero findings remain (#188, #415)."""
     remaining = {}
     for codes in findings.values():
         for code in codes:
@@ -478,6 +627,25 @@ def _print_unresolved_banner(refs: list):
         "the UNRESOLVED markers once you have verified the paths.",
         file=sys.stderr,
     )
+    print("=" * 60 + "\n", file=sys.stderr)
+
+
+def _print_purity_fix_failure_banner(failures: list):
+    """Loud-fallback banner (#415): a STATUS_HEADER/CHECKED_ACCEPTANCE finding
+    was detected but the corresponding auto-fixer left the file unchanged —
+    never silently reported as a clean apply."""
+    print("\n" + "=" * 60, file=sys.stderr)
+    print("docs-migrate: PURITY AUTO-FIX FAILED", file=sys.stderr)
+    print("=" * 60, file=sys.stderr)
+    print(
+        "The following files were detected with a design-doc-purity code\n"
+        "that --apply auto-resolves, but the fixer made no change — the\n"
+        "detector and fixer regexes may have drifted apart. Investigate\n"
+        "manually; this is NOT reported as a clean apply.",
+        file=sys.stderr,
+    )
+    for rel, code in failures:
+        print(f"  {rel}: {code}", file=sys.stderr)
     print("=" * 60 + "\n", file=sys.stderr)
 
 
@@ -640,6 +808,147 @@ def self_test() -> int:
         with _rs11(buf2):
             _print_manual_categories_summary({"c.md": [NO_BREADCRUMB, ABSOLUTE_LINK]})
         check(buf2.getvalue() == "", "--apply summary silent when only auto-resolved categories present")
+
+        # ── Test 12: design-doc-purity codes detected together (#415) ──────
+        purity_path = os.path.join(design, "purity-design.md")
+        with open(purity_path, "w") as fh:
+            fh.write(
+                "# Purity Design\n\n"
+                "> **Status**: shipped\n\n"
+                "> **Up:** [↑ Design docs](README.md)\n\n"
+                "## Motivation\nWhy.\n\n"
+                "## Acceptance\n- [x] done thing\n\n"
+                "## File-level changes\nSome map.\n\n"
+                "This feature shipped in v3.10.\n"
+            )
+        clf = DocClassifier(root, docs)
+        findings = clf.classify_file(purity_path)
+        check(STATUS_HEADER in findings, "design-doc-purity: Status: header classified STATUS_HEADER")
+        check(CHECKED_ACCEPTANCE in findings, "design-doc-purity: checked box classified CHECKED_ACCEPTANCE")
+        check(RELEASE_NARRATION in findings, "design-doc-purity: narration phrasing classified RELEASE_NARRATION")
+        check(WORK_ITEM_MAP in findings, "design-doc-purity: work-item-map heading classified WORK_ITEM_MAP")
+
+        # ── Test 13: STATUS_HEADER auto-fix + idempotent re-classify ───────
+        status_path = os.path.join(design, "status-header-design.md")
+        with open(status_path, "w") as fh:
+            fh.write(
+                "# Status Header\n\n"
+                "> **Status**: shipped\n\n"
+                "> **Up:** [↑ Design docs](README.md)\n\n"
+                "## Motivation\nWhy.\n"
+            )
+        clf = DocClassifier(root, docs)
+        check(STATUS_HEADER in clf.classify_file(status_path), "STATUS_HEADER detected before apply")
+        applier_sh = MigrateApplier(root, docs, dry_run=False)
+        rc_sh = applier_sh.apply({status_path: [STATUS_HEADER]})
+        check(rc_sh == 0, "STATUS_HEADER apply returns 0")
+        text_sh = open(status_path).read()
+        check("**Status**:" not in text_sh, "STATUS_HEADER apply strips the Status: line")
+        clf2 = DocClassifier(root, docs)
+        check(STATUS_HEADER not in clf2.classify_file(status_path),
+              "idempotent: STATUS_HEADER gone after apply")
+
+        # ── Test 14: CHECKED_ACCEPTANCE auto-fix + idempotent re-classify ──
+        checked_path = os.path.join(design, "checked-acceptance-design.md")
+        with open(checked_path, "w") as fh:
+            fh.write(
+                "# Checked Acceptance\n\n"
+                "> **Up:** [↑ Design docs](README.md)\n\n"
+                "## Acceptance\n- [x] do the thing\n- [ ] another thing\n"
+            )
+        clf = DocClassifier(root, docs)
+        check(CHECKED_ACCEPTANCE in clf.classify_file(checked_path),
+              "CHECKED_ACCEPTANCE detected before apply")
+        applier_ca = MigrateApplier(root, docs, dry_run=False)
+        rc_ca = applier_ca.apply({checked_path: [CHECKED_ACCEPTANCE]})
+        check(rc_ca == 0, "CHECKED_ACCEPTANCE apply returns 0")
+        text_ca = open(checked_path).read()
+        check("- [x]" not in text_ca.lower(), "CHECKED_ACCEPTANCE apply unchecks the box")
+        check("- [ ] do the thing" in text_ca,
+              "CHECKED_ACCEPTANCE apply preserves the criterion line, only unchecks")
+        clf2 = DocClassifier(root, docs)
+        check(CHECKED_ACCEPTANCE not in clf2.classify_file(checked_path),
+              "idempotent: CHECKED_ACCEPTANCE gone after apply")
+
+        # ── Test 15: detect-only codes (RELEASE_NARRATION/WORK_ITEM_MAP)
+        #     are never auto-fixed — apply is a no-op on those codes alone ──
+        narration_path = os.path.join(design, "narration-design.md")
+        with open(narration_path, "w") as fh:
+            fh.write(
+                "# Narration\n\n"
+                "> **Up:** [↑ Design docs](README.md)\n\n"
+                "## File-level changes\nSome map.\n\n"
+                "This feature shipped in v3.10.\n"
+            )
+        clf = DocClassifier(root, docs)
+        findings_rn = clf.classify_file(narration_path)
+        check(RELEASE_NARRATION in findings_rn and WORK_ITEM_MAP in findings_rn,
+              "RELEASE_NARRATION and WORK_ITEM_MAP both detected")
+        before_text = open(narration_path).read()
+        applier_rn = MigrateApplier(root, docs, dry_run=False)
+        rc_rn = applier_rn.apply({narration_path: [RELEASE_NARRATION, WORK_ITEM_MAP]})
+        after_text = open(narration_path).read()
+        check(rc_rn == 0, "detect-only-code apply returns 0 (nothing to fix, no failure)")
+        check(before_text == after_text, "detect-only codes are never auto-fixed — file unchanged")
+
+        # ── Test 16: fenced-code narration example is not flagged ─────────
+        fenced_path = os.path.join(design, "fenced-example-design.md")
+        with open(fenced_path, "w") as fh:
+            fh.write(
+                "# Fenced Example\n\n"
+                "> **Up:** [↑ Design docs](README.md)\n\n"
+                "Do not write:\n\n"
+                "```\nshipped in v3.10\n```\n"
+            )
+        clf = DocClassifier(root, docs)
+        check(RELEASE_NARRATION not in clf.classify_file(fenced_path),
+              "design-doc-purity: fenced-code narration example not flagged")
+
+        # ── Test 17: purity codes scoped to docs/design/** only ───────────
+        top_level_status_path = os.path.join(docs, "top-level-status.md")
+        with open(top_level_status_path, "w") as fh:
+            fh.write("# Top Level\n\n> **Status**: shipped\n\nContent.\n")
+        clf = DocClassifier(root, docs)
+        check(STATUS_HEADER not in clf.classify_file(top_level_status_path),
+              "design-doc-purity: scoped to docs/design/** — a top-level docs/ file is not scanned")
+
+        # ── Test 18: purity codes honor the existing exemption mechanism ──
+        exempt_purity_path = os.path.join(design, "release-planning-v9.9.md")
+        with open(exempt_purity_path, "w") as fh:
+            fh.write("# Exempt\n\n> **Status**: shipped\n\n- [x] done\n")
+        clf = DocClassifier(root, docs)
+        check(len(clf.classify_file(exempt_purity_path)) == 0,
+              "design-doc-purity: exempt file (release-planning-v*) honors the existing allowlist mechanism")
+
+        # ── Test 19: findings suppressed entirely under Stealth Mode ──────
+        stealth_root = os.path.join(root, "stealth-project")
+        stealth_docs = os.path.join(stealth_root, "docs")
+        stealth_design = os.path.join(stealth_docs, "design")
+        os.makedirs(stealth_design)
+        os.makedirs(os.path.join(stealth_root, ".claude"))
+        with open(os.path.join(stealth_root, ".claude", "grimoire-config.json"), "w") as fh:
+            json.dump({"framework-version": "v3.98", "stealth-mode": {"value": "on"}}, fh)
+        stealth_purity_path = os.path.join(stealth_design, "stealth-design.md")
+        with open(stealth_purity_path, "w") as fh:
+            fh.write("# Stealth\n\n> **Status**: shipped\n\n- [x] done\n")
+        stealth_clf = DocClassifier(stealth_root, stealth_docs)
+        stealth_findings = stealth_clf.classify_file(stealth_purity_path)
+        check(STATUS_HEADER not in stealth_findings and CHECKED_ACCEPTANCE not in stealth_findings,
+              "design-doc-purity: findings suppressed entirely under Stealth Mode")
+
+        # ── Test 20: loud-fallback when a purity fix can't find its match ─
+        clean_design_path = os.path.join(design, "clean-purity-design.md")
+        with open(clean_design_path, "w") as fh:
+            fh.write("# Clean\n\n> **Up:** [↑ Design docs](README.md)\n\nNo pollution here.\n")
+        applier_loud = MigrateApplier(root, docs, dry_run=False)
+        rc_loud = applier_loud.apply({clean_design_path: [STATUS_HEADER]})
+        check(rc_loud == 1, "loud-fallback: a STATUS_HEADER code with no actual match returns exit 1")
+        check(
+            applier_loud.purity_fix_failures == [
+                (os.path.relpath(clean_design_path, root), STATUS_HEADER)
+            ],
+            "loud-fallback: purity_fix_failures records the mismatched file+code (never a silent no-op)"
+        )
 
     passed = sum(1 for _, ok in cases if ok)
     failed = sum(1 for _, ok in cases if not ok)

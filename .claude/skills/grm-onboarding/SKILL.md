@@ -1,6 +1,6 @@
 ---
 name: grm-onboarding
-description: First-run Grimoire onboarding interview. Captures the project name, the three execution dials (work paradigm, execution strategy, model/effort profile), and the issue-tracker choice into `.claude/grimoire-config.json`, then hands off to `grm-repo-init` and `grm-workflow-bootstrap` and bridges into first-release planning. Also implements the `SKIP ONBOARDING` non-interactive path. Use when the onboarding sentinel fires on line 1 of `CLAUDE.md`.
+description: First-run Grimoire onboarding interview. Captures project name, the execution dials, and issue-tracker choice into `.claude/grimoire-config.json`, then bridges into first-release planning. Implements `RUN NON-INTERACTIVE ONBOARDING` (legacy `SKIP ONBOARDING` accepted), incl. a committed root `KICKOFF.md`/`FIRST-RELEASE-PROMPT.md` trigger. Use when the sentinel fires on `CLAUDE.md` line 1.
 ---
 
 # Onboarding
@@ -18,12 +18,14 @@ Design authority: `docs/grimoire/design/onboarding-design.md`.
 
 ## Entry points
 
-Two paths depending on the first prompt's content:
+Two paths depending on the **effective first prompt** — the live chat prompt,
+or a committed root `KICKOFF.md`/`FIRST-RELEASE-PROMPT.md` carrying the
+trigger (§2.0 — makes a committed kickoff artifact self-executing, not inert):
 
 | Path | Condition | Section |
 |------|-----------|---------|
-| **Interactive** | Sentinel present; first prompt does NOT contain `SKIP ONBOARDING` | §1 |
-| **Non-interactive** | Sentinel present; first prompt contains literal `SKIP ONBOARDING` | §2 |
+| **Interactive** | Sentinel present; effective first prompt lacks the trigger | §1 |
+| **Non-interactive** | Sentinel present; effective first prompt has the trigger (`RUN NON-INTERACTIVE ONBOARDING` / legacy `SKIP ONBOARDING`), live or via kickoff file | §2 |
 
 Both paths **begin** with the git-repo-init prerequisite (§0), then write the
 config (§3), activate the paradigm (§3.1), the model/effort profile (§3.2), the
@@ -46,9 +48,10 @@ roadmap and tolerates an unseeded one gracefully (§7.4).
 ## §0 — Git-repo-init prerequisite (runs first, both paths)
 
 This is the **first** onboarding step on both the interactive (§1) and
-`SKIP ONBOARDING` (§2) paths — it precedes everything else because the config
-file (§3) and every later commit must live inside a git repository. Design
-authority: `docs/grimoire/design/onboarding-design.md` §7.
+non-interactive (§2 — `RUN NON-INTERACTIVE ONBOARDING` / legacy `SKIP
+ONBOARDING`) paths — it precedes everything else because the config file (§3)
+and every later commit must live inside a git repository. Design authority:
+`docs/grimoire/design/onboarding-design.md` §7.
 
 ### 0.1 Detect
 
@@ -73,13 +76,15 @@ intend to add the scaffold to an existing repo elsewhere.
   On **No**, stop onboarding with a brief message ("Onboarding paused — no git
   repository was created. Run onboarding again when ready, or `git init`
   yourself first.") and do **not** init or mutate anything.
-- **`SKIP ONBOARDING` path (§2):** the presence of `SKIP ONBOARDING` is implied
-  consent to non-interactive setup, but **still announce it**:
-  > "No git repo found; initializing one (SKIP ONBOARDING implies consent)."
+- **Non-interactive path (§2):** the presence of the trigger — typed live or
+  read from a committed kickoff file (§2.0) — is implied consent to
+  non-interactive setup, but **still announce it**:
+  > "No git repo found; initializing one (the non-interactive trigger implies
+  > consent)."
 
 ### 0.3 Bootstrap the repo
 
-On confirmation (or implied consent under SKIP):
+On confirmation (or implied consent under the non-interactive trigger):
 
 ```bash
 git init -b main          # mirror repo-init's default-branch choice
@@ -233,11 +238,12 @@ this phase.
 - `Anti-patterns` — see `reference.md`
 - `Default label taxonomy seeding (v1.31, #69)` — see `reference.md`
 - `7.1 Paradigm-conditional behaviour` — see `reference.md`
-- `7.2 `SKIP ONBOARDING` interaction` — see `reference.md`
+- `7.2 `RUN NON-INTERACTIVE ONBOARDING` interaction` — see `reference.md`
 - `7.3 Where it hooks in the sequence` — see `reference.md`
 - `7.4 Tolerating an unseeded roadmap` — see `reference.md`
 - `§1 — Interactive interview` — see `reference.md`
-- `§2 — Non-interactive path (`SKIP ONBOARDING`)` — see `reference.md`
+- `§2 — Non-interactive path (`RUN NON-INTERACTIVE ONBOARDING` / legacy `SKIP ONBOARDING`)` — see `reference.md`
+- `§2.0 — Kickoff-file trigger (committed, non-chat)` — see `reference.md`
 - `§3 — Write `.claude/grimoire-config.json`` — see `reference.md`
 - `§3.2 — Activate the selected model/effort profile` — see `reference.md`
 - `§3.3 — Activate the selected execution strategy` — see `reference.md`

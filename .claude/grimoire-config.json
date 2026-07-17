@@ -1,6 +1,6 @@
 {
   "schema-version": 4,
-  "framework-version": "3.89",
+  "framework-version": "3.101",
   "name": "Warden",
   "work-paradigm": {
     "value": "Noir"

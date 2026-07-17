@@ -1,6 +1,6 @@
 ---
 name: grm-regenerate-grimoire
-description: Surgically regenerate the Grimoire framework layer in place — delete+restore pure-framework files from the workflow-bootstrap golden baseline, split/merge mixed files (settings, CLAUDE/AGENTS, .gitignore, roadmap, version-history) so project content survives, archive-then-restore for safety, idempotent. The middle path between install-doctor --repair and hard-reset. Use to repair or refresh a damaged framework layer while keeping project work.
+description: Surgically regenerate the Grimoire framework layer in place — delete+restore pure-framework files from the workflow-bootstrap golden baseline, split/merge mixed files so project content survives, archive-then-restore for safety, idempotent. The middle path between install-doctor --repair and hard-reset. Use to repair or refresh a damaged framework layer while keeping project work.
 ---
 
 # Regenerate-grimoire

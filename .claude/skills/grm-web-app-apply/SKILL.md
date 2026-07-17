@@ -1,6 +1,6 @@
 ---
 name: grm-web-app-apply
-description: Retrofit web-app support onto an already-bootstrapped Grimoire project. Re-runs the Q9 signal table read-only, confirms with the user (auto-picks under Noir), writes the web-app config block, and seeds the web-app obligations into docs/roadmap.md, the deployment-protocol pointer, and build-recipe deploy/package stubs. Idempotent; fails closed on a missing config. Use when retrofitting web-app support onto an existing project.
+description: Retrofit web-app support onto an already-bootstrapped Grimoire project. Re-runs the signal-table read (confirms with the user; auto-picks under Noir), writes the web-app config block, and seeds the resulting obligations across docs and build-recipe stubs. Idempotent; fails closed on a missing config. Use when retrofitting web-app support onto an existing project.
 ---
 
 # web-app-apply
@@ -65,13 +65,15 @@ Running the skill twice on the same project is a no-op the second time.
 
 ## §3 — Detection front-end (Q9 read-only)
 
-Re-run the `grm-workflow-bootstrap` Step 3 Q9 20-row signal table **read-only and
+Re-run the `grm-workflow-bootstrap` Step 3 Q9 21-row signal table **read-only and
 offline** against the existing repo. No network; no file writes during this
 step. The full signal table is in `reference.md`.
 
 **Web-slice rows (web-app = yes candidate):** rows 8–13/15–18 plus a
 server-rendered web framework (Flask/Django/FastAPI/Express/Rails/Gin) with a
-view layer (templates dir, `render_template`, `res.render`, or `views/`).
+view layer (templates dir, `render_template`, `res.render`, or `views/`), plus
+row 21 (Rust `axum`/`actix-web`/`rocket` + a view-layer peer —
+`askama`/`tera`/`maud`/`minijinja` dep or a `templates/` directory).
 
 **Not-web rows:** rows 1–7 (native/mobile), 9 (`react-native`/`expo`),
 14 (`electron`), 16 (TUI), 19–20 (headless/library).
@@ -195,42 +197,26 @@ If `recipe.py` does not exist, skip this sub-step — do not create the file.
 ## §6 — Catalog filing
 
 Once the `web-app` block is written and §5 seeding is complete, file the
-required-feature catalog. Catalog source:
-`.claude/skills/grm-web-app-apply/required-feature-catalog.md` (sibling of this
-file, `catalog-version` on line 1).
-
-### 6.1 Deduplicate (idempotent)
-
-Before filing any entry, read all existing `Grimoire-Requirement`-tagged
-issues (open **and** closed):
+required-feature catalog for family `web`. The catalog relocated in v3.97
+(#413) to its own family-neutral skill, **`grm-required-feature-catalog`** —
+this section delegates to it (full mechanics: its `SKILL.md` §1–§2) rather
+than owning the catalog file or the filing logic.
 
 ```bash
-python3 .claude/skills/grm-issue-tracker/issue_tracker.py list \
-  --labels Grimoire-Requirement --state all
+python3 .claude/skills/grm-required-feature-catalog/catalog_filing.py plan \
+  --root . --family web
 ```
 
-MCP equivalent: `list_issues` with `labels=["Grimoire-Requirement"]`. For
-each catalog entry whose `[key: <key>]` marker appears in any existing issue
-title, **skip it — do not file again**.
+For each `file` / `file-blocked` / `activate` result, spawn a **Reporter**
+(`grm-agent-reporter`) to file the ticket via `grm-feedback-to-issue`
+(title/body/labels from the catalog entry; `ensure_label` runs automatically,
+WEB-5), then `catalog_filing.py record --root . --key <key> --status
+{filed,blocked-on-upstream}` so a later re-run doesn't re-file it. A
+`manual-review` result (today only Entry 7) is evaluated by this agent per the
+entry's own "Detect." guidance.
 
-### 6.2 Spawn a Reporter for each applicable, unfiled entry
-
-For each entry not already filed — and, for an entry with an **`applies-when:`**
-predicate, only when it holds against the live config (catalog *Conditional
-applicability*; **absence is false**, else skip and count not-applicable for §7)
-— spawn a **Reporter** agent (`grm-agent-reporter` skill) to file one
-`Grimoire-Requirement`-tagged ticket via `grm-feedback-to-issue`:
-
-- **Title:** as specified in the catalog entry (includes `[key: <key>]`).
-- **Body:** as specified in the catalog entry.
-- **Labels:** `Grimoire-Requirement` (+ any entry-specific labels).
-- **Audience:** `internal` (framework requirements are always internal).
-
-`ensure_label` is called automatically by `IssueTracker.create()` (WEB-5),
-so the `Grimoire-Requirement` label exists on GitHub before filing.
-
-A re-run that finds every entry already filed exits: "Catalog already filed —
-no new entries." A first run files exactly the unfiled entries.
+A re-run that finds every entry already filed/blocked exits: "Catalog already
+filed — no new entries." A first run files exactly the unfiled entries.
 
 ---
 
@@ -286,6 +272,7 @@ web-app-apply complete.
 - **WEB-2** (`config_validate.py`) registers `web-app.value ∈ {yes, no}`.
 - **WEB-4** (`docs/web-app-deployment-protocol.md` + baseline-requirements
   web-app rows + `recipe.py` stubs) must be merged for full obligation seeding.
-- **WEB-7** — §6 catalog filing live; catalog at `required-feature-catalog.md`.
+- **WEB-7** — §6 catalog filing live; catalog relocated (v3.97 #413) to
+  `.claude/skills/grm-required-feature-catalog/required-feature-catalog.md`.
 - **WEB-9** — feature-manifest row, workflow-bootstrap manifest `Restorable
   skills` row, install-doctor wiring, copilot mirror, golden re-capture.

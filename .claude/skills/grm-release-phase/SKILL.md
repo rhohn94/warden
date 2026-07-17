@@ -138,25 +138,30 @@ For each item in the current batch, call the **`spawn_task`** tool
 (`mcp__ccd_session__spawn_task`). The spawned session has no memory of this
 session, so the `prompt` must be self-contained.
 
-**First, synthesize the shared context brief (once per batch):** write a
-**≤800-token digest** covering what agents would otherwise cold-read, and
-embed it identically in every spawn prompt's `### Shared context (pre-digested)`
-block. Each agent still reads its own §2.{N} scope in full.
+**First, materialize the shared brief + per-item packs as files (once per
+batch) — brief-as-file, not brief-as-prompt-text (#397):**
 
-**Brief contents** (agents do zero cold doc-reading on opening turns):
+```bash
+python3 .claude/skills/grm-release-phase/context_pack.py phase-brief \
+  --plan docs/release-planning/release-planning-v{X.Y}.md \
+  --version {X.Y} --phase {N} --items {ITEM-ID},{ITEM-ID},...
 
-1. **Standards excerpt** — pointers to `docs/coding-standards.md` and
-   `docs/architecture-guidelines.md` plus standing constraints (test/build
-   commands, project-structure rules).
-2. **Conflict-map slice** — the §3 rows for this batch: shared files, parallel
-   items, `mergeAfter` ordering (so agents skip reading §3 themselves).
-3. **Acceptance-criteria summary** — release theme + criteria common to the
-   batch; unique-to-one-item criteria go in the per-item delta.
-4. **Doc-location pointers** — `grm-repo-reference` paths for the relevant
-   design docs (e.g. `docs/design/{feature}-design.md`).
+python3 .claude/skills/grm-release-phase/context_pack.py context-pack \
+  --plan docs/release-planning/release-planning-v{X.Y}.md \
+  --version {X.Y} --phase {N} --item {ITEM-ID}
+# repeat context-pack once per item in the batch
+```
 
-Keep it compact (≤800 tokens total) — a cache-hit lever that does **not**
-relax worktree isolation. Each agent gets its **per-item delta** separately.
+This writes `.claude/release-dispatch/v{X.Y}/phase{N}/brief.md` (the shared
+digest — standards excerpt, §3 conflict-map, release theme — written **once**
+regardless of batch size) and one `.claude/release-dispatch/v{X.Y}/phase{N}/{ITEM-ID}.md`
+per item (that item's `### {ITEM-ID}` block extracted verbatim from the plan
+via `grm-doc-section`, never re-typed). **Commit both to `version/{X.Y}`**
+(the master's own current branch) before dispatching — each spawned agent's
+`git switch -c {branch} version/{X.Y}` then inherits the files for free, no
+prompt-text inlining and no cold read of the full plan file required. Full
+rationale + the cross-worktree-visibility reason this must be a tracked
+commit (not `.claude/cache/`): `reference.md` §Shared-context dispatch.
 
 - **title**: `[{model}/{effort}] {ITEM-ID}: {short title}` — lead with the
   resolved tier tag (lowercase; e.g. `[opus/high] E7: …`, `[sonnet/inherit]
@@ -185,36 +190,83 @@ your branch is behind `version/{X.Y}`, sync-merge it in now, before touching
 code. Re-run the whole preflight, Step 0.5 included, if this session is
 **resumed** later rather than freshly spawned.
 
-### Shared context (pre-digested)
-{The ≤800-token batch digest: standards excerpt, conflict-map slice for this batch, acceptance-criteria summary, grm-repo-reference doc-location pointers. Identical across the batch. Replaces cold doc-reading. You still read your own §2.{N} scope below.}
+### Shared context
+Read `.claude/release-dispatch/v{X.Y}/phase{N}/brief.md` for the standards
+excerpt, this batch's §3 conflict-map slice, and the release theme — shared
+across every item in this batch, already in your worktree (committed to
+`version/{X.Y}` before you were spawned).
 
-### Context — read before touching code
-- docs/release-planning/release-planning-v{X.Y}.md §2.{N} — this item's scope + acceptance
+### Your item context
+Read `.claude/release-dispatch/v{X.Y}/phase{N}/{ITEM-ID}.md` for this item's
+full scope and acceptance criteria — the exact `### {ITEM-ID}` block from the
+release plan, extracted verbatim. Also cross-linked:
 - docs/design/{feature}-design.md — full feature design
 - {any other design doc cross-linked in the plan}
 
-### Work
-{Exact item description copied from the release plan §2.{N}.
-Include acceptance criteria verbatim.}
-
 ### Constraints
 - Scope strictly to the files listed in §2.{N}. Do not touch
-  docs/release-planning/release-planning-v{X.Y}.md.
+  docs/release-planning/release-planning-v{X.Y}.md or the
+  `.claude/release-dispatch/` pack files — they're dispatch scaffolding, not
+  part of your deliverable. Exception: adding a `vendor.toml` entry and
+  running `recipe.py sync-deps` for a cataloged capability is always in
+  scope — it's the alternative to writing new files, not scope creep.
+  Nothing else about scope loosens.
 - Write or extend the design doc for this item if §2.{N} flags one missing.
-- Run `{test-command}` and `{build-command}` before finishing.
+- Run `recipe.py test` and `recipe.py build` (the `grm-build-recipe`
+  dispatcher: `python3 .claude/skills/grm-build-recipe/recipe.py <target>`)
+  before finishing.
 - Fix all errors and warnings introduced by your changes.
+- Attach verify-evidence appropriate to this item's type (see Step 5.5) —
+  green tests/build alone are not sufficient done-criteria.
 - Review your own diff against the acceptance criteria before reporting done.
 
 ### When done
 Do NOT merge. Report back:
 1. The branch name you worked on
 2. Test result (pass / N failures)
-3. One-paragraph summary of what was implemented
-4. Any deferred follow-ups discovered (gaps left for a future item)
+3. Verify-evidence per Step 5.5's item-type map (or "docs-only, no runtime
+   surface" if exempt)
+4. One-paragraph summary of what was implemented
+5. Any deferred follow-ups discovered (gaps left for a future item)
 ```
 
-Replace `{test-command}` and `{build-command}` with your project's actual
-commands (see CLAUDE.md §Project commands).
+No manual substitution needed — the dispatcher resolves both commands from
+`.claude/recipes.json` at run time. `context_pack.py` resolves `{ITEM-ID}` /
+`{X.Y}` / `{N}` from the arguments it's called with; nothing to hand-edit in
+the generated pack files themselves (they're marked generated, regenerate
+instead of editing).
+
+---
+
+## Step 5.5 — Verify-evidence done-criteria (per item type, #428)
+
+Green tests and a clean build are **necessary but not sufficient** — transcript
+evidence shows agents repeatedly reporting "done" against a surface that was
+never actually exercised (a served route that 404s, a UI flow that never
+mounted). A work item's done bar therefore includes runtime verify-evidence
+scaled to its item type, embedded in the Step 5 spawn prompt's "### When done"
+block (item 3, above):
+
+| Item type | Required verify-evidence |
+|---|---|
+| Served route / API endpoint | Probe the actual changed route with realistic input (`curl` or `recipe.py smoke`) and paste the response (status + body excerpt) into the completion report. |
+| UI / served page (GUI feature, #362) | Run `recipe.py gui-test` — for web, that verb documents the agent's own Preview-driven interaction pass (`preview_start`/`navigate`/`read_page`/`computer`/`read_console_messages`) as the actual evidence, attached to the completion report; for desktop, `gui-test` must exit 0 against a real committed baseline. `just smoke-visual` (or the project's headless-browser smoke) remains the branch-level pixel-diff floor underneath it. See `docs/grimoire/design/runtime-verification-design.md` §GUI testing. |
+| CLI command | Run the command against a fixture; paste the observed output showing the fixed/new behavior. |
+| Library / internal API | Add or run a consumer-shaped example/integration test (not a unit test of the function in isolation) and cite it. |
+| Design-doc-only / docs-only | **Exempt** — nothing to run. State "docs-only, no runtime surface" instead of an evidence excerpt. |
+
+Full contract and rationale: `docs/grimoire/design/runtime-verification-design.md`
+§Per-item-type verify-evidence.
+
+**Proportionality.** The requirement scales with the live `code-quality.audit-gate`
+dial (`.claude/grimoire-config.json`): `block` makes missing verify-evidence a
+hard failure at `grm-release-phase-merge` (refuse to merge without it); `warn`
+logs the gap without blocking; `off` makes the row advisory only. Docs-only
+items stay exempt regardless of the dial.
+
+**Sampling, not re-verification.** The **QA agent** (`grm-agent-qa`) samples
+attached verify-evidence at phase/release level rather than the master
+re-running every check per item — see `grm-agent-qa/SKILL.md` §2.
 
 ---
 
@@ -232,15 +284,49 @@ and tell the user:
 
 ---
 
+## Step 6.5 — Mandatory post-dispatch assertion (batch gate, #423)
+
+Before any branch in the batch is merged, run the combined post-dispatch
+assertion **automatically** — this is a required step of every batch, not an
+optional manual re-check:
+
+```bash
+python3 .claude/skills/grm-integration-master/verify_isolation.py \
+  --batch-manifest <batch-manifest.json> \
+  --staging-branch version/{X.Y}
+```
+
+`<batch-manifest.json>` is a JSON list with one entry per item in the batch,
+`{"branch": "<feature-branch>", "result_file": "<path-or-null>"}` (`result_file`
+is the saved raw agent-result text if captured, or `null` for items dispatched
+via the serial-in-place fallback). The gate checks, in one pass:
+
+1. **Footer presence** — each `result_file`'s agent result carries the
+   `worktreePath:`/`worktreeBranch:` footer (footerless ⇒ probable in-place run).
+2. **Master HEAD unchanged** — the integration master's HEAD is still on
+   `version/{X.Y}`, checked once for the whole batch.
+3. **Branch advanced** — each expected branch carries at least one commit
+   beyond `version/{X.Y}` (don't trust the agent's self-reported "done").
+
+Exit 0 = all checks passed, safe to proceed to `grm-release-phase-merge`. Exit
+nonzero = **do NOT merge anything in this batch** — the command prints every
+violation by name; repair per `docs/grimoire/design/dispatch-hardening-design.md`
+§7 (footer/HEAD-drift recovery) before retrying.
+
+---
+
 ## Anti-patterns (summary — full detail in `reference.md` §Anti-patterns)
 
 - Spawning without user confirmation; handing the user raw copy-paste prompts
   instead of calling `spawn_task`.
 - Including merge instructions in a spawned prompt (agents never merge);
   batching items that share files (check §3's conflict map).
-- Forgetting the leading `[{model}/{effort}]` tier tag, or oversizing/skipping
-  the ≤800-token shared context brief, or missing the "set this model/effort"
-  line in the prompt body.
+- Forgetting the leading `[{model}/{effort}]` tier tag, or missing the "set
+  this model/effort" line in the prompt body.
+- Inlining the shared-context digest or an item's plan prose directly into a
+  prompt instead of writing/committing `context_pack.py`'s brief + pack files
+  and referencing them by path (#397) — the whole point is to pay for that
+  content once, not N times.
 - Spawning Batch 2 before Batch 1 is merged.
 - Under Noir, dispatching non-review, non-`opus-required` work to Opus (Step 3a
   ceiling — see `reference.md`), or treating `opus-required` as a promotion.
@@ -248,3 +334,6 @@ and tell the user:
   tier or vice versa — see `reference.md` §Step 2.5.
 - Implementing in-session subagents for Cheap-Slow's small-heavy corner — N1 is
   deferred; use the small-batch `spawn_task` fallback.
+- Accepting a "done" report with green tests/build but no verify-evidence for a
+  non-docs-only item (Step 5.5), or merging before Step 6.5's post-dispatch
+  assertion gate has exited 0.

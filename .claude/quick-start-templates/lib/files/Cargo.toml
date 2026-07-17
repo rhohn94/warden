@@ -1,0 +1,15 @@
+[package]
+name = "lib-app"
+version = "0.1.0"
+edition = "2021"
+description = "Grimoire lib quick-start scaffold — replace with your project's description."
+license = "MIT OR Apache-2.0"
+
+[lib]
+name = "lib_app"
+path = "src/lib.rs"
+
+# Debug info sufficient for backtraces (not full symbols) — shrinks target/debug
+# substantially vs the default `debug = true`. See #447.
+[profile.dev]
+debug = "line-tables-only"

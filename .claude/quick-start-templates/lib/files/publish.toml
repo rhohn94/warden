@@ -1,0 +1,45 @@
+# publish.toml — Dependency Channel PRODUCER intent (dependency-channel-design.md
+# §2b). Declares how THIS crate publishes as a `vendored-crate` channel
+# artifact for other repos to vendor via `grm-sync-deps` — the producer analog
+# of vendor.toml (which declares what a repo CONSUMES). Pre-filled to match
+# Cargo.toml's crate name so `just package` / `just release` work with ZERO
+# hand-written release code; rename both together if you rename the crate.
+#
+# `just package` delegates to the already-shipped
+# .claude/skills/grm-project-release/build_crate_artifact.py against this
+# manifest, emitting the vendored-crate trio into dist/:
+#   <name>-v{ver}.tar.gz   one top-level <name>/ dir + the include-subset below
+#   release.json           artifact_kind = "vendored-crate", primary_artifact,
+#                          primary_artifact_sha256, assets[] = the tarball only
+#   SHA256SUMS             covers the tarball AND release.json
+# NOTE: this is the crate-producer trio (dependency-channel-design.md §2b) —
+# NOT grimoire-build-info.json (docs/web-app-deployment-protocol.md §8), which
+# is Admin Console provenance for a DEPLOYED, RUNNING app. A vendored library
+# crate has no running Admin Console, so it is not stamped here (see
+# template.json post-apply-notes for the full rationale).
+
+[publish]
+# name — the crate's publishable name. Becomes the sole top-level tarball dir
+# and the artifact stem `<name>-v{ver}.tar.gz`. Must match a consumer's
+# `[deps.<name>]` AND this crate's own Cargo.toml `[package] name`.
+name = "lib-app"
+
+# artifact_kind — the only value that round-trips through the vendored-crate
+# consumer path. Left explicit for clarity; do not change it for a crate.
+artifact_kind = "vendored-crate"
+
+# channel — the producer's release channel this crate publishes on
+# (stable = tag off main; beta = --prerelease off a version/* staging branch).
+channel = "stable"
+
+# include — the publishable include-subset, as globs matched against a repo-
+# relative path. Ships exactly what `cargo build --offline` needs and nothing
+# else. `target/`, `.git/`, `vendor/`, `.claude/`, `dist/`, and `__pycache__/`
+# are ALWAYS excluded regardless of these globs.
+include = [
+  "src/**",        # crate sources
+  "Cargo.toml",    # manifest (required)
+  "Cargo.lock",    # committed lockfile (if present)
+  "LICENSE*",      # license file(s), if present
+  "README.md",     # crate readme
+]

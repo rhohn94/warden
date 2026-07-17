@@ -1,0 +1,20 @@
+[package]
+name = "gui-app"
+version = "0.1.0"
+edition = "2021"
+description = "Grimoire gui quick-start scaffold — replace with your project's description."
+
+[[bin]]
+name = "gui-app"
+path = "src/main.rs"
+
+# Debug info sufficient for backtraces (not full symbols) — shrinks target/debug
+# substantially vs the default `debug = true`. See #447.
+[profile.dev]
+debug = "line-tables-only"
+
+[dependencies]
+eframe = "0.35"
+egui = "0.35"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }

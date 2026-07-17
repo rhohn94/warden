@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""config_validate.py — validate + migrate .claude/grimoire-config.json (v1.31, #68; stealth-mode v3.0; project-manager v3.1; github-pr v3.5; qa v3.6; worktree-ports v3.7; iterate v3.11; mcp v3.12; web-app v3.26; environments v3.27; config-migration v3.51 #163; environments deploy-topology v3.68 #201; issue-filing-authority v3.74 #221).
+"""config_validate.py — validate + migrate .claude/grimoire-config.json (v1.31, #68; stealth-mode v3.0; project-manager v3.1; github-pr v3.5; qa v3.6; worktree-ports v3.7; iterate v3.11; mcp v3.12; web-app v3.26; environments v3.27; config-migration v3.51 #163; environments deploy-topology v3.68 #201; issue-filing-authority v3.74 #221; environments-vs-config-loader v3.94 #439; code-quality.gui-test v3.99 #362).
 
 Validates the config against a declared schema (known blocks + value sets),
 reports unknown/missing fields, and runs an idempotent migration that fills
@@ -17,6 +17,14 @@ valid for non-web or early-stage projects. Schema version does not bump
 (deploy-environment-design.md §1). The v3.68 #201 Phase 1 deploy-topology fields
 (transport / service_manager / host / path / service / bind / service_address)
 are likewise additive — absence of any field stays valid, no schema bump.
+
+v3.94 #439: the environments block's validated shape doubles as the
+validation surface for the shared config-loader module (config-loader-
+design.md; reference implementation: quick-start-templates/web/files/src/
+config_loader.rs). KNOWN_ENV_NAMES below is the single source of truth shared
+with that module's `AppEnv` enum (`{"local", "dev", "beta", "production"}`) —
+a change to one is a signal to check the other, even though there is no
+automated cross-language check.
 
 The changelog block (v3.31) is additive with absence-as-default and is NOT a
 migration default — absence reads as user-facing off (operator-only changelog),
@@ -49,6 +57,17 @@ ENUMS = {
     "code-quality.audit-gate": {"off", "warn", "block"},
     "code-quality.auto-reviewer": {"off", "noir", "always"},
     "code-quality.typecheck": {"off", "build"},
+    # post-commit-test-gate (v3.99, #361): a real git post-commit hook running
+    # recipe.py unit-test (#360) + coverage, reusing coverage-threshold above.
+    # "block" only ever governs the OPTIONAL pre-commit variant (post-commit
+    # itself can never block a commit that already happened — it always
+    # force-corrects/reports); "advisory" reports but never fails the exit code.
+    "code-quality.post-commit-test-gate.mode": {"block", "force-correct", "advisory"},
+    # gui-test.required (v3.99, #362): auto = required exactly when the
+    # branch/feature is GUI-surfaced (the default); always/never override the
+    # auto-detection. Additive — absence reads as "auto", no schema-version
+    # bump, same precedent as audit-gate/typecheck.
+    "code-quality.gui-test.required": {"auto", "always", "never"},
     "stealth-mode.value": {"off", "on"},
     "project-manager.overlap-policy": {"conservative", "balanced", "aggressive"},
     "project-manager.qa-gate": {"off", "warn", "block"},
@@ -66,10 +85,29 @@ ENUMS = {
     # Gates the conditional token-bookkeeper catalog entry's `applies-when`
     # predicate (web-app-support-design.md §5.5). Absence reads as "no".
     "web-app.agentic": {"yes", "no"},
+    # web-app.auth / web-app.persistence / web-app.fleet-participant (v3.97,
+    # #464): three additive, absence-as-default capability dials, same
+    # `{ "value": … }` idiom as `agentic`. Each replaces a coarse
+    # `web-app.value == "yes"` gate the required-feature catalog's Entries
+    # 4/5/8 (gatekeeper / recordkeeper / fleet-contract) previously used —
+    # "every web app" was an honest-but-imprecise stand-in for "has an
+    # authenticated surface" / "persists data" / "is fleet-participating"
+    # (each entry's own text already named this as a documented future
+    # refinement). Absence reads as "no" — an app opts in by declaring the
+    # capability, exactly like `agentic`. See
+    # docs/grimoire/design/web-app-support-design.md §1.3 and
+    # required-feature-catalog.md Entries 4/5/8.
+    "web-app.auth": {"yes", "no"},
+    "web-app.persistence": {"yes", "no"},
+    "web-app.fleet-participant": {"yes", "no"},
     "changelog.user-facing": {"on", "off"},
 }
 # Canonical environment names (v3.27). The validator warns if a project
 # declares an env name outside this set (unknown-env warning, not an error).
+# v3.94 #439: this is also the set the shared config-loader module's `AppEnv`
+# enum recognizes (config_loader.rs, config-loader-design.md §1) — a
+# conformant `environments` block, by this same set, is a config the loader
+# can actually boot against; single source of truth, kept in sync by hand.
 KNOWN_ENV_NAMES = {"local", "dev", "beta", "production"}
 # Valid per-env field values (additive; sub-validated in the cross-rule).
 KNOWN_ENV_CHANNELS = {"stable", "beta"}
@@ -87,13 +125,19 @@ KNOWN_TOP = {"schema-version", "name", "framework-version", "work-paradigm",
              "stealth-mode", "project-manager", "github-pr", "qa", "worktree-ports",
              "autonomy-allow",
              "iterate", "mcp", "web-app", "environments", "changelog",
-             "doc-hierarchy", "branch-model"}
+             "doc-hierarchy", "design-doc-purity", "branch-model"}
 # T-shirt sizes recognized in iterate.quota.
 ITERATE_SIZES = {"XXL", "XL", "L", "M", "SM", "XS"}
 # Additive defaults the migration fills if absent.
 ADDITIVE_DEFAULTS = {
     "code-quality": {"audit-gate": {"value": "warn"}, "auto-reviewer": {"value": "noir"},
-                     "coverage-threshold": {"value": None}, "typecheck": {"value": "build"}},
+                     "coverage-threshold": {"value": None}, "typecheck": {"value": "build"},
+                     # v3.99 #361: off by default (opt-in) — a project must
+                     # explicitly enable the post-commit gate, mirroring
+                     # issue-filing-authority's "never silently on" posture.
+                     "post-commit-test-gate": {"enabled": {"value": False},
+                                               "mode": {"value": "force-correct"}},
+                     "gui-test": {"required": {"value": "auto"}}},
     "stealth-mode": {"value": "off", "acknowledged-risk": False},
     "project-manager": {"max-parallel": {"value": 3}, "overlap-policy": {"value": "balanced"},
                         "qa-gate": {"value": "block"}},
@@ -238,6 +282,24 @@ def validate(cfg: dict) -> tuple:
             en, present = dialval(cfg, "issue-filing-authority.enabled")
             if present and not isinstance(en, bool):
                 errors.append(f"issue-filing-authority.enabled = {en!r} must be a boolean")
+    # cross-rule: code-quality.post-commit-test-gate (v3.99 #361). Absence at
+    # either level (no code-quality block, or code-quality present but this
+    # sub-block absent) is valid and reads as disabled — the reader
+    # (post_commit_gate.py's gate_settings()) defaults enabled=False,
+    # mode=force-correct, so this is never silently turned on. `mode` itself
+    # is enum-checked above; here only the shape + the `enabled` boolean.
+    cq = cfg.get("code-quality")
+    if isinstance(cq, dict):
+        pctg = cq.get("post-commit-test-gate")
+        if pctg is not None:
+            if not isinstance(pctg, dict):
+                errors.append("code-quality.post-commit-test-gate must be an object "
+                              "(e.g. {\"enabled\": true, \"mode\": \"force-correct\"})")
+            else:
+                en, present = dialval(cfg, "code-quality.post-commit-test-gate.enabled")
+                if present and not isinstance(en, bool):
+                    errors.append(f"code-quality.post-commit-test-gate.enabled = {en!r} "
+                                  "must be a boolean")
     # cross-rule: web-app.stack (the advisory framework hint, §1.2) is a
     # non-empty string or null; the gating fact is web-app.value (enum above).
     wa = cfg.get("web-app")
@@ -397,6 +459,26 @@ def self_test() -> tuple:
                   not any("web-app.agentic" in e for e in errs)
                   and not any("web-app.agentic" in w for w in warns)))
 
+    # 2d. web-app.auth / web-app.persistence / web-app.fleet-participant
+    #     (v3.97, #464): the three finer catalog dials — same additive,
+    #     absence-as-default shape as `agentic`. Valid "yes" passes; an
+    #     out-of-set value is rejected; absence is the default (no warning).
+    for dial in ("auth", "persistence", "fleet-participant"):
+        path = f"web-app.{dial}"
+        cfg = dict(base, **{"web-app": {"value": "yes", dial: {"value": "yes"}}})
+        errs, _ = validate(cfg)
+        cases.append((f"valid {path} (yes) has no errors",
+                      not any(path in e for e in errs)))
+        cfg = dict(base, **{"web-app": {"value": "yes", dial: {"value": "sometimes"}}})
+        errs, _ = validate(cfg)
+        cases.append((f"invalid {path} is rejected",
+                      any(path in e for e in errs)))
+        cfg = dict(base, **{"web-app": {"value": "yes"}})
+        errs, warns = validate(cfg)
+        cases.append((f"absent {path} is valid (absence = default no)",
+                      not any(path in e for e in errs)
+                      and not any(path in w for w in warns)))
+
     # 3. Absent block — the default; valid, no web-app warning/error.
     cfg = dict(base)
     errs, warns = validate(cfg)
@@ -443,6 +525,31 @@ def self_test() -> tuple:
         "production": {"data_isolation": True, "channel": "stable", "deploy_policy": "pr_gate"}}})
     errs, _ = validate(cfg)
     cases.append(("partial environments block (production only) is valid", not errs))
+
+    # 5c. v3.94 #439: a conformant environments block — canonical names only,
+    # in-set typed field values — is exactly the shape the shared
+    # config-loader module's `AppEnv` enum + typed access can consume; no
+    # errors, no warnings (this IS "config_validate.py validates a
+    # conformant environments block against the loader's expected shape").
+    cfg = dict(base, **{"environments": {
+        "dev": {"data_isolation": True, "channel": "stable", "deploy_policy": "auto"},
+        "production": {"data_isolation": True, "channel": "stable", "deploy_policy": "pr_gate"},
+    }})
+    errs, warns = validate(cfg)
+    cases.append(("loader-conformant environments block has no errors or warnings",
+                  not errs and not warns))
+
+    # 5d. v3.94 #439: the non-conformant counterpart — a `data_isolation`
+    # that is not a real JSON boolean is exactly the shape the loader's
+    # typed access (`get_bool`/`require_bool`) would also refuse to accept
+    # as a boolean; config_validate.py rejects it before it ever reaches the
+    # loader.
+    cfg = dict(base, **{"environments": {
+        "dev": {"data_isolation": "yes", "channel": "stable", "deploy_policy": "auto"},
+    }})
+    errs, _ = validate(cfg)
+    cases.append(("loader-non-conformant environments block (bad data_isolation type) is rejected",
+                  any("data_isolation" in e for e in errs)))
 
     # 6. Invalid channel — flagged.
     cfg = dict(base, **{"environments": {"dev": {"channel": "canary"}}})
@@ -682,6 +789,105 @@ def self_test() -> tuple:
     migrate(cfg)
     cases.append(("migrate preserves an existing issue-filing-authority block",
                   cfg.get("issue-filing-authority") == {"enabled": True}))
+
+    # --- code-quality.post-commit-test-gate block (v3.99 #361) ---
+
+    # 12. Absent code-quality block entirely — valid, no warning.
+    cfg = dict(base)
+    errs, warns = validate(cfg)
+    cases.append(("absent code-quality block is valid (post-commit-test-gate default off)",
+                  not errs and not any("post-commit-test-gate" in w for w in warns)))
+
+    # 12b. code-quality present but post-commit-test-gate absent — valid (absence
+    #      at the sub-block level is also the default, same as coverage-threshold).
+    cfg = dict(base, **{"code-quality": {"audit-gate": {"value": "warn"}}})
+    errs, _ = validate(cfg)
+    cases.append(("code-quality without post-commit-test-gate has no errors", not errs))
+
+    # 12c. Valid opt-in (enabled true, mode force-correct) — no errors.
+    cfg = dict(base, **{"code-quality": {"post-commit-test-gate":
+               {"enabled": True, "mode": "force-correct"}}})
+    errs, _ = validate(cfg)
+    cases.append(("valid post-commit-test-gate (enabled, force-correct) has no errors",
+                  not errs))
+
+    # 12d. Every valid mode value is accepted.
+    for m in ("block", "force-correct", "advisory"):
+        cfg = dict(base, **{"code-quality": {"post-commit-test-gate":
+                   {"enabled": True, "mode": m}}})
+        errs, _ = validate(cfg)
+        cases.append((f"post-commit-test-gate.mode={m} is accepted", not errs))
+
+    # 12e. An invalid mode is rejected by the ENUMS machinery.
+    cfg = dict(base, **{"code-quality": {"post-commit-test-gate":
+               {"enabled": True, "mode": "sometimes"}}})
+    errs, _ = validate(cfg)
+    cases.append(("invalid post-commit-test-gate.mode is rejected",
+                  any("post-commit-test-gate.mode" in e for e in errs)))
+
+    # 12f. Non-boolean enabled — flagged by the cross-rule.
+    cfg = dict(base, **{"code-quality": {"post-commit-test-gate": {"enabled": "yes"}}})
+    errs, _ = validate(cfg)
+    cases.append(("non-boolean post-commit-test-gate.enabled is rejected",
+                  any("post-commit-test-gate.enabled" in e for e in errs)))
+
+    # 12g. Non-object post-commit-test-gate block — flagged by the cross-rule.
+    cfg = dict(base, **{"code-quality": {"post-commit-test-gate": "on"}})
+    errs, _ = validate(cfg)
+    cases.append(("non-object post-commit-test-gate block is rejected",
+                  any("post-commit-test-gate must be an object" in e for e in errs)))
+
+    # 12h. --migrate does NOT deep-add post-commit-test-gate to an EXISTING
+    #      code-quality block (same additive-block-level-only semantics as
+    #      every other ADDITIVE_DEFAULTS entry — never silently turned on for
+    #      a project that already has a code-quality block).
+    cfg = dict(base, **{"code-quality": {"audit-gate": {"value": "warn"}}})
+    migrate(cfg)
+    cases.append(("migrate does not deep-add post-commit-test-gate to an existing "
+                  "code-quality block",
+                  "post-commit-test-gate" not in cfg["code-quality"]))
+
+    # 12i. --migrate on a project with NO code-quality block at all writes the
+    #      full additive default, including post-commit-test-gate off.
+    cfg = dict(base)
+    migrate(cfg)
+    cases.append(("migrate synthesizes a fresh code-quality block with "
+                  "post-commit-test-gate disabled by default",
+                  cfg.get("code-quality", {}).get("post-commit-test-gate")
+                  == {"enabled": {"value": False}, "mode": {"value": "force-correct"}}))
+
+    # --- code-quality.gui-test block (v3.99, #362) ---
+
+    # 12a. Valid gui-test.required values — no errors.
+    for val in ("auto", "always", "never"):
+        cfg = dict(base, **{"code-quality": {"gui-test": {"required": {"value": val}}}})
+        errs, _ = validate(cfg)
+        cases.append((f"valid code-quality.gui-test.required={val!r} has no errors", not errs))
+
+    # 12b. Invalid gui-test.required — flagged by the ENUMS machinery.
+    cfg = dict(base, **{"code-quality": {"gui-test": {"required": {"value": "sometimes"}}}})
+    errs, _ = validate(cfg)
+    cases.append(("invalid code-quality.gui-test.required is rejected",
+                  any("code-quality.gui-test.required" in e for e in errs)))
+
+    # 12c. Absence is valid (default reads as "auto"; no warning).
+    cfg = dict(base, **{"code-quality": {"audit-gate": {"value": "warn"}}})
+    errs, warns = validate(cfg)
+    cases.append(("absent code-quality.gui-test is valid (absence = default auto)",
+                  not any("gui-test" in e for e in errs)
+                  and not any("gui-test" in w for w in warns)))
+
+    # 12d. migrate() synthesizes the whole code-quality block — gui-test
+    #      included — only when the block is absent entirely (same
+    #      whole-block additive-fill contract every ADDITIVE_DEFAULTS block
+    #      follows; it does NOT deep-merge missing sub-fields into an
+    #      already-present block, so a config that already has code-quality
+    #      with just audit-gate stays as-is — covered by 12c above).
+    cfg = dict(base)
+    migrate(cfg)
+    cases.append(("migrate synthesizes code-quality.gui-test.required=auto "
+                  "when code-quality is absent entirely",
+                  cfg.get("code-quality", {}).get("gui-test") == {"required": {"value": "auto"}}))
 
     lines, passed, failed = [], 0, 0
     for label, ok in cases:

@@ -1,6 +1,6 @@
 ---
 name: grm-cost-budget
-description: Read and operate the cost-governance config cluster (budget / verbosity / schedule) from grimoire-config.json. Computes session utilization by reusing token-measure, persists periodic budgets to .claude/cache/cost-utilization.json, emits threshold warnings and a session-end summary, and checks peak-hour policy for autonomous/scheduled work. Use when checking the token budget, reporting utilization, or running a peak-hour check.
+description: Read and operate the cost-governance config cluster (budget / verbosity / schedule) from grimoire-config.json — computes session utilization, emits threshold warnings and a session-end summary, and checks peak-hour policy for autonomous/scheduled work. Use when checking the token budget, reporting utilization, or running a peak-hour check.
 ---
 
 # Cost budget

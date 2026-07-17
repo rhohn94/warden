@@ -1,77 +1,112 @@
 # Quick-start task runner (just — https://github.com/casey/just) — reusable library.
 #
 # Ships the full build-recipe vocabulary (RSS-3, #321): every INTERFACE target has
-# a standard `just` recipe here — the one place recipes live. `recipe.py <t>`
-# routes to `just <t>` via .claude/recipes.json. Placeholder bodies carry
-# `# grimoire:placeholder` until wired; sync-deps/vendor-check delegate to the
-# framework scripts. A library has no server to run and nothing to deploy, so its
-# .claude/recipes.json declares `run`/`deploy` absent (advisory in
-# grm-install-doctor); the recipes are still present as placeholders for uniformity.
-# Authority: docs/design/justfile-standard-design.md +
+# a standard `just` recipe here (the one place recipes live). `recipe.py <t>` routes
+# to `just <t>` via .claude/recipes.json. `build`/`test`/`package`/`release` are
+# REAL — they call `cargo` and the crate-producer publish pipeline (#431)
+# directly, no placeholder bodies. A library has no server to run and nothing
+# to deploy, so `run`/`stop`/`deploy`/`smoke` stay informative placeholders —
+# its .claude/recipes.json declares `server`/`deploy` absent (advisory in
+# grm-install-doctor). Authority: docs/design/justfile-standard-design.md +
 # docs/grimoire/design/build-recipe-interface-design.md.
 
 set shell := ["bash", "-uc"]
 
-# build — compile the library.
+# build — compile the library. `just` binds recipe args POSITIONALLY (not
+# `key=value`) — accept the documented `env=prod` spelling too by stripping a
+# leading `env=` (same convenience the other quick-start templates' `deploy`/
+# `build` recipes accept).
 build env="dev":
-    # grimoire:placeholder
-    @echo "TODO: replace with the build command (env {{env}})."
+    #!/usr/bin/env bash
+    set -euo pipefail
+    e="{{env}}"; e="${e#env=}"
+    if [ "$e" = "prod" ]; then cargo build --release; else cargo build; fi
 
 # run — a library has no runnable entrypoint; present for vocabulary uniformity.
 run env="dev" port="3000":
-    # grimoire:placeholder
     @echo "A library has no run target — implement only if the project ships a demo/CLI."
 
 # stop — a library has no runnable entrypoint; present for vocabulary uniformity.
 stop port="":
-    # grimoire:placeholder
     @echo "A library has no run target to stop — implement only if the project ships a demo/CLI."
 
-# test — run the test suite.
+# test — run the test suite: unit tests + the public-API integration test
+# (tests/version_compare_integration.rs) + doctests (the runnable examples in
+# every public function's doc comment) — `cargo test` drives all three.
 test filter="" watch="":
-    # grimoire:placeholder
-    @echo "TODO: replace with the test command (e.g. pytest {{filter}}, cargo test)."
+    cargo test {{filter}}
 
-# seed — populate a local data store with fixtures.
+# unit-test — fast, isolated subset only: in-module #[cfg(test)] unit tests
+# via `cargo test --lib` (#360). Excludes the public-API integration test
+# (tests/version_compare_integration.rs) and doctests — those stay in
+# `just test`'s full run.
+unit-test filter="" watch="":
+    cargo test --lib {{filter}}
+
+# seed — populate a local data store with fixtures (fixtures/ convention;
+# see docs/design/fixtures-convention-design.md). A pure library usually has
+# no data store to seed (like run/stop above), but the recipe still delegates
+# to the framework's generic seed-dispatch engine for uniformity — a project
+# that ships a demo/CLI with its own store adopts fixtures/ and this just
+# works, same delegation pattern as sync-deps/vendor-check below.
 seed fixture="" env="dev":
-    # grimoire:placeholder
-    @echo "TODO: replace with the seed command (fixture {{fixture}}, env {{env}})."
+    python3 .claude/skills/grm-build-recipe/recipe.py seed --fixture {{fixture}} --env {{env}}
 
 # migrate — run pending schema / data migrations.
 migrate env="dev":
-    # grimoire:placeholder
-    @echo "TODO: replace with the migrate command (env {{env}})."
+    @echo "A library scaffold has no data store to migrate by default (env {{env}})."
 
 # lint — static analysis / formatting checks.
 lint:
-    # grimoire:placeholder
-    @echo "TODO: replace with the lint command (e.g. ruff check ., cargo clippy)."
+    cargo clippy --all-targets -- -D warnings
 
 # clean — remove build artifacts.
 clean:
-    # grimoire:placeholder
-    @echo "TODO: replace with the clean command (e.g. rm -rf dist/ target/)."
+    cargo clean
+    rm -rf dist
 
-# package — build the publishable distribution (wheel / crate / npm tarball).
+# package — build the crate's vendored-crate channel artifact trio (tarball +
+# release.json + SHA256SUMS) per publish.toml (Dependency Channel producer
+# contract, dependency-channel-design.md §2b). Delegates to the shared,
+# already-shipped build_crate_artifact.py — no hand-written packaging code.
+# version defaults to the crate's own Cargo.toml [package] version (kept in
+# sync by `just release`'s multi-stack bump) so `just package` works
+# standalone too, without requiring an explicit --version. `target` is
+# accepted for INTERFACE-signature uniformity but unused — a crate tarball is
+# source, not a platform binary.
 package version="" target="":
-    # grimoire:placeholder
-    @echo "TODO: replace with the package command (version {{version}}, target {{target}})."
+    #!/usr/bin/env bash
+    set -euo pipefail
+    ver="{{version}}"
+    if [ -z "$ver" ]; then
+        ver="$(sed -n 's/^version *= *"\([^"]*\)".*/\1/p' Cargo.toml | head -1)"
+    fi
+    if [ -z "$ver" ]; then
+        echo "package: no version — pass 'just package <version>', or set Cargo.toml [package].version" >&2
+        exit 1
+    fi
+    python3 .claude/skills/grm-project-release/build_crate_artifact.py --version "$ver" --root . --out dist
 
 # deploy — a library publishes rather than deploys; implement `release` instead.
 deploy env dry_run="false":
-    # grimoire:placeholder
     @echo "A library has no deploy target — use `release` to publish (env {{env}})."
 
 # smoke — runtime verification; a pure library usually has none.
 smoke port="3000":
-    # grimoire:placeholder
     @echo "A pure library has no served surface to smoke-check (port {{port}})."
 
-# release — the changelog-derived release/publish ceremony. See the web
-# quick-start template for a scripts/release.sh reference implementation.
+# gui-test — platform-differentiated GUI feature test (#362); a pure library
+# has no GUI surface to test.
+gui-test baseline="main":
+    @echo "A pure library has no GUI surface to gui-test (baseline {{baseline}})."
+
+# release — the changelog-derived release/publish ceremony (no args).
+# Delegates to the shared scripts/release.sh (derives VERSION from
+# docs/version-history.md, guards, bumps Cargo.toml, tests + builds, archives
+# via `just package` — auto-detected — commits + tags, then publishes once
+# the tag reaches the remote — see the script header for the full ceremony).
 release *ARGS:
-    # grimoire:placeholder
-    @echo "TODO: replace with the release/publish ceremony (see the web template's scripts/release.sh)."
+    scripts/release.sh {{ARGS}}
 
 # sync-deps — reconcile / vendor first-party deps from a release channel.
 # Delegates to the framework consume-side script; mode selects --check/--update/--offline.
@@ -82,3 +117,35 @@ sync-deps mode="":
 # to the framework script; full selects the whole-vendor audit.
 vendor-check full="":
     python3 .claude/skills/grm-dependency-audit/dependency_channel_conformance.py --root . {{full}}
+
+# trim — safe worktree reap (dry-run by default) + this worktree's own cargo-
+# artifact sweep (#446). Human/master-invoked convenience, not an automated
+# call site — unlike worktree_reap.py's own destructive-by-default CLI
+# posture (every other #449 call site already wraps it in its own
+# confirmation layer, disk-branch-hygiene-design.md §Scope), `trim` inverts
+# that: dry-run (preview only) unless `--confirm` is passed. `--dry-run` is
+# accepted explicitly too (the acceptance-tested spelling) and always wins
+# over `--confirm` if both are given. `--landed-ref REF` overrides what
+# "landed" means for the #444 predicate (default `dev`; pass
+# `--landed-ref version/3.95` during an in-flight release). Auto-discovers
+# dead agent-branch worktrees (`claude/…`, #456 namespace) — never touches a
+# human branch/worktree.
+#
+# CAVEAT — the cargo sweep is scoped to THIS worktree only: a worktree that
+# gets reaped above already loses its whole target/ for free via
+# `git worktree remove`, so there is nothing extra to sweep there. Sweeping
+# THIS worktree's own target/ cannot generically know whether a build here
+# is still needed, so it stays behind the same explicit `--confirm` gate
+# (never runs on a bare `just trim` or `--dry-run`) and is documented here as
+# a known, deliberate limitation rather than solved automatically.
+trim *ARGS:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    python3 .claude/skills/grm-worktree-preflight/trim.py {{ARGS}}
+    a=" {{ARGS}} "
+    if [[ "$a" == *" --confirm "* && "$a" != *" --dry-run "* ]]; then
+        echo "trim: sweeping this worktree's own cargo build artifacts (cargo clean)…"
+        cargo clean
+    else
+        echo "trim: DRY-RUN — would also run 'cargo clean' in this worktree (pass --confirm to sweep it; forces a full rebuild on the next 'just build')."
+    fi

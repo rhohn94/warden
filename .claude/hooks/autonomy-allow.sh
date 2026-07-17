@@ -8,6 +8,7 @@ fi
 printf 'error: %s requires python3. Re-run as: python3 %s %s\n' "$0" "$0" "$*" >&2
 exit 1
 ":"""
+# HOOK_CONTRACT: v1 capabilities=[autonomy-allow-noir,autonomous-push]
 """Autonomy allow (PreToolUse: Bash) — paradigm-aware prompt suppression (v3.63).
 
 Under the NOIR paradigm, auto-approves (permissionDecision: "allow") the

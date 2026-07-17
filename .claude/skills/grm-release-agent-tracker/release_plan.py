@@ -21,10 +21,15 @@ Capabilities (each also a CLI verb + an MCP tool on server.py):
     reachable from the integration line; benign promotion merges do NOT HALT
   - tick rows atomically + idempotently (file edit only)
   - plan a phase (first all-unticked pass -> batches + model assignments)
-  - detect-merged (maintenance-automation-design.md item 2, v3.58): diff the
-    ledger's un-ticked rows against `git log --merges` on the integration line
-    and PROPOSE (never apply) branch-name-substring matches + merge SHAs for
-    confirmation via the existing `tick` / grm-ledger-tick path.
+  - detect-merged (maintenance-automation-design.md item 2, v3.58; ancestry
+    primary path #427, v3.93): diff the ledger's un-ticked rows against the
+    integration line and PROPOSE (never apply) matches + merge SHAs for
+    confirmation via the existing `tick` / grm-ledger-tick path. Primary
+    signal is `git merge-base --is-ancestor <branch> <staging>` — reachability,
+    not text — so a row is "landed" iff the branch tip is actually in the
+    staging branch's history; falls back to the old branch-name-substring
+    heuristic against `git log --merges` only when the branch ref no longer
+    exists locally (e.g. deleted post-merge) and ancestry can't be tested.
 
 File-write-only contract: this engine NEVER runs git mutations. Every git call
 is a read; the only side effect is editing the §5 ledger file via `tick`. The
@@ -368,6 +373,23 @@ class GitView:
         code, _, _ = self._runner(["rev-parse", "--verify", "--quiet", branch])
         return code == 0
 
+    def is_ancestor(self, ancestor, ref):
+        """True iff `ancestor`'s tip is reachable from `ref` (git merge-base
+        --is-ancestor). This is the ROBUST landed-check MergeDetector's
+        primary path uses (#427): it tests actual history reachability, not
+        commit-subject text, so it can't be fooled by a coincidentally-similar
+        branch name or a squash-merge that rewrote the subject line. Any git
+        failure (unknown ref, unrelated histories) reports False — fail safe,
+        never a false "landed".
+        """
+        code, _, _ = self._runner(["merge-base", "--is-ancestor", ancestor, ref])
+        return code == 0
+
+    def tip_sha(self, ref):
+        """`git rev-parse <ref>` -> short-ish full sha, or None if unresolvable."""
+        code, out, _ = self._runner(["rev-parse", ref])
+        return out.strip() if code == 0 and out.strip() else None
+
     def commits_ahead(self, staging, branch):
         """How many commits `branch` carries beyond `staging` (0 if none/err)."""
         code, out, _ = self._runner(
@@ -530,21 +552,29 @@ class MergeQueue:
 
 # ── Merged-branch auto-detection (maintenance-automation-design.md item 2) ──
 class MergeDetector:
-    """Propose §5 ledger flips by matching un-ticked rows to merge commits.
+    """Propose §5 ledger flips for un-ticked rows that have actually landed.
 
-    Diffs the ledger's un-ticked (`merged` column == False) rows against
-    `git log --merges --oneline <staging>` on the integration/staging branch
-    (whichever the caller resolves — see IntegrationLineResolver / the plan's
-    own staging ref). A row matches a merge commit when the row's branch name
-    appears as a **substring** of the merge commit's subject line (the subject
-    of a `git merge` commit is typically "Merge branch '<name>' into <target>"
-    or the project's own "merge(...): <branch> ..." convention).
+    Primary path (#427, v3.93) — ANCESTRY, not text: a row is "landed" iff
+    `git merge-base --is-ancestor <branch> <staging>` says the branch tip is
+    reachable from the staging branch's tip. This is a full-stop reachability
+    test — it can't be fooled by a coincidentally-similar branch name, and
+    (unlike the old approach) doesn't depend on any particular merge-commit
+    subject convention surviving. It only requires the branch ref to still
+    resolve locally (`git branch_exists`); a branch that was `--no-ff` merged
+    and never deleted always passes this check.
 
-    This is explicitly a HEURISTIC, not an infallible match:
+    Fallback path — the pre-#427 HEURISTIC: diff un-ticked rows against
+    `git log --merges --oneline <staging>` and match when the row's branch
+    name appears as a **substring** of a merge commit's subject (typically
+    "Merge branch '<name>' into <target>" or "merge(...): <branch> ..."). Used
+    only when ancestry can't be tested — e.g. the branch ref was deleted after
+    merging. This path remains an approximation:
       - a short/generic branch name can substring-match an unrelated subject;
-      - a squash-merge (no merge commit) never surfaces here;
+      - a squash-merge (no merge commit, and no ancestor relationship either)
+        never surfaces here;
       - a branch renamed between ledger-authoring and merge time is missed.
-    For this reason MergeDetector only PROPOSES — it never calls Ticker itself.
+
+    Either way, MergeDetector only PROPOSES — it never calls Ticker itself.
     The proposal is a report (stdout / --json) a human or agent reviews before
     applying via `release_plan.py tick` (or the grm-ledger-tick skill), mirroring
     the confirm-then-apply pattern release-planning already uses elsewhere
@@ -561,19 +591,34 @@ class MergeDetector:
     def detect(self, staging):
         """Return {"staging": ref, "proposals": [...], "unmatched": [...]}.
 
-        Each proposal: {branch, item, pass, sha, subject}. `unmatched` lists
-        un-ticked rows (branch/item/pass) with no matching merge commit found —
-        still open, nothing to propose.
+        Each proposal: {branch, item, pass, sha, subject, method}, `method`
+        is `"ancestry"` (primary, robust) or `"heuristic"` (substring
+        fallback, only used when ancestry can't be tested). `unmatched` lists
+        un-ticked rows (branch/item/pass) neither path could confirm — still
+        open, nothing to propose.
         """
-        merges = self.git.merges_oneline(staging)
+        merges = None  # lazily fetched — only needed if any row falls back
         proposals, unmatched = [], []
         for row in self._unticked_rows():
+            ancestry_sha = self._landed_by_ancestry(row.branch, staging)
+            if ancestry_sha is not None:
+                proposals.append({
+                    "branch": row.branch, "item": row.item_id,
+                    "pass": row.pass_name, "sha": ancestry_sha,
+                    "subject": "ancestry-verified: %s is merged into %s"
+                               % (row.branch, staging),
+                    "method": "ancestry",
+                })
+                continue
+            if merges is None:
+                merges = self.git.merges_oneline(staging)
             match = self._match(row.branch, merges)
             if match:
                 sha, subject = match
                 proposals.append({
                     "branch": row.branch, "item": row.item_id,
                     "pass": row.pass_name, "sha": sha, "subject": subject,
+                    "method": "heuristic",
                 })
             else:
                 unmatched.append({
@@ -582,6 +627,19 @@ class MergeDetector:
                 })
         return {"staging": staging, "proposals": proposals,
                 "unmatched": unmatched}
+
+    def _landed_by_ancestry(self, branch, staging):
+        """Primary check: is `branch`'s tip reachable from `staging`'s tip?
+
+        Returns the branch tip sha if so, else None (either the branch ref no
+        longer resolves, or it genuinely isn't an ancestor yet) — never
+        raises, so the caller always has a fallback path available.
+        """
+        if not branch or not self.git.branch_exists(branch):
+            return None
+        if not self.git.is_ancestor(branch, staging):
+            return None
+        return self.git.tip_sha(branch)
 
     @staticmethod
     def _match(branch, merges):
@@ -1258,6 +1316,104 @@ def _detect_merged_self_test():
     return failures
 
 
+def _detect_merged_ancestry_self_test():
+    """Ancestry-primary detection (#427) against a real throwaway temp repo.
+
+    Proves the ROBUST path takes priority over the substring heuristic: a
+    branch still resolvable locally and reachable from staging is proposed via
+    `is_ancestor` (method="ancestry") without ever consulting commit subjects.
+    A branch deleted after merging falls back to the substring heuristic
+    (method="heuristic") since ancestry can no longer be tested. A branch
+    never merged at all stays unmatched. Skipped (not failed) if git is
+    unavailable.
+    """
+    import subprocess
+    import tempfile
+
+    failures = []
+
+    def git(root, *args, check=True):
+        return subprocess.run(["git", "-C", root, *args],
+                              capture_output=True, text=True, check=check)
+
+    with tempfile.TemporaryDirectory() as root:
+        try:
+            git(root, "init", "-q", "-b", "version/9.9")
+        except (OSError, subprocess.CalledProcessError):
+            return failures  # git unavailable — skip, do not fail the suite
+        git(root, "config", "user.email", "t@t")
+        git(root, "config", "user.name", "t")
+        wf = os.path.join(root, "f.txt")
+
+        def commit(msg, content):
+            with open(wf, "w", encoding="utf-8") as fh:
+                fh.write(content)
+            git(root, "add", "f.txt")
+            git(root, "commit", "-q", "-m", msg)
+
+        commit("base", "v0\n")
+
+        # alpha-v99: branch, commit, --no-ff merge, branch LEFT IN PLACE ->
+        # ancestry path fires (method="ancestry"), no subject text involved.
+        git(root, "switch", "-q", "-c", "alpha-v99")
+        commit("alpha work", "alpha\n")
+        git(root, "switch", "-q", "version/9.9")
+        git(root, "merge", "-q", "--no-ff", "-m",
+            "an unrelated subject naming nothing", "alpha-v99")
+
+        # gamma-v99: branch, commit, --no-ff merge (subject DOES name the
+        # branch), then branch DELETED -> ancestry can't be tested, falls
+        # back to the substring heuristic against the merge log.
+        git(root, "switch", "-q", "-c", "gamma-v99")
+        commit("gamma work", "gamma\n")
+        git(root, "switch", "-q", "version/9.9")
+        git(root, "merge", "-q", "--no-ff", "-m",
+            "merge(v9.9): gamma-v99 lands", "gamma-v99")
+        git(root, "branch", "-d", "gamma-v99")
+
+        # beta-v99: branch exists but was never merged -> stays unmatched.
+        git(root, "switch", "-q", "-c", "beta-v99")
+        commit("beta work (unmerged)", "beta\n")
+        git(root, "switch", "-q", "version/9.9")
+
+        ledger = Ledger.__new__(Ledger)
+        ledger.path = "<fixture>"
+        ledger.version = "9.9"
+        ledger.passes = {
+            "Pass 1": [
+                LedgerRow("Pass 1", "alpha-v99", "A1",
+                          {"design_doc": True, "implemented": True,
+                           "reviewed": True, "merged": False}),
+                LedgerRow("Pass 1", "beta-v99", "B2",
+                          {"design_doc": True, "implemented": True,
+                           "reviewed": True, "merged": False}),
+            ],
+            "Pass 2": [
+                LedgerRow("Pass 2", "gamma-v99", "C3",
+                          {"design_doc": True, "implemented": True,
+                           "reviewed": True, "merged": False}),
+            ],
+        }
+        ledger.conflict_map = {}
+
+        gv = GitView(root)
+        result = MergeDetector(ledger, gv).detect("version/9.9")
+        by_branch = {p["branch"]: p for p in result["proposals"]}
+
+        if by_branch.get("alpha-v99", {}).get("method") != "ancestry":
+            failures.append("alpha-v99 (branch intact, merged) should land "
+                             "via ancestry: %r" % result)
+        if by_branch.get("gamma-v99", {}).get("method") != "heuristic":
+            failures.append("gamma-v99 (branch deleted post-merge) should "
+                             "fall back to heuristic: %r" % result)
+        unmatched_branches = {u["branch"] for u in result["unmatched"]}
+        if "beta-v99" not in unmatched_branches:
+            failures.append("beta-v99 (never merged) should be unmatched: %r"
+                            % result)
+
+    return failures
+
+
 def _self_test():
     import tempfile
 
@@ -1411,6 +1567,12 @@ def _self_test():
         #     default_staging() — all via an injected fixture (no real git log).
         failures.extend(_detect_merged_self_test())
 
+        # 12) detect-merged ancestry-primary path (#427, v3.93): real temp
+        #     repo proving `git merge-base --is-ancestor` takes priority over
+        #     the substring heuristic, with fallback only when the branch ref
+        #     is gone.
+        failures.extend(_detect_merged_ancestry_self_test())
+
     if failures:
         print("SELF-TEST FAILED:")
         for f in failures:
@@ -1422,7 +1584,8 @@ def _self_test():
           "[healthy/benign-only/real-fork + integration-line detection + temp-git "
           "e2e], idempotent/atomic tick + n/a guard, plan_phase batches + model "
           "assignments, facade, missing-plan raise, detect-merged proposal "
-          "[match/unmatch/non-mutation/report/default-staging])")
+          "[match/unmatch/non-mutation/report/default-staging], detect-merged "
+          "ancestry-primary path [real-repo ancestry/heuristic-fallback/unmatched])")
     return 0
 
 
@@ -1440,21 +1603,24 @@ def _format_detect_merged(result):
     lines = ["detect-merged: staging=%s" % result["staging"]]
     proposals = result["proposals"]
     if not proposals:
-        lines.append("  no un-ticked row matches a merge commit on %s"
+        lines.append("  no un-ticked row is confirmed landed on %s"
                       % result["staging"])
     else:
-        lines.append("  PROPOSED ticks (branch-name-substring match — "
-                      "review before applying; NOT auto-applied):")
+        lines.append("  PROPOSED ticks — review before applying; NOT "
+                      "auto-applied (method: ancestry = git merge-base "
+                      "--is-ancestor, robust; heuristic = branch-name-"
+                      "substring fallback):")
         for p in proposals:
             item = " (%s)" % p["item"] if p["item"] else ""
-            lines.append("    [%s] `%s`%s -> merged=true  %s %s"
+            lines.append("    [%s] `%s`%s -> merged=true  %s  [%s]  %s"
                           % (p["pass"], p["branch"], item, p["sha"],
-                             p["subject"]))
+                             p.get("method", "heuristic"), p["subject"]))
         lines.append("  Apply with: release_plan.py tick "
                       + " ".join("--branch %s --column merged --value true"
                                  % p["branch"] for p in proposals))
     if result["unmatched"]:
-        lines.append("  still open (no matching merge commit found):")
+        lines.append("  still open (not an ancestor, no matching merge "
+                      "commit found):")
         for u in result["unmatched"]:
             item = " (%s)" % u["item"] if u["item"] else ""
             lines.append("    [%s] `%s`%s" % (u["pass"], u["branch"], item))

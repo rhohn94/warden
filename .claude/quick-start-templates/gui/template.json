@@ -6,7 +6,7 @@
     "gui",
     "web"
   ],
-  "summary": "Desktop/GUI application shell starter: a placeholder README plus the language-variant command wiring, ready for the design-language UX tier.",
+  "summary": "Desktop/GUI application shell starter: a REAL, running egui/eframe window (config loading, standard logging, --version wired to build provenance) plus the release-automation starter pack's working package/release/deploy recipes, ready for the design-language UX tier.",
   "components": [],
   "requires": [],
   "config-defaults": {
@@ -45,5 +45,5 @@
       "typecheck": "cargo check"
     }
   },
-  "post-apply-notes": "Pick the language variant matching the project; quick-start-template applies that variant's test/build/lint/typecheck commands into the CLAUDE.md commands table + the v1.26 code-quality block (not edited inline). Starter payload: a placeholder README.md only — bring your own app-entrypoint source; pairs with design-language-adapt + ux-demo-build for the UX tier. Config defaults are applied via model-effort-profile-switch + workflow-variant-switch."
+  "post-apply-notes": "REAL and RUNNING out of the box (Rust/eframe+egui, matching the cli/lib/service quick-start family's stack): `just run` opens an ACTUAL native window titled 'gui-app' showing a real heading + version label (src/main.rs's `App`) — manually verified to open in a windowed environment. `-V`/`--version` prints the crate version plus, once packaged, the grimoire-build-info.json provenance stamp (§8); before a first `just package` it honestly reports a 'dev build' note. `--smoke-test` (wired to `just smoke`) boots the SAME real `App` state and renders one real headless egui frame WITHOUT opening a native window — a deterministic, display-free CI check (opening a real window cannot be asserted deterministically in a headless test runner, so `cargo test` exercises the smoke path, not the windowed path). `src/config.rs`/`src/build_info.rs` are the SAME modules shipped in the cli/service quick-start templates (self-contained per-template copies). SEAM: `App`'s heading/label in src/main.rs is illustrative — replace with your real UI; `seed`/`migrate` stay informative placeholders (no data store wired by default). package/release/deploy/smoke are REAL, delegating to the release-automation starter pack's scripts/{package,release,deploy,stop}.sh (#431) via scripts/package-manifest.sh — `just package` and `just release` run with ZERO hand-written release code. Pick the language variant matching the project; quick-start-template applies that variant's test/build/lint/typecheck commands into the CLAUDE.md commands table + the v1.26 code-quality block (not edited inline) — kept for cross-profile consistency even though the shipped payload is concretely Rust. Pairs with design-language-adapt + ux-demo-build for the UX tier. Config defaults are applied via model-effort-profile-switch + workflow-variant-switch."
 }

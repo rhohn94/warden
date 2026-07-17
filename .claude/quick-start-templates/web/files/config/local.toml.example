@@ -1,0 +1,8 @@
+# config/local.toml.example — copy this to config/local.toml (gitignored, see
+# config/.gitignore) for developer-local overrides that must never be
+# committed (secrets, a personal port, etc.). config_loader.rs reads
+# config/local.toml as the highest-priority FILE layer, below only process
+# environment variables. See config-loader-design.md §1-§2.
+
+# port = 3001
+# database_url = "postgres://localhost/myapp_dev"

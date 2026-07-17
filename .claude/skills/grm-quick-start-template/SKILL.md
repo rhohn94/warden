@@ -122,4 +122,46 @@ On apply, match the **declared project language** against this map and wire that
 variant's commands into the `CLAUDE.md` commands table + the v1.26 `code-quality`
 block — do not edit them inline. If the language is absent from the map, fall back
 to the profile default and note it. New profiles in v1.31: `service`, `gui`, `lib`
-(mobile deferred). Authority: `docs/design/defaults-quickstart-design.md`.
+(mobile deferred). `cli` added in v3.94 (#432) — Step 1's ask-list already named
+it; the template now exists and scores like any other. Authority:
+`docs/design/defaults-quickstart-design.md`.
+
+## Release-automation starter pack (v3.94, #431/#432)
+
+Every shipped `template.json` (`web`/`gui`/`lib`/`service`/`cli`) now ships REAL,
+running `package`/`release` recipes (`gui`/`service`/`cli` also `deploy`) — not
+placeholder bodies. `package`/`release`/`deploy` delegate to the shared
+`scripts/{package,release,deploy}.sh` reference implementation (ported from the
+`web` profile, parameterized by `grimoire-config.json` + `publish.toml`/
+`scripts/package-manifest.sh`), emitting the standard artifact trio
+(`release.json`, `SHA256SUMS`, `grimoire-build-info.json` — the §8 provenance
+stamp) for the binary-shaped profiles. `lib` is the one deliberate exception:
+its `package` target emits the crate-producer trio (`<name>-v{ver}.tar.gz`,
+`release.json`, `SHA256SUMS`) via the already-shipped
+`build_crate_artifact.py` (Dependency Channel producer contract,
+`dependency-channel-design.md` §2b) — NOT `grimoire-build-info.json`, since
+that stamp is Admin Console provenance for a deployed, running app, which a
+vendored library crate is not (see the `lib` template's `post-apply-notes`).
+Each script carries an inline `--self-test`; run one on a scaffolded project's
+copy to verify the port stayed intact.
+
+## Catalogued from day one (v3.97, #459)
+
+Only the `lib` profile ships a pre-filled `component.json` (at the scaffold
+root, alongside Cargo.toml) — the WHOLE scaffolded crate is the reusable,
+vendorable unit that profile exists to produce (its `package`/`release`
+recipes already emit the Dependency Channel producer trio, see above), so
+cataloging it is the profile matching its own purpose. `gui`/`service`/`cli`
+deliberately do **not** get one: those profiles scaffold terminal,
+deployable apps — nothing another project would `vendor.toml`-consume — and
+forcing a component.json onto boilerplate meant to diverge immediately
+(`config.rs`, `build_info.rs`) would misrepresent it as a stable, versioned
+unit. `web` is out of scope for this addition (not one of the four profiles
+covered by #459's acceptance criteria). Verify against the vocabulary
+(`docs/grimoire/design/component-taxonomy.md`) before adding a
+`component.json` to any future profile — don't force one where nothing
+reusable-component-shaped exists. NOTE: `grm-component-registry`'s default
+scan paths are `components/`/`lib/`; a root-level `component.json` is not
+auto-discovered until the scaffolded project adds
+`component-catalog.paths: ["."]` to its own `grimoire-config.json` (see the
+`lib` template's `post-apply-notes`).

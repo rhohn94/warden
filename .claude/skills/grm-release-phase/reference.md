@@ -156,10 +156,12 @@ blocked — backlog items must not be dispatched in a release phase for vX.Y.
 - **Forgetting the leading `[{model}/{effort}]` tier tag** on the chip title —
   `spawn_task` can't set the model, so the tag is what makes the resolved tier
   reviewable at a glance and lets the user set it; the user can't size it for you.
-- **Skipping or oversizing the shared context brief** — it must be ≤800 tokens,
-  synthesized once by the master, and must contain standards / conflict-map /
-  criteria / doc-pointers; it must **not** replace per-item §2.{N} scope or
-  relax worktree isolation.
+- **Inlining the shared brief or an item's plan prose into a prompt** instead
+  of writing/committing `context_pack.py`'s brief + pack files and pointing
+  the prompt at them (#397) — see §Shared-context dispatch below. The brief
+  must still contain standards / conflict-map / theme; it must **not**
+  replace an item's own pack (its verbatim §2.{N} block) or relax worktree
+  isolation.
 - **Spawning Batch 2 before Batch 1 is merged** — agents will hit merge
   conflicts that are hard to resolve headlessly.
 - **Under Noir, dispatching non-review, non-`opus-required` implementation work
@@ -180,14 +182,70 @@ blocked — backlog items must not be dispatched in a release phase for vX.Y.
 
 ---
 
-## §Shared-context dispatch (v1.29, #59)
+## §Shared-context dispatch (v1.29 #59, brief-as-file v3.96 #397)
 
-When dispatching a batch of agents, minimize per-agent prompt size:
+When dispatching a batch of agents, minimize per-agent prompt size — and,
+since v3.96, minimize the **master's own output tokens** spent regenerating
+that content once per dispatched agent.
 
-- Write the **shared brief once** — the design doc reference, the relevant
-  standards, and the common acceptance criteria — as a compact preamble the
-  batch shares. Do not paste the full context into every agent prompt.
-- Give each agent only its **per-item delta**: its specific files, its branch,
-  and its one acceptance criterion. Label by item, not by re-stating shared context.
-- Result: materially smaller per-agent prompts with no loss of fidelity.
-  Authority: `docs/design/context-efficiency-design.md`.
+### Why prompt text, not just prompt count, was the problem
+
+The pre-#397 mechanism had the master **synthesize a ≤800-token digest once,
+then paste it verbatim into every spawn prompt's `### Shared context
+(pre-digested)` block**, and separately **copy each item's plan description +
+acceptance criteria into that item's `### Work` block**. "Synthesized once"
+only meant the master composed the text once in its own reasoning; the text
+still had to be re-emitted as literal output tokens on every one of the N
+`spawn_task` calls in the batch, and the per-item copy duplicated content that
+a `### Context — read before touching code` bullet was *already* pointing the
+agent at (`docs/release-planning/release-planning-v{X.Y}.md §2.{N}`). For an
+N-item batch this cost scaled with N, not with 1.
+
+### The brief-as-file fix (#397)
+
+`context_pack.py` (`.claude/skills/grm-release-phase/context_pack.py`)
+materializes both pieces as small, **git-tracked** files instead of prompt
+text:
+
+- `phase-brief` — writes `.claude/release-dispatch/v{X.Y}/phase{N}/brief.md`:
+  the standards excerpt, the plan's full `## 3. Parallel Implementation
+  Strategy` section (verbatim, via `grm-doc-section`'s `extract_section()` —
+  never re-typed), and the release theme. Written **once per batch**
+  regardless of N.
+- `context-pack` — writes one
+  `.claude/release-dispatch/v{X.Y}/phase{N}/{ITEM-ID}.md` per item: that
+  item's exact `### {ITEM-ID}` block (description, acceptance criteria,
+  branch), extracted verbatim from the plan. Written once per item, never
+  copied into a prompt.
+
+Every dispatched prompt then carries only a short pointer block (see the Step
+5 template's `### Shared context` / `### Your item context`) — a path
+reference, not the content itself.
+
+**Why these must be tracked (committed) files, not `.claude/cache/`.** Each
+dispatched agent runs in a genuinely separate `git worktree` — a distinct
+working directory sharing only the `.git` object store with the master's
+worktree. An untracked/gitignored file the master writes (e.g. under
+`.claude/cache/`, which is globally gitignored) is invisible in a freshly
+spawned sibling worktree; nothing copies working-directory content across
+worktrees. Committing the brief + packs to `version/{X.Y}` — the master's own
+current branch, per `grm-integration-master` SKILL.md — solves this for free:
+every dispatched agent's `git switch -c {branch} version/{X.Y}` (Step 5's
+template, first thing the agent does) inherits the committed tree, packs
+included, with zero extra prompt tokens and zero cold read of the full plan
+file.
+
+**Lifecycle.** The master commits the brief + that batch's packs right before
+Step 5's `spawn_task` calls. `grm-release-phase-merge` is expected to `git rm
+-r .claude/release-dispatch/v{X.Y}/phase{N}/` once every branch in that
+phase's batch has merged, so the tracked-but-transient files don't
+accumulate forever on `version/{X.Y}` / `dev` (not yet wired as of #397 — a
+follow-up on `grm-release-phase-merge`'s own SKILL.md).
+
+**Result:** on a real 4-item batch (v3.96 Pass 2: ITEM-6/7/8/9), the old
+inlined-per-prompt model cost ~11.4 KB (~2.85K tokens) of repeated prompt
+text across the batch; the brief-as-file model costs ~1.5 KB (~386 tokens) of
+pointer text across the same batch (the ~5.7 KB / ~1.4K-token brief+packs
+content is paid once, via file write, not per prompt) — an ~86% reduction in
+what the master re-emits per batch. Reproduce via `context_pack.py measure`.
+Authority: `docs/design/context-efficiency-design.md`.

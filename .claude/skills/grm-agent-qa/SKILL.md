@@ -66,6 +66,13 @@ the **promised acceptance criteria**:
   existence, default), `acceptance+tests` (also run the project test/build
   commands), or `deep` (also exercise edge cases). **Read-only on code** — never
   edit or commit; if a fix is needed, that is a *finding*, not your job.
+- **Sample, don't re-verify, runtime evidence (#428).** When a merged item's
+  completion report attached verify-evidence per
+  `docs/grimoire/design/runtime-verification-design.md` §Per-item-type
+  verify-evidence (a probed route response, a `smoke-visual` verdict, a fixture
+  run, a consumer-shaped test), sample that evidence at phase/release level
+  instead of re-running the check yourself. Flag as an `undocumented-gap` any
+  non-docs-only item whose report has no attached evidence.
 
 Classify each feature: **met** / **incomplete** / **regressed/bug** /
 **undocumented-gap**, with the evidence (file paths, command output) for each.

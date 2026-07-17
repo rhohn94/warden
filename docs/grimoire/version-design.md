@@ -40,6 +40,16 @@
 others follow full SemVer. The important thing is that there is exactly one
 source of truth in the codebase.
 
+**Tag format (audit finding, v3.91).** The fleet-wide recommended tag format
+is three-part `vMAJOR.MINOR.PATCH` — most Grimoire-managed projects already
+ship this way, and it composes cleanly with a project that later adopts a
+real PATCH lane (a hotfix on `main` between MINOR releases has nowhere to go
+under a two-part scheme). A project that already tags two-part `vMAJOR.MINOR`
+is fully conformant and is **never** required to migrate its history —
+`grm-doc-assurance`'s `tag-format` check only warns (never blocks) when a
+project's *newest* tag is still two-part, as a forward nudge toward new tags,
+not a judgment on old ones.
+
 ---
 
 ## 3. Single source of truth
@@ -97,7 +107,9 @@ A good release script:
 - Builds release artifacts.
 - Archives artifacts to a versioned folder.
 - Commits the version bump.
-- Tags the commit `v{MAJOR}.{MINOR}` (or your convention).
+- Tags the commit `v{MAJOR}.{MINOR}.{PATCH}` (the fleet-wide recommended
+  format — see §2; a project may keep two-part `v{MAJOR}.{MINOR}` instead,
+  it just won't be the newest-tag default going forward).
 
 ### After
 

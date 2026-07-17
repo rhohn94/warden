@@ -78,6 +78,32 @@ python3 .claude/skills/grm-noir-loop/noir_loop_state.py --self-test
   (milestone / quota reached) fires, the orchestrator **cancels the loop's own
   wakeup** rather than re-arming it — a finished loop leaves no live timer.
 
+## Stop conditions (#422)
+
+Beyond the standard `grm-orchestrate-release` stop conditions (merge conflict,
+test failure, guard block, isolation failure, doc/config gate failure, user
+stop, gated push prompt), the loop itself carries two mechanical stop
+conditions so a `/loop` run cannot spin forever:
+
+- **Blocked on human.** Every `--advance` recomputes `progress_hash` — a hash
+  over the open-work set + the current `blocker` string. If that hash repeats
+  unchanged for `STALL_LIMIT` (3) consecutive iterations — the release-master
+  keeps hitting the same human-gated item or the same blocker — `--read` /
+  `--advance` report `blocked_on_human: true`. The release-master's **first
+  move each iteration** (§Usage) should check this flag: if true, stop
+  spawning further iterations and hand off to **`grm-stop-point`** instead of
+  returning a summary that just repeats the prior one.
+- **Cycle budget exceeded.** `iteration` reaching the configurable
+  `max_cycles` cap (default 20, set via `--max-cycles` at `--init` or
+  `--advance`) sets `cycle_budget_exceeded: true` — independent of progress,
+  a backstop against a loop that keeps finding *different* busywork forever.
+  Same handling: stop and run `grm-stop-point`.
+
+Both flags are cheap to check — they ride along on the `--read` the
+release-master already does at the start of every iteration (§Usage). Neither
+condition is fatal to the release; they mean "wind down cleanly and report,"
+which is exactly what `grm-stop-point` does.
+
 ## Maintainer note
 
 Stdlib-only per `docs/design/scripting-unification-design.md`. One `NoirLoopState`

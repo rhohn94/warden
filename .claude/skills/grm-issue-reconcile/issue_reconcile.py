@@ -17,9 +17,31 @@ Idempotent: a close writes a marker comment
 (`<!-- grm-issue-reconcile: closed by vX.Y -->`); a re-run over the same
 release range skips issues that already carry the marker for that version.
 
+Release gate (#468): `--tag` is a MANDATORY post-tag step in
+grm-project-release, not an advisory one. A non-zero exit BLOCKS the release
+from proceeding past the reconcile step:
+
+- A write that reconcile() attempted but could not verify as persisted
+  (`errors` — the #130 masking-failure pattern) is always a hard failure;
+  there is no override, because it is a defect, not a judgment call.
+- A strong-evidence ("Closes #N"-shaped) claim that the paradigm's
+  flag-don't-write contract (Supervised/Weiss) redirected to `flagged`
+  instead of closing is ALSO a gate failure by default — but recoverable via
+  `--reconcile-override-reason "<why>"` (a non-empty justification is
+  required; the reason is echoed into the run output for the audit trail).
+  This asymmetry is deliberate: fleet triage observed both false negatives
+  (missed closures) and one false positive (a wrongly-closed tracking issue)
+  from this same detector, so the gate never unconditionally hard-stops a
+  release on its own say-so — it fails loud with the exact issue(s) named,
+  and a human can override with a reason rather than being stuck.
+- Weak (bare-mention) and revert-only references were never close-eligible
+  and never gate the release — they remain purely advisory, same as before.
+- `--dry-run` never gates (a preview run writes nothing either way).
+
 Authoritative design: docs/grimoire/design/issue-reconciliation-design.md
 
 CLI:  python3 issue_reconcile.py --tag vX.Y [--prev-tag vX.Y-1] [--dry-run]
+      python3 issue_reconcile.py --tag vX.Y --reconcile-override-reason "<why>"
       python3 issue_reconcile.py --sweep vX.Y..vX.Z [--dry-run]
       python3 issue_reconcile.py --self-test
 """
@@ -60,14 +82,40 @@ ISSUE_REF_RE = re.compile(r"(?<![\w/])#(\d+)\b")
 
 # Closing-keyword adjacency: a #N (or comma/'+'-separated list of #N) is STRONG
 # evidence only when a closing verb sits immediately before it. Covers the
-# conventional-commit subject prefix "fix(#285):" / "feat(#285):" and trailer
-# lists like "fixes #55, #56, #57" (the keyword distributes across the list).
+# conventional-commit subject prefix "fix(#285):" / "feat(#285):" /
+# "merge(#285):" and trailer lists like "fixes #55, #56, #57" (the keyword
+# distributes across the list).
+#
+# merge(#N): added per #469 — fleet triage (issue-tracker repo's 28 ghost
+# issues) found merge-commit conventions using this exact prefix shape go
+# undetected today. NOTE this is deliberately narrow: it matches only when
+# the ref list itself sits inside the parens, e.g. "merge(#100): ...". It
+# does NOT match this repo's own "merge(vX.Y): ... #N ..." convention (a
+# version tag in the parens, refs loose in the subject) — recognizing bare
+# #N mentions inside a merge-commit subject as strong evidence is a broader,
+# higher-false-positive-risk judgment call (see SKILL.md follow-up note).
 _CLOSING_KEYWORDS = r"(?:fix|fixes|fixed|close|closes|closed|resolve|resolves|resolved)"
 _REF_LIST = r"(?:#\d+(?:\s*[,+]\s*)?)+"
 CONVENTIONAL_PREFIX_RE = re.compile(
-    rf"^(?:fix|feat)\(\s*({_REF_LIST})\s*\)\s*:", re.IGNORECASE)
+    rf"^(?:fix|feat|merge)\(\s*({_REF_LIST})\s*\)\s*:", re.IGNORECASE)
 KEYWORD_REF_RE = re.compile(
     rf"\b{_CLOSING_KEYWORDS}\b\s*:?\s*({_REF_LIST})", re.IGNORECASE)
+
+# Plan-doc §2 closing-keyword equivalent (#521): a release-planning doc's
+# item heading — "### ITEM<id> — #N[ + #M ...]: <title>" — is the plan's own
+# claim that this item's branch resolves that issue, so (and only so) it
+# counts as strong. <id> varies across releases ("ITEM-1", "ITEM A", "ITEM-5
+# (Pass 1)", "ITEM-6 (Pass 2, depends on ITEM-5)", ...); the non-greedy `.*?`
+# skips past whatever sits between "ITEM" and the em-dash. Any other #N
+# token elsewhere in §2 prose — an item's own description/acceptance-
+# criteria text, or a *different* item's body mentioning a neighboring issue
+# only illustratively or negatively ("e.g.", "out of scope", "untouched",
+# "beyond what ... touch") — is explicitly NOT matched here, so it falls
+# through to weak (flag-only). v3.100's #380/#391 false positive (auto-closed
+# off a bare "e.g. codex #380-#391" aside in ITEM-2's description) is the
+# motivating case.
+ITEM_HEADING_RE = re.compile(
+    rf"^###\s+ITEM\b.*?—\s*({_REF_LIST})\s*:", re.IGNORECASE)
 
 # Revert detection: a commit whose subject starts with "Revert" (the git
 # revert default subject), or whose subject/body says "reverts #N" /
@@ -133,8 +181,8 @@ def strong_refs_in_text(text: str) -> set[int]:
     """Return the subset of #N references in text that carry closing-keyword
     adjacency: `(fix|fixes|fixed|close|closes|closed|resolve|resolves|resolved)
     #N`, including the conventional-commit subject prefix `fix(#N):` /
-    `feat(#N):` and comma/'+'-separated trailer lists (`fixes #55, #56, #57`,
-    each ref inherits the leading keyword)."""
+    `feat(#N):` / `merge(#N):` and comma/'+'-separated trailer lists
+    (`fixes #55, #56, #57`, each ref inherits the leading keyword)."""
     strong: set[int] = set()
     prefix_match = CONVENTIONAL_PREFIX_RE.match(text.strip())
     if prefix_match:
@@ -202,16 +250,39 @@ def refs_from_commits(repo_root: pathlib.Path, prev_tag: str | None,
     return evidence
 
 
-def refs_from_plan_doc(repo_root: pathlib.Path, version: str) -> set[int]:
+def refs_from_plan_doc(repo_root: pathlib.Path, version: str) -> CommitRefEvidence:
     """Extract #N references from release-planning-v{version}.md §2 (Major
-    Features through the next top-level section)."""
+    Features through the next top-level section), tiered by heading
+    adjacency (#521):
+
+    - strong: only a #N (or comma/'+'-separated list) that appears in an
+      item's own '### ITEM<id> — #NNN[...]:' heading line — the plan's
+      canonical claim that this item resolves that issue (see
+      ITEM_HEADING_RE).
+    - weak: any other #N-shaped token anywhere else in §2 prose — an item's
+      description or acceptance-criteria text, or a bare/illustrative/
+      negated mention in any item's body (e.g. "tracked_in: codex #380",
+      "out of scope", "untouched", "beyond what ... touch"). A plan can
+      legitimately *mention* a neighboring issue number without claiming
+      this release closes it, so a bare mention is never enough to
+      auto-close — a human confirms.
+    """
+    evidence = CommitRefEvidence()
     plan_path = (repo_root / "docs" / "release-planning" /
                  f"release-planning-v{version}.md")
     if not plan_path.exists():
-        return set()
+        return evidence
     text = plan_path.read_text(encoding="utf-8")
     section = _extract_section(text, "## 2.")
-    return extract_refs(section)
+    all_refs = extract_refs(section)
+    strong: set[int] = set()
+    for line in section.splitlines():
+        m = ITEM_HEADING_RE.match(line.strip())
+        if m:
+            strong |= extract_refs(m.group(1))
+    evidence.strong = strong
+    evidence.weak = all_refs - strong
+    return evidence
 
 
 def refs_from_version_history(repo_root: pathlib.Path, version: str) -> CommitRefEvidence:
@@ -225,6 +296,34 @@ def refs_from_version_history(repo_root: pathlib.Path, version: str) -> CommitRe
     if not vh_path.exists():
         return evidence
     text = vh_path.read_text(encoding="utf-8")
+    section = _extract_version_section(text, version)
+    for line in section.splitlines():
+        all_refs = extract_refs(line)
+        if not all_refs:
+            continue
+        strong = strong_refs_in_text(line)
+        evidence.strong |= strong
+        evidence.weak |= (all_refs - strong)
+    return evidence
+
+
+def refs_from_changelog(repo_root: pathlib.Path, version: str) -> CommitRefEvidence:
+    """Extract #N references from docs/changelog.md's per-version section
+    ('## vX.Y — Title' to the next '## v' heading), tiered the same way as
+    refs_from_version_history (strong on closing-keyword adjacency, weak on a
+    bare mention).
+
+    This repo's own docs/changelog.md deliberately omits ticket/issue IDs
+    (its house style — front-facing prose only, see coding-standards.md
+    §Content & UI copy), so this is usually empty here; it exists as a
+    reference source for the general case (#468's proposal names the
+    changelog entry explicitly) — a project whose changelog DOES carry
+    'Closes #N' claims is still covered."""
+    evidence = CommitRefEvidence()
+    path = repo_root / "docs" / "changelog.md"
+    if not path.exists():
+        return evidence
+    text = path.read_text(encoding="utf-8")
     section = _extract_version_section(text, version)
     for line in section.splitlines():
         all_refs = extract_refs(line)
@@ -281,14 +380,16 @@ def collect_reference_set(repo_root: pathlib.Path, tag: str, prev_tag: str | Non
     can tell 'strong closing evidence' (close-eligible) apart from 'mentioned
     only in passing' (flag-only) — see build_verdicts.
 
-    - commits / version_history: CommitRefEvidence (strong / weak / revert).
-    - plan: plain set[int] — PLAN §2 references stay strong by design (the
-      plan's feature headers name the release's scoped issues).
+    All four sources return CommitRefEvidence (strong / weak / revert; plan's
+    revert tier is always empty — a plan doc has no revert concept). Plan §2
+    is strong only for a #N appearing in its own item's heading line; any
+    other #N mention in §2 prose is weak (#521 — see refs_from_plan_doc).
     """
     return {
         "commits": refs_from_commits(repo_root, prev_tag, tag, runner=runner),
         "plan": refs_from_plan_doc(repo_root, version),
         "version_history": refs_from_version_history(repo_root, version),
+        "changelog": refs_from_changelog(repo_root, version),
     }
 
 
@@ -337,23 +438,28 @@ def build_verdicts(open_issues: list, refset: dict[str, object]) -> list[Verdict
     Evidence tiers (see module docstring / design doc §Candidate detection):
 
     - close-eligible (strong): closing-keyword-adjacent commit refs
-      (`fix(#N):`, `fixes #N`, …) AND/OR plan §2 refs (strong by design).
+      (`fix(#N):`, `feat(#N):`, `merge(#N):`, `fixes #N`, …) AND/OR a plan §2
+      item's own `### ITEM<id> — #NNN: ...` heading ref (#521).
       version-history counts as strong only with the same closing-keyword
       adjacency ("Closes #285, #286" prose).
     - flag-only (weak): a bare `#N` mention with no closing-keyword adjacency
-      — in a commit or in version-history prose — is partial evidence; a
-      human should confirm.
+      — in a commit, in version-history prose, or anywhere in plan §2 prose
+      *other than* an item's own heading (its description, acceptance
+      criteria, or an illustrative/negated mention in another item's body,
+      e.g. "e.g. codex #380-#391", "out of scope", "untouched", "beyond what
+      ... touch" — #521) — is partial evidence; a human should confirm.
     - revert reference: any ref inside a commit whose subject starts with
       'Revert' (or that says 'reverts #N' / 'reverted #N') is excluded from
       strong entirely and always flagged, never closed — closing the issue a
       revert just un-shipped would be wrong.
     """
     commits: CommitRefEvidence = refset.get("commits", CommitRefEvidence())
-    plan_refs: set[int] = refset.get("plan", set())
+    plan: CommitRefEvidence = refset.get("plan", CommitRefEvidence())
     vh: CommitRefEvidence = refset.get("version_history", CommitRefEvidence())
+    changelog: CommitRefEvidence = refset.get("changelog", CommitRefEvidence())
 
-    strong = commits.strong | plan_refs | vh.strong
-    weak = (commits.weak | vh.weak) - strong
+    strong = commits.strong | plan.strong | vh.strong | changelog.strong
+    weak = (commits.weak | plan.weak | vh.weak | changelog.weak) - strong
     revert_only = commits.revert - strong
 
     verdicts: list[Verdict] = []
@@ -368,12 +474,18 @@ def build_verdicts(open_issues: list, refset: dict[str, object]) -> list[Verdict
             evidence.append("commits (bare mention)")
         if n in commits.revert:
             evidence.append("commits (revert reference)")
-        if n in plan_refs:
-            evidence.append("plan-doc-§2")
+        if n in plan.strong:
+            evidence.append("plan-doc-§2 (item heading)")
+        if n in plan.weak:
+            evidence.append("plan-doc-§2 (bare mention)")
         if n in vh.strong:
             evidence.append("version-history (closing-keyword)")
         if n in vh.weak:
             evidence.append("version-history (bare mention)")
+        if n in changelog.strong:
+            evidence.append("changelog (closing-keyword)")
+        if n in changelog.weak:
+            evidence.append("changelog (bare mention)")
 
         if n in strong:
             verdicts.append(Verdict(
@@ -504,11 +616,23 @@ def reconcile_release(repo_root: pathlib.Path, tag: str, prev_tag: str | None,
     tracker = it_mod.IssueTracker(config, repo_root)
 
     refset = collect_reference_set(repo_root, tag, prev_tag, version, runner=runner)
-    open_issues = tracker.list(state="open", limit=it_mod.DEFAULT_LIMIT)
-    # Re-list may be capped by DEFAULT_LIMIT; that is an accepted bound
-    # consistent with the issue-tracker abstraction's own R1 access pattern.
-    all_ref_numbers = (refset["commits"].all_numbers() | refset["plan"]
-                       | refset["version_history"].all_numbers())
+    limit = getattr(it_mod, "DEFAULT_LIMIT", 500)
+    open_issues = tracker.list(state="open", limit=limit)
+    # #468/goon-cave#734: the list is still bounded (real trackers can hold
+    # more than any finite --limit), so a run that comes back exactly
+    # saturating the limit is a signal — not proof — that candidates past the
+    # cut were silently dropped. Surface it loudly instead of pretending the
+    # candidate set is complete.
+    truncated = len(open_issues) >= limit
+    if truncated:
+        print(f"warning: open-issue listing returned {len(open_issues)} issues, "
+              f"saturating the configured limit ({limit}) — some open issues "
+              f"may be past the cut and missed as reconcile candidates. Raise "
+              f"DEFAULT_LIMIT in issue_tracker.py if this repo's backlog is "
+              f"consistently this large.", file=sys.stderr)
+    all_ref_numbers = (refset["commits"].all_numbers() | refset["plan"].all_numbers()
+                       | refset["version_history"].all_numbers()
+                       | refset["changelog"].all_numbers())
     candidates = [i for i in open_issues if i.number in all_ref_numbers]
 
     verdicts = build_verdicts(candidates, refset)
@@ -527,6 +651,9 @@ def reconcile_release(repo_root: pathlib.Path, tag: str, prev_tag: str | None,
         "paradigm": paradigm,
         "dry_run": dry_run,
         "candidates_found": len(candidates),
+        "open_issue_count": len(open_issues),
+        "open_issue_limit": limit,
+        "truncated": truncated,
         "closed": result.closed,
         "flagged": result.flagged,
         "skipped_marker": result.skipped_marker,
@@ -600,6 +727,42 @@ def sweep(repo_root: pathlib.Path, spec: str, dry_run: bool, runner: Callable | 
 
 
 # ---------------------------------------------------------------------------
+# Release gate (#468) — mirrors publish_release.py's verify-stage pattern:
+# a mandatory, loud, but recoverable assertion, not a silent advisory.
+# ---------------------------------------------------------------------------
+
+FLAG_REDIRECT_MARKER = "flagged for human review under"
+
+
+def gate_status(run: dict) -> dict:
+    """Classify one reconcile_release() run into gate-blocking failures.
+
+    - "write_errors": a close reconcile() attempted but could not verify as
+      persisted (`errors` — the #130 masking-failure pattern). Always a hard
+      failure; never overridable — this is a defect, not a judgment call.
+    - "overridable_failures": a strong-evidence ("Closes #N"-shaped) verdict
+      that the paradigm's flag-don't-write contract (Supervised/Weiss)
+      redirected into `flagged` instead of closing (see `reconcile()`'s
+      `record["reason"] += f" ({FLAG_REDIRECT_MARKER} {paradigm})"`). Gate-
+      eligible, but recoverable via `--reconcile-override-reason`.
+
+    Never evaluated during --dry-run: a preview run writes nothing either
+    way, so there is nothing to gate on yet (mirrors publish_release.py's
+    assert_published() skipping under --dry-run).
+
+    Weak (bare-mention) and revert-only references were never close-eligible
+    to begin with, so they never appear here — they stay purely advisory,
+    exactly as before #468.
+    """
+    if run.get("dry_run"):
+        return {"write_errors": [], "overridable_failures": []}
+    write_errors = list(run.get("errors", []))
+    overridable = [rec for rec in run.get("flagged", [])
+                   if FLAG_REDIRECT_MARKER in rec.get("reason", "")]
+    return {"write_errors": write_errors, "overridable_failures": overridable}
+
+
+# ---------------------------------------------------------------------------
 # Report formatting
 # ---------------------------------------------------------------------------
 
@@ -637,6 +800,18 @@ def _format_single(run: dict) -> str:
     if run["errors"]:
         err_ids = [f"#{c['number']}: {c.get('error')}" for c in run["errors"]]
         lines.append(f"ERRORS: {'; '.join(err_ids)}")
+    if run.get("truncated"):
+        lines.append(f"WARNING: open-issue listing truncated at "
+                     f"{run.get('open_issue_limit')} (returned "
+                     f"{run.get('open_issue_count')}) — candidates past the "
+                     f"cut may be missing")
+    gs = gate_status(run)
+    if gs["write_errors"] or gs["overridable_failures"]:
+        n = len(gs["write_errors"]) + len(gs["overridable_failures"])
+        lines.append(f"reconcile gate: FAILED ({n} claimed issue(s) unresolved "
+                     f"— see ERRORS / flagged above)")
+    elif not run.get("dry_run"):
+        lines.append("reconcile gate: PASSED")
     return "\n".join(lines)
 
 
@@ -660,6 +835,16 @@ def build_parser() -> argparse.ArgumentParser:
                         help="Print verdict records; write nothing.")
     parser.add_argument("--json", action="store_true", dest="as_json",
                         help="Emit machine-readable JSON instead of the text report.")
+    parser.add_argument("--reconcile-override-reason", dest="override_reason",
+                        metavar="REASON",
+                        help="Release-gate escape hatch (#468): a non-empty "
+                             "justification for shipping anyway when a "
+                             "strong-evidence ('Closes #N'-shaped) claim was "
+                             "flagged instead of closed under Supervised/Weiss "
+                             "flag-don't-write. Does NOT override a genuine "
+                             "write-persistence failure (#130) — those always "
+                             "hard-fail. The reason is echoed into the run "
+                             "output for the audit trail.")
     parser.add_argument("--self-test", action="store_true",
                         help="Run the offline self-test suite (no network, no real gh calls).")
     return parser
@@ -689,6 +874,11 @@ def main(argv: list[str] | None = None) -> int:
     if args.self_test:
         return _self_test()
 
+    if args.override_reason is not None and not args.override_reason.strip():
+        print("error: --reconcile-override-reason requires a non-empty "
+              "justification string", file=sys.stderr)
+        return 2
+
     repo_root = find_repo_root() or pathlib.Path.cwd().resolve()
 
     try:
@@ -711,8 +901,49 @@ def main(argv: list[str] | None = None) -> int:
     else:
         print(format_report(result))
 
-    has_errors = any(r.get("errors") for r in result.get("runs", [result]))
-    return 1 if has_errors else 0
+    # Release gate (#468): mandatory, not advisory. See gate_status()'s
+    # docstring for the write_errors vs overridable_failures split.
+    runs = result.get("runs", [result])
+    write_errors: list[dict] = []
+    overridable_failures: list[dict] = []
+    for run in runs:
+        gs = gate_status(run)
+        write_errors.extend(gs["write_errors"])
+        overridable_failures.extend(gs["overridable_failures"])
+
+    if write_errors:
+        print("\nreconcile gate: FAILED — a close was attempted but did not "
+              "verify as persisted (#130-style write failure). This has no "
+              "override; investigate the tracker write before re-running:",
+              file=sys.stderr)
+        for rec in write_errors:
+            print(f"  - #{rec.get('number')} {rec.get('title', '')!r}: "
+                  f"{rec.get('error')}", file=sys.stderr)
+        return 1
+
+    if overridable_failures:
+        if args.override_reason:
+            print(f"\nreconcile gate OVERRIDDEN — reason: "
+                  f"{args.override_reason}", file=sys.stderr)
+            for rec in overridable_failures:
+                print(f"  - #{rec.get('number')} {rec.get('title', '')!r}: "
+                      f"{rec.get('reason')}", file=sys.stderr)
+        else:
+            print("\nreconcile gate: FAILED — the following issue(s) are "
+                  "claimed as closed by this release's commits, plan §2, "
+                  "version-history, and/or changelog (strong evidence) but "
+                  "remain open with no reconcile evidence of closure:",
+                  file=sys.stderr)
+            for rec in overridable_failures:
+                print(f"  - #{rec.get('number')} {rec.get('title', '')!r}: "
+                      f"{rec.get('reason')}", file=sys.stderr)
+            print("\nTo proceed anyway, re-run with "
+                  "--reconcile-override-reason \"<why this is safe to ship "
+                  "with these issues still open>\" (a non-empty "
+                  "justification is required).", file=sys.stderr)
+            return 1
+
+    return 0
 
 
 # ---------------------------------------------------------------------------
@@ -764,6 +995,9 @@ def _self_test() -> int:
         "org/repo#42 cross-repo mention\n" + COMMIT_SEP + "\n"
         "feat(#286): reintroduce widget\n" + COMMIT_SEP + "\n"
         "chore: trailer list\n\nfixes #55, #56, #57\n" + COMMIT_SEP + "\n"
+        "merge(#469): fold merge-evidence fix into dev\n" + COMMIT_SEP + "\n"
+        "merge(v3.92): promote v3.92 (field defects: #465 #421) "
+        "claude/r1-465-foo->version/3.92\n" + COMMIT_SEP + "\n"
     )
 
     def _fake_runner(args):
@@ -793,23 +1027,97 @@ def _self_test() -> int:
                   286 in commit_ev.strong))
     cases.append(("refs_from_commits: 'fixes #55, #56, #57' trailer list — all three strong",
                   {55, 56, 57} <= commit_ev.strong))
+    cases.append(("refs_from_commits: merge(#N): conventional-commit prefix is strong (#469)",
+                  469 in commit_ev.strong))
+    cases.append(("refs_from_commits: merge(vX.Y): ...#N... (version in parens, ref loose "
+                  "in the subject) stays weak — deliberately narrow, see #469 note",
+                  465 in commit_ev.weak and 465 not in commit_ev.strong
+                  and 421 in commit_ev.weak and 421 not in commit_ev.strong))
 
     # ------------------------------------------------------------------ #
-    # 3. refs_from_plan_doc — §2 extraction, ignores other sections
+    # 3. refs_from_plan_doc — §2 extraction, ignores other sections, tiered
+    #    by heading adjacency (#521): only an item's own '### ITEM... —
+    #    #NNN:' heading ref is strong; any other #N in §2 prose (even
+    #    closing-keyword-adjacent body text) is weak.
     # ------------------------------------------------------------------ #
     plan_path = tmp / "docs" / "release-planning" / "release-planning-v9.9.md"
     plan_path.write_text(
         "# Release Planning — v9.9\n\n"
         "## 1. Target\n\nSee #999 (should NOT be picked up)\n\n"
-        "## 2. Major Features\n\n### RPI-1 (#100)\n\nCloses #101 too.\n\n"
+        "## 2. Major Features\n\n"
+        "### ITEM-1 — #100: some feature\n\n"
+        "**Description:** encodes a known gap, e.g. #391 is out of scope, "
+        "untouched by this item.\n\n"
+        "**Acceptance criteria:** Closes #101 too.\n\n"
         "## 3. Out of Scope\n\nMentions #500 (should NOT be picked up)\n",
         encoding="utf-8",
     )
-    plan_refs = refs_from_plan_doc(tmp, "9.9")
-    cases.append(("refs_from_plan_doc extracts only §2 refs",
-                  plan_refs == {100, 101}))
-    cases.append(("refs_from_plan_doc returns empty set for missing plan doc",
-                  refs_from_plan_doc(tmp, "0.0") == set()))
+    plan_ev = refs_from_plan_doc(tmp, "9.9")
+    cases.append(("refs_from_plan_doc: item's own heading ref is strong (#521)",
+                  100 in plan_ev.strong))
+    cases.append(("refs_from_plan_doc: closing-keyword-adjacent BODY text "
+                  "('Closes #101') is weak, not strong — only the heading "
+                  "counts as strong evidence (#521)",
+                  101 in plan_ev.weak and 101 not in plan_ev.strong))
+    cases.append(("refs_from_plan_doc: illustrative/negated mention elsewhere "
+                  "in an item's body ('e.g. #391 is out of scope') is weak, "
+                  "never strong (#521)",
+                  391 in plan_ev.weak and 391 not in plan_ev.strong))
+    cases.append(("refs_from_plan_doc does not pick up refs outside §2",
+                  999 not in plan_ev.all_numbers() and 500 not in plan_ev.all_numbers()))
+    cases.append(("refs_from_plan_doc returns empty evidence for missing plan doc",
+                  refs_from_plan_doc(tmp, "0.0") == CommitRefEvidence()))
+
+    # ------------------------------------------------------------------ #
+    # 3b. Regression (#521) — v3.100's real false positive: release-planning-
+    #     v3.100.md's ITEM-2 description said "...tracked_in links (e.g.
+    #     codex #380-#391)" as an illustrative aside inside ANOTHER item's
+    #     description, and the old flat-§2-extraction (no heading tiering)
+    #     treated that bare mention as strong evidence, auto-closing both
+    #     #380 and #391 under Noir. Reproduce the exact fixture text and
+    #     confirm it now only flags for review, never auto-closes.
+    # ------------------------------------------------------------------ #
+    regress_path = tmp / "docs" / "release-planning" / "release-planning-v9.10.md"
+    regress_path.write_text(
+        "# Release Planning — v9.10\n\n"
+        "## 2. Major Features\n\n"
+        "### ITEM-2 — #514: overlay manifests\n\n"
+        "**Description:** Schema-versioned `flavors/<flavor>/flavor.json` "
+        "format per the design doc §2 — capability map, path maps, "
+        "term-substitution tables, exclusions — validated by "
+        "`grm-config-validate`. Author the `codex` and `copilot` manifests, "
+        "encoding today's known gaps as `exclusions` entries with reasons "
+        "and `tracked_in` links (e.g. codex #380-#391).\n\n"
+        "**Acceptance criteria:** every known intentional divergence for "
+        "these two flavors is an `exclusions` entry with a reason — zero "
+        "silent gaps.\n\n",
+        encoding="utf-8",
+    )
+    regress_ev = refs_from_plan_doc(tmp, "9.10")
+    cases.append(("regression (#521): the item's own heading ref (#514) "
+                  "is strong",
+                  514 in regress_ev.strong))
+    cases.append(("regression (#521): the illustrative 'e.g. codex "
+                  "#380-#391' aside is weak, never strong",
+                  380 in regress_ev.weak and 380 not in regress_ev.strong
+                  and 391 in regress_ev.weak and 391 not in regress_ev.strong))
+
+    regress_issues = [
+        types.SimpleNamespace(id="380", number=380, title="codex gap A"),
+        types.SimpleNamespace(id="391", number=391, title="codex gap B"),
+    ]
+    regress_refset = {
+        "commits": CommitRefEvidence(), "plan": regress_ev,
+        "version_history": CommitRefEvidence(), "changelog": CommitRefEvidence(),
+    }
+    regress_verdicts = build_verdicts(regress_issues, regress_refset)
+    regress_by_num = {v.number: v for v in regress_verdicts}
+    cases.append(("regression (#521): #380/#391 are flagged for review, "
+                  "never close-eligible",
+                  regress_by_num[380].disposition == "flag"
+                  and regress_by_num[391].disposition == "flag"))
+    # The Noir-autonomous write-path half of this regression (confirming zero
+    # tracker writes occur) runs as 6h, below, once MockTracker exists.
 
     # ------------------------------------------------------------------ #
     # 4. refs_from_version_history — section-scoped, tiered extraction
@@ -830,25 +1138,49 @@ def _self_test() -> int:
                   999 not in vh_ev.all_numbers()))
 
     # ------------------------------------------------------------------ #
+    # 4b. refs_from_changelog (#468) — same section-scoped, tiered
+    #     extraction, over docs/changelog.md instead of version-history.md.
+    # ------------------------------------------------------------------ #
+    cl_path = tmp / "docs" / "changelog.md"
+    cl_path.write_text(
+        "# Changelog\n\n"
+        "## v9.9 — Test release\n\nCloses #400 and mentions #401.\n\n"
+        "## v9.8 — Older release\n\nUnrelated #998.\n",
+        encoding="utf-8",
+    )
+    cl_ev = refs_from_changelog(tmp, "9.9")
+    cases.append(("refs_from_changelog: 'Closes #400' prose is strong",
+                  400 in cl_ev.strong))
+    cases.append(("refs_from_changelog: bare '#401' mention is weak, not strong",
+                  401 in cl_ev.weak and 401 not in cl_ev.strong))
+    cases.append(("refs_from_changelog does not leak into prior sections",
+                  998 not in cl_ev.all_numbers()))
+    cases.append(("refs_from_changelog returns empty set for missing changelog",
+                  refs_from_changelog(tmp, "0.0") == CommitRefEvidence()))
+
+    # ------------------------------------------------------------------ #
     # 5. build_verdicts — close (strong evidence) vs flag (weak/revert)
     # ------------------------------------------------------------------ #
     FakeIssue = types.SimpleNamespace
     open_issues = [
-        FakeIssue(id="100", number=100, title="Strong: commit+plan"),
+        FakeIssue(id="100", number=100, title="Strong: commit+plan-heading"),
         FakeIssue(id="200", number=200, title="Weak: version-history only"),
         FakeIssue(id="285", number=285, title="Revert reference only"),
         FakeIssue(id="292", number=292, title="Mention-only in a commit (weak)"),
+        FakeIssue(id="400", number=400, title="Strong: changelog only"),
+        FakeIssue(id="600", number=600, title="Weak: plan-doc bare mention only (#521)"),
         FakeIssue(id="999", number=999, title="Not referenced anywhere"),
         FakeIssue(id="epic1", number=None, title="No number (roadmap-style, skipped)"),
     ]
     refset = {
         "commits": CommitRefEvidence(strong={100}, weak={292}, revert={285}),
-        "plan": {100},
+        "plan": CommitRefEvidence(strong={100}, weak={600}),
         "version_history": CommitRefEvidence(strong=set(), weak={200}),
+        "changelog": CommitRefEvidence(strong={400}, weak=set()),
     }
     verdicts = build_verdicts(open_issues, refset)
     by_num = {v.number: v for v in verdicts}
-    cases.append(("build_verdicts closes strong-evidence issue (commits+plan)",
+    cases.append(("build_verdicts closes strong-evidence issue (commits+plan heading)",
                   100 in by_num and by_num[100].disposition == "close"))
     cases.append(("build_verdicts flags weak-only (version-history-only) issue",
                   200 in by_num and by_num[200].disposition == "flag"))
@@ -858,10 +1190,17 @@ def _self_test() -> int:
                   "'revert reference', never closes it",
                   285 in by_num and by_num[285].disposition == "flag"
                   and by_num[285].reason == "revert reference"))
+    cases.append(("build_verdicts closes a changelog-only strong reference (#468)",
+                  400 in by_num and by_num[400].disposition == "close"
+                  and "changelog (closing-keyword)" in by_num[400].evidence))
+    cases.append(("build_verdicts flags a plan-doc bare-mention-only reference, "
+                  "never closes it (#521)",
+                  600 in by_num and by_num[600].disposition == "flag"
+                  and "plan-doc-§2 (bare mention)" in by_num[600].evidence))
     cases.append(("build_verdicts excludes issues with no reference at all",
                   999 not in by_num))
     cases.append(("build_verdicts excludes issues with number=None (no candidacy)",
-                  "epic1" not in by_num and len(verdicts) == 4))
+                  "epic1" not in by_num and len(verdicts) == 6))
 
     # ------------------------------------------------------------------ #
     # 6. Mocked tracker for the write-path tests
@@ -982,6 +1321,21 @@ def _self_test() -> int:
     result7 = reconcile(tracker7, verdicts_close, "v9.9", "Noir", dry_run=False)
     cases.append(("post-write verification recognizes uppercase 'CLOSED' from GitHub API",
                   len(result7.closed) == 1 and len(result7.errors) == 0))
+
+    # 6h. Regression (#521) write-path half: under Noir (autonomous), the
+    #     illustrative-mention verdicts built in 3b never reach a tracker
+    #     write — reconcile() must leave both flagged with zero calls.
+    regress_tracker = MockTracker({
+        "380": {"number": 380, "state": "open", "title": "codex gap A", "body": ""},
+        "391": {"number": 391, "state": "open", "title": "codex gap B", "body": ""},
+    })
+    regress_result = reconcile(regress_tracker, regress_verdicts, "v9.10", "Noir",
+                               dry_run=False)
+    cases.append(("regression (#521): under Noir (autonomous), the illustrative "
+                  "mentions are never auto-closed — both stay flagged and zero "
+                  "tracker writes occur",
+                  len(regress_result.closed) == 0 and len(regress_result.flagged) == 2
+                  and regress_tracker.calls == []))
 
     # ------------------------------------------------------------------ #
     # 7. read_work_paradigm — live config read, safe default
@@ -1115,6 +1469,139 @@ def _self_test() -> int:
     report_text = format_report(e2e_result)
     cases.append(("format_report emits the 'issues closed by this release' line",
                   "issues closed by this release:" in report_text and "#300" in report_text))
+    cases.append(("format_report emits 'reconcile gate: PASSED' on a clean Noir run",
+                  "reconcile gate: PASSED" in report_text))
+
+    # ------------------------------------------------------------------ #
+    # 11. gate_status (#468) — release-gate classification
+    # ------------------------------------------------------------------ #
+    run_clean = {"dry_run": False, "errors": [], "flagged": []}
+    gs = gate_status(run_clean)
+    cases.append(("gate_status: a clean run has no write_errors or overridable_failures",
+                  gs["write_errors"] == [] and gs["overridable_failures"] == []))
+
+    run_write_err = {"dry_run": False,
+                     "errors": [{"number": 100, "title": "t", "error": "did not persist"}],
+                     "flagged": []}
+    gs = gate_status(run_write_err)
+    cases.append(("gate_status: a write error is a gate-blocking, never-overridable failure",
+                  len(gs["write_errors"]) == 1 and gs["overridable_failures"] == []))
+
+    run_redirected = {"dry_run": False, "errors": [],
+                      "flagged": [{"number": 200, "title": "t",
+                                   "reason": "r (flagged for human review under Supervised)"}]}
+    gs = gate_status(run_redirected)
+    cases.append(("gate_status: a paradigm-redirected close-eligible verdict is "
+                  "overridable, not a write_error",
+                  gs["write_errors"] == [] and len(gs["overridable_failures"]) == 1))
+
+    run_weak_flag = {"dry_run": False, "errors": [],
+                     "flagged": [{"number": 300, "title": "t",
+                                  "reason": "referenced only as a bare mention (partial evidence)"}]}
+    gs = gate_status(run_weak_flag)
+    cases.append(("gate_status: a weak bare-mention flag never gates the release",
+                  gs["write_errors"] == [] and gs["overridable_failures"] == []))
+
+    run_dry = {"dry_run": True,
+              "errors": [{"number": 100, "title": "t", "error": "would not matter"}],
+              "flagged": [{"number": 200, "title": "t",
+                          "reason": "r (flagged for human review under Supervised)"}]}
+    gs = gate_status(run_dry)
+    cases.append(("gate_status: --dry-run never gates, regardless of content",
+                  gs["write_errors"] == [] and gs["overridable_failures"] == []))
+
+    # ------------------------------------------------------------------ #
+    # 12. reconcile_release truncation reporting (#468 / goon-cave#734) —
+    #     a candidate list that exactly saturates the configured limit is
+    #     flagged as possibly-truncated instead of silently trusted as
+    #     complete.
+    # ------------------------------------------------------------------ #
+    trunc_root = tmp / "trunc"
+    (trunc_root / "docs" / "release-planning").mkdir(parents=True)
+    (trunc_root / ".claude").mkdir()
+    (trunc_root / "docs" / "version-history.md").write_text(
+        "# Version History\n\n## v9.9 — Test\n\nCloses #300.\n", encoding="utf-8")
+    (trunc_root / ".claude" / "grimoire-config.json").write_text(
+        json.dumps({"work-paradigm": {"value": "Noir"}}))
+    trunc_tracker = MockTracker({"300": {"number": 300, "state": "open", "title": "t", "body": ""}})
+
+    class SaturatedTrackerModule:
+        DEFAULT_LIMIT = 2  # tiny, so a 2-item list saturates it
+
+        @staticmethod
+        def load_config():
+            return {}
+
+        class IssueTracker:
+            def __init__(self, config, repo_root):
+                pass
+
+            def list(self, state="open", limit=2):
+                # returns exactly `limit` issues -> saturated -> truncated=True
+                return [types.SimpleNamespace(id="300", number=300, title="t"),
+                        types.SimpleNamespace(id="301", number=301, title="u")]
+
+            def get(self, issue_id):
+                return trunc_tracker.get(issue_id)
+
+            def comment(self, issue_id, body):
+                return trunc_tracker.comment(issue_id, body)
+
+            def close(self, issue_id):
+                return trunc_tracker.close(issue_id)
+
+            def flush(self):
+                return trunc_tracker.flush()
+
+    trunc_result = reconcile_release(trunc_root, "v9.9", "v9.8", dry_run=False,
+                                     runner=lambda args: "fix(#300): ship the thing\n",
+                                     tracker_module=SaturatedTrackerModule)
+    cases.append(("reconcile_release flags 'truncated' when the open-issue list "
+                  "saturates the configured limit",
+                  trunc_result["truncated"] is True
+                  and trunc_result["open_issue_count"] == 2
+                  and trunc_result["open_issue_limit"] == 2))
+    trunc_report = _format_single(trunc_result)
+    cases.append(("_format_single surfaces the truncation warning in the text report",
+                  "truncated" in trunc_report.lower()))
+
+    # A larger limit that the candidate list doesn't saturate -> not truncated.
+    class UnsaturatedTrackerModule(SaturatedTrackerModule):
+        DEFAULT_LIMIT = 500
+
+        class IssueTracker(SaturatedTrackerModule.IssueTracker):
+            def list(self, state="open", limit=500):
+                return [types.SimpleNamespace(id="300", number=300, title="t")]
+
+    unsat_result = reconcile_release(trunc_root, "v9.9", "v9.8", dry_run=False,
+                                     runner=lambda args: "fix(#300): ship the thing\n",
+                                     tracker_module=UnsaturatedTrackerModule)
+    cases.append(("reconcile_release does not flag 'truncated' when the list is "
+                  "well under the limit",
+                  unsat_result["truncated"] is False))
+
+    # ------------------------------------------------------------------ #
+    # 13. CLI surface (#468) — the release-gate override flag exists, takes
+    #     a value (not a bare boolean), and its name does NOT match the
+    #     classifier-compat bypass-shaped-flag regex (epic #393/#421) — a
+    #     literal `--skip-`/`--bypass-`/`--override-`/`--force-`-prefixed
+    #     name would read as a [Safety Bypass Flag] to an auto-mode harness
+    #     classifier regardless of the justification-required semantics.
+    # ------------------------------------------------------------------ #
+    _cli_parser = build_parser()
+    _override_action = next(
+        (a for a in _cli_parser._actions if a.dest == "override_reason"), None)
+    cases.append(("build_parser defines --reconcile-override-reason",
+                  _override_action is not None))
+    cases.append(("--reconcile-override-reason takes a value, not a bare boolean flag",
+                  _override_action is not None and _override_action.nargs is None
+                  and _override_action.const is None))
+    _bypass_flag_re = re.compile(
+        r"^--(?:allow|skip|bypass|override)-[\w-]+$|^--no-verify$|^--force-[\w-]+$",
+        re.IGNORECASE)
+    cases.append(("--reconcile-override-reason does not match the classifier-compat "
+                  "bypass-shaped-flag pattern (#421)",
+                  not _bypass_flag_re.match("--reconcile-override-reason")))
 
     # ------------------------------------------------------------------ #
     # Print results

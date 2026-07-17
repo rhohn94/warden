@@ -23,7 +23,10 @@ ANY exit, success or failure, so a stale marker can never leave `main`
 boundary-exempt) → tests → build distributables → annotated tag → best-effort
 `run_metadata` telemetry → version-history notes slice → **asserting publish**
 (`publish_release.py`: every built asset must land on the GitHub Release and
-its sha256 must match `SHA256SUMS`, hard-fail otherwise) → channel signal. A
+its sha256 must match `SHA256SUMS`, hard-fail otherwise; v3.90 adds a `verify`
+stage running the repo's optional `[assert] verify` commands from
+`publish.toml` BEFORE anything publishes — the signed-if-configured gate, so an
+unsigned artifact fails the run instead of shipping) → channel signal. A
 mid-ceremony abort also emits `outcome=fail` via the sibling
 `telemetry_entry.py --emit` CLI mode from the same promotion-window trap
 (#345/#346 — `telemetry-errors` applied at this release boundary; see
@@ -56,8 +59,44 @@ mutating action).
    - **beta** — a `--prerelease` published off the `version/{X.Y}` staging
      branch; assets carry a `-beta` suffix and `release.json` records
      `channel: beta`. Invoke with `--channel beta`.
-5. **Merge `dev` → `main`, then check out `main`.** Releases only run from
-   `main` — the ceremony's guard enforces it.
+5. **Promote `dev` → `main` without requiring `main` to be checked out in your
+   worktree.** Releases only run from `main` — the ceremony's guard enforces
+   it — but in a multi-worktree topology `main` is commonly checked out
+   somewhere else (e.g. the project's primary/root directory), and `git switch
+   main` fails outright from any other worktree
+   (`fatal: 'main' is already used by worktree at <path>`). **Never** work
+   around that by `cd`-ing into the worktree that owns `main` and running
+   `git reset --hard` there to "sync" it, and never re-run the ceremony's
+   guarded steps (tests, build, push) from that other worktree — that
+   worktree's staleness after the ref moves is harmless and not your concern;
+   forcing it into sync costs unnecessary destructive-op confirmations for no
+   benefit. Instead, build the merge with plumbing and move the ref directly,
+   with zero checkout of `main` anywhere:
+
+   ```bash
+   # 1. Compute the merged tree — no working directory touched.
+   TREE=$(git merge-tree --write-tree main dev)
+   # 2. Build the merge commit object (two parents: main, dev).
+   NEW_MAIN=$(git commit-tree "$TREE" -p main -p dev \
+     -m "merge(vX.Y): promote vX.Y ... dev→main")
+   # 3. Move the main ref via compare-and-swap — refuses if main moved
+   #    underneath you between steps 1 and 3, same safety as a checked-out
+   #    fast-forward merge.
+   git update-ref refs/heads/main "$NEW_MAIN" "$(git rev-parse main)"
+   ```
+
+   This works from **any** worktree, including your own if it holds neither
+   `dev` nor `main`. If your own worktree already has `main` checked out (the
+   ordinary single-worktree case), the plain `git switch main && git merge
+   --no-ff dev` remains fine — reach for the plumbing sequence specifically
+   when `git switch main` would fail because a different worktree owns it.
+   Tag the result the same checkout-free way: `git tag -a vX.Y "$NEW_MAIN" -m
+   "..."`. Then push directly from your own worktree — never from the
+   worktree that happens to have `main` checked out — per §Push to origin
+   below: `git push` and the standard pre-push hook pattern (`cd
+   "$(git rev-parse --show-toplevel)"`) both operate on ref values and the
+   *invoking* worktree, never on what any worktree has checked out, so pushing
+   from wherever you already are is correct and sufficient.
 
 ## Run the ceremony
 
@@ -120,20 +159,62 @@ table in `docs/grimoire/design/autonomous-push-prompt-suppression-design.md`
 `.claude/push-allowlist`); pushing requires the integration marker. Destructive
 flags are denied in both modes.
 
-## Reconcile issues (post-tag judgment step)
+## Reconcile issues (post-tag MANDATORY gate — #468)
 
-After the tag exists, before writing the release report, sweep open issues
-this release actually shipped:
+After the tag exists, before writing the release report, this step is
+**required, not optional** — mirroring `publish_release.py`'s asserting
+verify stage (a non-zero exit means the release is not done yet, the same way
+a failed `[assert] verify` command blocks publish):
 
 ```bash
 python3 .claude/skills/grm-issue-reconcile/issue_reconcile.py --tag v{X.Y}
 ```
 
-Detects candidates from this release's commits, the plan doc's §2, and the
-version-history entry; under Noir it closes-with-comment (verifying the write
-persisted); under Supervised/Weiss it flags for human review and writes
-nothing. Fold its `issues closed by this release: […]` line into the release
-report. See `.claude/skills/grm-issue-reconcile/SKILL.md`.
+Detects candidates from this release's commits, the plan doc's §2, the
+version-history entry, and the changelog entry; under Noir it closes-with-
+comment (verifying the write persisted); under Supervised/Weiss it flags for
+human review and writes nothing (that flag-don't-write contract is
+unchanged). Fold its `issues closed by this release: […]` line into the
+release report. See `.claude/skills/grm-issue-reconcile/SKILL.md`.
+
+**A non-zero exit blocks the release from being reported done.** Two
+distinct failure modes:
+
+- A close was attempted but did not verify as persisted (the #130
+  masking-failure pattern) — always hard-fails, **no override**. This is a
+  tracker-write defect; investigate before re-running.
+- A strong-evidence ("Closes #N"-shaped) claim was flagged instead of closed
+  because the paradigm is Supervised/Weiss — hard-fails by default, but
+  recoverable: re-run with
+  `--reconcile-override-reason "<why this is safe to ship anyway>"` (a
+  non-empty justification is required; it is echoed into the run output for
+  the audit trail). This asymmetry is deliberate — fleet triage has observed
+  both false negatives (missed closures) and one false positive (a wrongly
+  auto-closed tracking issue) from this same detector, so the gate never
+  unconditionally hard-stops on its own say-so; it fails loud with the exact
+  issue(s) named and lets a human override with a stated reason instead.
+
+Weak (bare-mention) and revert-only references were never close-eligible and
+never gate the release — purely advisory, same as before #468.
+
+## Refresh component registry (post-tag, #458)
+
+A disjoint step from **Reconcile issues** above and **Post-release cleanup**
+below — keeps `.claude/component-registry.json` from drifting out of sync
+with its sources. One mechanical script call, zero LLM judgment. Full
+sequence: `reference.md` §Refreshing the component registry.
+
+## Uncataloged-must-not-grow gate (post-registry-refresh, #459)
+
+Runs immediately after the refresh above, same attach point, disjoint
+concern: the refresh keeps the registry fresh against its sources, this
+mechanically checks that freshly-refreshed registry's `uncataloged` count
+against the previous release's committed registry and flags growth. WARN
+by default (report-only, mirrors `sig-mismatch`'s WARN/`--strict` pattern
+from #433) — a mechanical signal, not a blocker, that the write-time
+`component.json` done-criteria (see CLAUDE.md §Task execution and the
+paradigm task-execution templates) isn't holding. Full sequence:
+`reference.md` §Uncataloged-must-not-grow gate.
 
 ## Post-release cleanup (final ordered step)
 
@@ -153,12 +234,8 @@ tally.
 - The per-run telemetry artifact is emitted by the ceremony automatically
   (write-only, best-effort — it never gates or blocks a release).
 
-## Anti-patterns
+## Reference (load on demand)
 
-- Shipping an adoptable capability without a feature-manifest entry — syncing
-  projects silently miss it and the capability lands inert.
-- Hand-running the mechanical steps (marker, tag, build, `gh release create`)
-  instead of the `release` recipe target — the ceremony exists so the marker is
-  trap-guarded and the publish is asserted; ad-hoc runs re-open both gaps.
-- Folding the push into the ceremony or adding a `just push` recipe — push
-  stays a separate, guarded step.
+- `Refreshing the component registry` — see `reference.md`
+- `Uncataloged-must-not-grow gate` — see `reference.md`
+- `Anti-patterns` — see `reference.md`

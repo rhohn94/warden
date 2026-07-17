@@ -1,0 +1,18 @@
+[package]
+name = "service-app"
+version = "0.1.0"
+edition = "2021"
+description = "Grimoire service quick-start scaffold — replace with your project's description."
+
+[[bin]]
+name = "service-app"
+path = "src/main.rs"
+
+# Debug info sufficient for backtraces (not full symbols) — shrinks target/debug
+# substantially vs the default `debug = true`. See #447.
+[profile.dev]
+debug = "line-tables-only"
+
+[dependencies]
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }

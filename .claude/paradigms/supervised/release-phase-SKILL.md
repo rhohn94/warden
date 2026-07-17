@@ -108,6 +108,9 @@ a repo guard hook blocks cross-worktree paths anyway.
 - docs/release-planning/release-planning-v{X.Y}.md §2.{N} — this item's scope + acceptance
 - docs/design/{feature}-design.md — full feature design
 - docs/coding-standards.md and docs/architecture-guidelines.md — standing rules
+- Check `.claude/component-registry.json` and `vendor.toml` for an existing
+  capability before writing new infrastructure; report any reuse opportunity
+  the plan missed as a follow-up row.
 - {any other design doc cross-linked in the plan}
 
 ### Work
@@ -116,9 +119,13 @@ Include acceptance criteria verbatim.}
 
 ### Constraints
 - Scope strictly to the files listed in §2.{N}. Do not touch
-  docs/release-planning/release-planning-v{X.Y}.md.
+  docs/release-planning/release-planning-v{X.Y}.md. Exception: adding a
+  `vendor.toml` entry and running `recipe.py sync-deps` for a cataloged
+  capability is always in scope — it's the alternative to writing new files,
+  not scope creep. Nothing else about scope loosens.
 - Write or extend the design doc for this item if §2.{N} flags one missing.
-- Run `{test-command}` and `{build-command}` before finishing.
+- Run `python3 .claude/skills/grm-build-recipe/recipe.py test` and
+  `python3 .claude/skills/grm-build-recipe/recipe.py build` before finishing.
 - Fix all errors and warnings introduced by your changes.
 - Review your own diff against the acceptance criteria before reporting done.
 
@@ -130,8 +137,9 @@ Do NOT merge. Report back:
 4. Any deferred follow-ups discovered (gaps left for a future item)
 ```
 
-Replace `{test-command}` and `{build-command}` with your project's actual
-commands (see CLAUDE.md §Project commands).
+The dispatched agent resolves its own test/build commands via the
+`grm-build-recipe` dispatcher (`.claude/recipes.json`) — no manual
+substitution needed in this template.
 
 ---
 

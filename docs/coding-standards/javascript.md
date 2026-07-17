@@ -44,6 +44,10 @@ the cross-language [standard practices](../coding-standards.md).
   internals.
 - Name test blocks with `describe` and `it`/`test` sentences that read as
   specifications: `it('returns empty array when input is null', …)`.
+- `recipe.py test` / `just test` run the **full** suite (co-located unit tests
+  + the `tests`/`e2e` directory). `recipe.py unit-test` / `just unit-test`
+  (#360) run only `vitest run` against the co-located `*.test.ts` files —
+  excludes the `tests`/`e2e` integration directory entirely.
 
 ## Module & package structure
 

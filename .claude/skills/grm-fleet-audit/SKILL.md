@@ -199,5 +199,11 @@ skill's initial scope.
 - `Step 1 — Release/publish conformance` — see `reference.md`
 - `Step 2 — Shipped-vs-open tracker reconciliation` — see `reference.md`
 - `Step 3 — Duplicate-implementation detection` — see `reference.md`
+- `Step 3a — Capability-overlap checklist item (mechanized, #412)` — see
+  `reference.md`; runs `capability_overlap.py` against the grep-set data in
+  `capability-overlap-patterns.json`
 - `Step 4 — Mandate-compliance sweep` — see `reference.md`
+- `Step 4a — Catalog-conformance reconciliation checklist item (mechanized,
+  #434)` — see `reference.md`; runs `catalog_conformance.py plan` per repo and
+  reconciles filed `[key: ...]` tickets via `catalog_reconcile.py`
 - `Step 5 — Framework-version drift` — see `reference.md`

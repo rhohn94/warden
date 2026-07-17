@@ -1,55 +1,133 @@
 {
-  "interface-version": 6,
+  "interface-version": 9,
   "stack": "web",
   "targets": {
     "build": {
       "command": "just build ${env}",
       "implemented": false,
-      "params": {"env": {"default": "dev"}}
+      "params": {
+        "env": {
+          "default": "dev"
+        }
+      }
     },
     "stop": {
       "command": "just stop ${port}",
       "implemented": true,
-      "params": {"port": {"default": ""}}
+      "params": {
+        "port": {
+          "default": ""
+        }
+      }
     },
     "server": {
       "command": "just run ${env} ${port}",
       "implemented": false,
-      "params": {"port": {"default": "3000"}, "env": {"default": "dev"}}
+      "params": {
+        "port": {
+          "default": "3000"
+        },
+        "env": {
+          "default": "dev"
+        }
+      }
     },
     "test": {
       "command": "just test ${filter}",
       "implemented": false,
-      "params": {"filter": {"default": ""}, "watch": {"default": ""}}
+      "params": {
+        "filter": {
+          "default": ""
+        },
+        "watch": {
+          "default": ""
+        }
+      }
     },
-    "seed": {"command": null, "implemented": false},
-    "migrate": {"command": null, "implemented": false},
-    "lint": {"command": null, "implemented": false},
-    "clean": {"command": null, "implemented": false},
+    "unit-test": {
+      "command": "just unit-test ${filter}",
+      "implemented": false,
+      "params": {
+        "filter": {
+          "default": ""
+        },
+        "watch": {
+          "default": ""
+        }
+      }
+    },
+    "seed": {
+      "command": null,
+      "implemented": false
+    },
+    "migrate": {
+      "command": null,
+      "implemented": false
+    },
+    "lint": {
+      "command": null,
+      "implemented": false
+    },
+    "clean": {
+      "command": null,
+      "implemented": false
+    },
     "package": {
       "command": "just package ${version} ${target}",
       "implemented": true,
-      "params": {"version": {"default": ""}, "target": {"default": ""}}
+      "params": {
+        "version": {
+          "default": ""
+        },
+        "target": {
+          "default": ""
+        }
+      }
     },
     "deploy": {
       "command": "just deploy ${env}",
       "implemented": true,
-      "params": {"env": {"default": "production"}}
+      "params": {
+        "env": {
+          "default": "production"
+        }
+      }
     },
     "sync-deps": {
       "command": "just sync-deps ${mode}",
       "implemented": true,
-      "params": {"mode": {"default": ""}}
+      "params": {
+        "mode": {
+          "default": ""
+        }
+      }
     },
     "vendor-check": {
       "command": "just vendor-check ${full}",
       "implemented": true,
-      "params": {"full": {"default": ""}}
+      "params": {
+        "full": {
+          "default": ""
+        }
+      }
     },
     "smoke": {
       "command": "just smoke ${port}",
       "implemented": true,
-      "params": {"port": {"default": "3000"}}
+      "params": {
+        "port": {
+          "default": "3000"
+        }
+      }
+    },
+    "gui-test": {
+      "command": "just gui-test ${baseline}",
+      "implemented": false,
+      "params": {
+        "baseline": {
+          "default": "main"
+        }
+      }
     },
     "release": {
       "command": "just release",
@@ -58,7 +136,7 @@
     }
   },
   "extras": {
-    "_comment": "Project-specific recipes documented here for agent discoverability, but NOT part of recipe.py's INTERFACE — not universal across stacks, so never dispatched by recipe.py (which only resolves 'targets'). Invoke via `just <recipe>` directly. See docs/grimoire/design/typed-api-boundary-design.md.",
+    "_comment": "Project-specific recipes documented here for agent discoverability, but NOT part of recipe.py's INTERFACE \u2014 not universal across stacks, so never dispatched by recipe.py (which only resolves 'targets'). Invoke via `just <recipe>` directly. See docs/grimoire/design/typed-api-boundary-design.md.",
     "api-types": {
       "command": "just api-types",
       "implemented": true,
@@ -70,11 +148,23 @@
       "params": {}
     },
     "smoke-visual": {
-      "desc": "Scripted-screenshot pixel-diff smoke gate (#289, RSS-9): captures configured routes via a headless browser, diffs against tests/smoke-baselines/, hard-fails on a missing baseline. NOT a build-recipe INTERFACE target (no INTERFACE_VERSION bump) — recipe.py does not dispatch it; call `just smoke-visual` directly.",
+      "desc": "Scripted-screenshot pixel-diff smoke gate (#289, RSS-9): captures configured routes via a headless browser, diffs against tests/smoke-baselines/, hard-fails on a missing baseline. NOT a build-recipe INTERFACE target (no INTERFACE_VERSION bump) \u2014 recipe.py does not dispatch it; call `just smoke-visual` directly.",
       "command": "just smoke-visual port=${port} update_baselines=${update_baselines}",
       "implemented": true,
-      "params": {"port": {"default": "3000"}, "update_baselines": {"default": "false"}}
-
+      "params": {
+        "port": {
+          "default": "3000"
+        },
+        "update_baselines": {
+          "default": "false"
+        }
+      }
+    },
+    "coverage": {
+      "desc": "Coverage measurement for the post-commit test gate (#361): .claude/hooks/post-commit reads this entry to run the project's coverage command and parse its output. NOT a build-recipe INTERFACE target — never dispatched by recipe.py. Unimplemented by default (stack-specific — set the real command + matching parser for this project's language: pytest-term-missing / vitest-text / cargo-llvm-cov / go-cover). See docs/coding-standards.md §Post-commit test + coverage gate.",
+      "command": null,
+      "implemented": false,
+      "parser": null
     }
   }
 }

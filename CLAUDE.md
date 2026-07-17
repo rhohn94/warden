@@ -1,4 +1,3 @@
-<!-- GRIMOIRE_ONBOARDING_SENTINEL -->
 # CLAUDE.md
 
 Concrete, actionable guidance for working in this repo.

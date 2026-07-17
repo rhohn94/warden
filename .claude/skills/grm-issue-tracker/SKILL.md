@@ -1,6 +1,6 @@
 ---
 name: grm-issue-tracker
-description: Issue-tracker abstraction — nine operations (list/get/create/update/close/comment/label/search/ensure-label) over a normalized Issue object, with session-snapshot caching, multi-tracker routing and aggregation, and pluggable backends (roadmap default + github). Consumers call the helper script directly; the abstraction handles routing and caching transparently. Use when filing, listing, searching, or labelling issues.
+description: Issue-tracker abstraction — nine operations (list/get/create/update/close/comment/label/search/ensure-label) over a normalized Issue object, with session-snapshot caching, multi-tracker routing and aggregation, and pluggable backends (roadmap default + github). Use when filing, listing, searching, or labelling issues.
 ---
 
 # Issue Tracker

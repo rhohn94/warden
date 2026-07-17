@@ -1,0 +1,3 @@
+{"ts":"2026-07-14T03:28:12Z","instance":"550e8400-e29b-41d4-a716-446655440000","app":"familiar","version":"1.20.0","event":"boot","props":{}}
+{"ts":"2026-07-14T03:28:42Z","instance":"550e8400-e29b-41d4-a716-446655440000","app":"familiar","version":"1.20.0","event":"request-summary","props":{"route":"/api/widgets","method":"GET","status":200,"duration_ms":42}}
+{"ts":"2026-07-14T03:29:05Z","instance":"550e8400-e29b-41d4-a716-446655440000","app":"familiar","version":"1.20.0","event":"error","props":{"kind":"db_timeout","route":"/api/widgets"}}

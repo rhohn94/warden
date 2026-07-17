@@ -1,6 +1,6 @@
 ---
 name: grm-dependency-audit
-description: Run the language-appropriate dependency vulnerability / advisory scanner (pip-audit, npm audit, cargo audit, govulncheck) behind one abstraction and emit a normalized findings report (package, advisory id, severity, fixed-in). Read-only; never edits manifests or lockfiles. With --file-issues, routes each finding through feedback-to-issue; an optional pre-release gate fails at or above a configured severity. Use when auditing dependencies.
+description: Run the language-appropriate dependency vulnerability / advisory scanner (pip-audit, npm audit, cargo audit, govulncheck) behind one abstraction and emit a normalized findings report. Read-only; never edits manifests or lockfiles. With --file-issues, routes each finding through feedback-to-issue; an optional pre-release gate fails at or above a configured severity. Use when auditing dependencies.
 ---
 
 # dependency-audit

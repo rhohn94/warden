@@ -5,14 +5,30 @@ Checks: flavor-parity, design-layout, links, docs-map, release-consistency,
         mirrored-script-parity, ported-pair-presence, skill-budget,
         relative-links, hierarchy, lean-index, monolith-cap, description-cap,
         anti-patterns, portal-stale, design-index-stale,
-        product-readme-present, version-claim-freshness.
+        product-readme-present, version-claim-freshness, classifier-compat,
+        check-for-checks, design-doc-purity.
 Read-only except --write-map / --write-portal / --write-design-index.
 Report-only unless --strict (non-zero on findings).
 
 Usage:
   doc_assurance.py [check ...] [--strict] [--write-map] [--write-portal]
                    [--write-design-index] [--root PATH]
+                   [--baseline [PATH]]
   (no checks named ⇒ run all)
+
+baseline ratchet (#426, v3.93)
+-------------------------------
+`--baseline [PATH]` (default `.claude/cache/doc-findings-baseline.json`)
+turns the flat "N finding(s)" report into a trend against a stored baseline:
+first run with no baseline file SEEDS it from the current findings (never
+fails); subsequent runs diff current findings against the baseline by
+identity (`<check>: <finding text>`) — only findings NOT in the baseline are
+"new" and (under `--strict`) fail the run. A finding already in the baseline
+is still printed in the per-check output above, but does not newly fail
+anything it wasn't already failing. When the current set is a subset of the
+baseline (some findings fixed, none added), the baseline file is rewritten to
+the smaller set — a monotonic ratchet: debt can only shrink. See
+`docs/design/doc-assurance-design.md` §Baseline ratchet.
 
 design-doc index generation (docs/design/README.md, docs/grimoire/design/README.md)
 ------------------------------------------------------------------------------------
@@ -127,6 +143,32 @@ behind the current framework-version in grimoire-config.json. Remediation:
 remove the hardcoded version claim from prose and link
 docs/version-history.md instead (the one place versions never rot). No
 manifest version readable -> no-op. Deterministic; fails only the --strict gate.
+
+design-doc-purity check (#358, v3.98)
+--------------------------------------
+Over docs/design/** and docs/grimoire/design/** (recursive, README indexes
+excluded): flags a Status: line in a doc's opening ~10 lines, any checked
+`- [x]` box, release-narration phrasing ("shipped in vX.Y", "Implemented
+(#123", "— DONE", "Delivered", code-stripped), a work-item-map / "Phase N
+closed" heading, and *-plan.md / *-candidates.md filenames. Design docs are
+timeless working agreements; completion state belongs in the release-plan
+§5 ledger (grm-ledger-tick). DESIGN_PURITY_ALLOW exempts a specific path
+from every pattern for the rare doc that legitimately quotes one of these
+as documented prose about the convention. Deterministic; blocking under
+--strict like the other checks.
+
+check-for-checks (doctrine meta-check, #440, v3.97)
+-----------------------------------------------------
+Release-gate meta-check for the standards doctrine in
+docs/architecture-guidelines.md §Standards doctrine: every mandated standard
+MUST ship with a deterministic check, a named gate, and a severity ramp.
+Scans docs/coding-standards.md and the required-feature catalog
+(.claude/skills/grm-required-feature-catalog/required-feature-catalog.md) for an
+upper-case "MUST"-clause with no paired check reference (an `<!-- audit: -->`
+hint, a `grm-<skill>` mention, a `recipe.py` reference, a "Testable
+criterion" table, or the word "deterministic") anywhere in its own heading
+section. WARN-tier advisory, not a hard gate — see check_for_checks()'s
+docstring for the full heuristic and its documented limitations.
 """
 from __future__ import annotations
 
@@ -134,12 +176,13 @@ import os, re, sys, json, glob, subprocess
 
 CHECKS = [
     "flavor-parity", "design-layout", "links", "docs-map",
-    "release-consistency", "manifest-detect-hygiene", "shipped-pointers",
-    "mirrored-script-parity", "ported-pair-presence",
+    "release-consistency", "tag-format", "manifest-detect-hygiene",
+    "shipped-pointers", "mirrored-script-parity", "ported-pair-presence",
     "skill-budget", "relative-links", "hierarchy", "lean-index",
     "monolith-cap", "description-cap", "anti-patterns", "portal-stale",
     "design-index-stale", "product-readme-present", "version-claim-freshness",
-    "orchestrate-band-present", "server-selftest-parity",
+    "orchestrate-band-present", "server-selftest-parity", "classifier-compat",
+    "skill-placeholder-tokens", "check-for-checks", "design-doc-purity",
 ]
 
 # Mirror of build_distributables.py EXCLUDED_PATH_PREFIXES + sync-from-upstream.sh
@@ -284,17 +327,10 @@ DOCS_PARITY_ALLOW = frozenset({
 
     # ── codex flavor ────────────────────────────────────────────────────
     # codex was ported from claude-code; its docs/ tree mirrors copilot's
-    # file-set EXACTLY plus one added design doc (docs/design/codex-flavor-
-    # design.md). So every gap copilot has versus root / claude-code, codex
-    # shares (same shipped subset), and codex additionally carries the design
-    # doc the other three flavors lack. These tuples encode exactly those
-    # intentional gaps; tuple direction matches _is_docs_gap_allowed(fa, fb)
-    # (fa = the flavor that HAS the file).
+    # file-set exactly. These tuples encode the intentional gaps; tuple
+    # direction matches _is_docs_gap_allowed(fa, fb) (fa = the flavor that
+    # HAS the file).
     #
-    # codex carries the extra flavor design doc the others don't:
-    ("codex", "root",        "docs/design/codex-flavor-design.md"),
-    ("codex", "claude-code", "docs/design/codex-flavor-design.md"),
-    ("codex", "copilot",     "docs/design/codex-flavor-design.md"),
     # root-only files codex lacks (mirrors the root↔copilot gaps above):
     ("root", "codex", "docs/design.md"),
     ("root", "codex", "docs/design/ux/components.md"),
@@ -309,20 +345,23 @@ DOCS_PARITY_ALLOW = frozenset({
     ("claude-code", "codex", "docs/design/ux/components.md"),
     ("claude-code", "codex", "docs/design/ux/theme.md"),
 
-    # ── Intentional post-fix gaps ────────────────────────────────────────
-    # copilot-grm-namespacing-design.md was misplaced under
-    # claude-code/docs/design/ (it describes copilot-flavor internals); the
-    # correct copy lives at copilot/docs/design/ (and root, which authors it).
-    # claude-code intentionally has no copy after the fix.
+    # ── Intentional post-fix gaps (R7/#390 — framework specs pulled out of
+    # every shipped flavor's docs/design/, per the v3.39 documentation-
+    # separation contract) ───────────────────────────────────────────────
+    # codex-flavor-design.md, copilot-grm-namespacing-design.md, and
+    # justfile-standard-design.md are this project's own flavor/build design
+    # docs (root docs/design/ — "your project's own design docs", not
+    # framework-internal docs/grimoire/design/). None of them ship into any
+    # of the three consumer flavor trees any more; root is the sole copy.
+    ("root", "claude-code", "docs/design/codex-flavor-design.md"),
+    ("root", "copilot",     "docs/design/codex-flavor-design.md"),
+    ("root", "codex",       "docs/design/codex-flavor-design.md"),
     ("root", "claude-code", "docs/design/copilot-grm-namespacing-design.md"),
-    ("copilot", "claude-code", "docs/design/copilot-grm-namespacing-design.md"),
-    ("codex", "claude-code", "docs/design/copilot-grm-namespacing-design.md"),
-    # justfile-standard-design.md was orphaned in codex/docs/design/
-    # (zero references anywhere in codex/) and removed. root/claude-code/
-    # copilot all still carry it for their own justfile-standard skills.
-    ("root", "codex", "docs/design/justfile-standard-design.md"),
-    ("claude-code", "codex", "docs/design/justfile-standard-design.md"),
-    ("copilot", "codex", "docs/design/justfile-standard-design.md"),
+    ("root", "copilot",     "docs/design/copilot-grm-namespacing-design.md"),
+    ("root", "codex",       "docs/design/copilot-grm-namespacing-design.md"),
+    ("root", "claude-code", "docs/design/justfile-standard-design.md"),
+    ("root", "copilot",     "docs/design/justfile-standard-design.md"),
+    ("root", "codex",       "docs/design/justfile-standard-design.md"),
 }) | _V380_FLATTEN_ALLOW
 
 # Release-planning archive pattern: root-only, auto-matched by regex.
@@ -372,6 +411,7 @@ MONOLITH_CAP_EXEMPT = frozenset({
     "docs/grimoire/design/hard-reset-design.md",
     "docs/grimoire/design/issue-tracker-design.md",
     "docs/grimoire/design/model-effort-profiles-design.md",
+    "docs/grimoire/design/noir-iterative-loop-design.md",
     "docs/grimoire/design/onboarding-design.md",
     "docs/grimoire/design/token-efficiency-design.md",
     "docs/grimoire/design/ux-design-language-design.md",
@@ -517,11 +557,11 @@ def check_flavor_parity(root: str, _allow_set: set | None = None) -> list:
         ("root",        rt_docs, "copilot",     cp_docs),
     ]
 
-    # ── codex flavor: ported from claude-code, docs mirror copilot's
-    # set plus docs/design/codex-flavor-design.md. Guarded by codex/ presence
-    # (a consumer or a monorepo predating the codex flavor has no codex/ dir —
-    # skip then, like the copilot_root guard above). When present, compare
-    # codex against every other flavor so four-flavor docs parity is enforced.
+    # ── codex flavor: ported from claude-code, docs mirror copilot's set
+    # exactly. Guarded by codex/ presence (a consumer or a monorepo predating
+    # the codex flavor has no codex/ dir — skip then, like the copilot_root
+    # guard above). When present, compare codex against every other flavor so
+    # four-flavor docs parity is enforced.
     codex_root = os.path.join(root, "codex")
     if os.path.isdir(codex_root):
         cx_docs = _docs_filenames(root, codex_root)
@@ -583,6 +623,198 @@ def check_design_layout(root: str) -> list:
             )
         if "## open questions" in low and re.search(r"todo|tbd|\?\?\?", low):
             findings.append(f"{rel(root,p)}: unresolved open-questions marker")
+    return findings
+
+
+# ── design-doc-purity check (#358, v3.98) ───────────────────────────────
+# The 2026-07-10 audit found work-tracking pollution in ~40 of 104 design
+# docs (#352-#357): Status stamps, checked Acceptance boxes, "shipped in
+# vX.Y" release narration, and file-level work-item maps written into what
+# are supposed to be timeless working agreements. Root cause: nothing
+# enforced the separation. This check makes it deterministic and blocking
+# under --strict, so a regression is caught at branch-done/closeout instead
+# of the next full-repo audit. Completion state belongs in the release-plan
+# §5 ledger (grm-ledger-tick), never in the design doc itself.
+#
+# Scans both design-doc tiers recursively (docs/design/** and
+# docs/grimoire/design/**, including subdirectories like docs/design/ux/),
+# excluding README.md index pages — the same exclusion _design_index_files
+# above already applies to the (non-recursive) tier listing.
+DESIGN_DOC_TIERS = ("docs/design", "docs/grimoire/design")
+
+# Whole-file exemptions: a design doc that legitimately *discusses* one of
+# these patterns as prose-about-the-convention (e.g. this very check's own
+# design doc, quoting "Status:" as an example of what NOT to write) rather
+# than an actual instance of it. Add an entry only after confirming the
+# match is a documented example, not real pollution. Relative-to-root paths.
+DESIGN_PURITY_ALLOW = frozenset({
+    # Follow-up explains that an unrelated *prerequisite* mechanism (signing
+    # infra) is already operational, referencing when IT landed — not a
+    # status claim about this design's own subject. Verified 2026-07-13.
+    "docs/grimoire/design/dependency-channel-design.md",
+    # Non-goals cites when an unrelated concern (Rust tooling) shipped, to
+    # justify excluding it from this design's scope — not self-narration.
+    # Verified 2026-07-13.
+    "docs/grimoire/design/html-css-quality-enforcement-design.md",
+    # Motivation recounts the history of a DIFFERENT, already-closed issue
+    # (#87, closed v3.27) as prior art justifying this new design — not a
+    # completion claim about this doc's own subject. Verified 2026-07-13.
+    "docs/grimoire/design/meta-updater-package-design.md",
+})
+
+# 1. A `Status:` line in the opening ~10 lines (optionally blockquoted /
+#    bolded — "> **Status**: shipped"). Case-insensitive: real docs use
+#    both "Status:" and "status:".
+_PURITY_STATUS_RE = re.compile(r"^>?\s*\**Status\**\s*:", re.I | re.M)
+# 2. Any checked box, anywhere in the doc — Acceptance criteria in a design
+#    doc are a template to fill in on adoption, never a per-release ledger.
+_PURITY_CHECKED_BOX_RE = re.compile(r"^\s*-\s\[[xX]\]", re.M)
+# 3. Release-narration phrasing. Code-fenced/inline-code spans are stripped
+#    first (_strip_code) so a doc that quotes these phrases as a code
+#    example (rather than asserting them in prose) is not flagged.
+#    "Delivered" gets its own, narrower pattern below: a bare `\bdelivered\b`
+#    also matches ordinary prose ("browser-delivered", "delivered by",
+#    "delivered mechanically", "(always delivered)") that has nothing to do
+#    with release status — real usages found on the live tree were exactly
+#    this false-positive class. The real pollution shape is a standalone
+#    status marker as the last word on a line (often bolded, e.g. the
+#    "~~superseded text~~ **Delivered**" Follow-up convention #356 removed),
+#    which _PURITY_DELIVERED_MARKER_RE targets by anchoring to end-of-line —
+#    "delivered" used mid-sentence or before trailing punctuation never
+#    matches.
+_PURITY_NARRATION_RE = re.compile(
+    r"shipped in v\d|landed in v\d|closed in v\d|implemented\s*\(#"
+    r"|—\s*done\b|\(addressed in v\d",
+    re.I,
+)
+_PURITY_DELIVERED_MARKER_RE = re.compile(
+    r"\*{0,2}Delivered\*{0,2}\s*$",
+    re.M | re.I,
+)
+# 4. A work-item-map heading or a "Phase N closed" heading, at any level.
+_PURITY_WORKMAP_HEADING_RE = re.compile(
+    r"^#{1,6}\s.*(file-level changes|work-item map)", re.M | re.I
+)
+_PURITY_PHASE_CLOSED_HEADING_RE = re.compile(
+    r"^#{1,6}\s.*phase\s+\d+\s+closed", re.M | re.I
+)
+# 5. Filenames that are themselves work-tracking artifacts, not a feature
+#    description — these belong in release-planning, not a design tier.
+_PURITY_FILENAME_RE = re.compile(r"-(plan|candidates)\.md$", re.I)
+
+
+def _design_doc_purity_paths(root):
+    """All *.md under both design tiers, recursive, excluding README.md
+    index pages (mirrors _design_index_files' README exclusion above,
+    extended to subdirectories such as docs/design/ux/)."""
+    paths = []
+    for tier in DESIGN_DOC_TIERS:
+        tier_dir = os.path.join(root, tier)
+        if not os.path.isdir(tier_dir):
+            continue
+        for p in glob.glob(f"{tier_dir}/**/*.md", recursive=True):
+            if os.path.basename(p) == "README.md":
+                continue
+            paths.append(p)
+    return sorted(paths)
+
+
+def design_doc_purity_findings(relpath: str, raw: str) -> list:
+    """Pure, single-file purity scan (#358) — the one place all five regex
+    patterns are evaluated against a doc's content. `relpath` is used only
+    for the filename pattern (#5) and to prefix each finding string; `raw`
+    is the doc's full text (not yet allow-listed or path-filtered — callers
+    apply DESIGN_PURITY_ALLOW / tier / README-exclusion themselves).
+
+    Extracted (v3.98, #414) so the mid-task `design-doc-guard.sh` PreToolUse
+    hook can evaluate a proposed Edit/Write's resulting content with the
+    IDENTICAL patterns this closeout check uses, instead of a second,
+    drift-prone copy of the five regexes — both call sites import this
+    function; neither redefines a pattern.
+
+    Five independent patterns, each its own finding:
+
+      1. a `Status:` line in the opening ~10 lines
+      2. any checked `- [x]` box, anywhere in the doc
+      3. release-narration phrasing ("shipped in vX.Y", "Implemented (#123",
+         "— DONE", "Delivered", "(Addressed in vX.Y", ...), code-stripped
+      4. a work-item-map heading ("## File-level changes", "work-item map")
+         or a "Phase N closed" heading
+      5. a filename matching *-plan.md / *-candidates.md under a design tier
+    """
+    findings = []
+    if _PURITY_FILENAME_RE.search(os.path.basename(relpath)):
+        findings.append(
+            f"{relpath}: filename matches a work-tracking pattern "
+            f"(*-plan.md / *-candidates.md) — design docs describe a "
+            f"feature, not a plan; rename or relocate to release-planning"
+        )
+    head = "\n".join(raw.splitlines()[:10])
+    if _PURITY_STATUS_RE.search(head):
+        findings.append(
+            f"{relpath}: 'Status:' line in the opening ~10 lines — "
+            f"completion state belongs in the release-plan §5 ledger, "
+            f"not the design doc"
+        )
+    if _PURITY_CHECKED_BOX_RE.search(raw):
+        findings.append(
+            f"{relpath}: checked '- [x]' box — never tick Acceptance "
+            f"boxes in a design doc; tick the ledger instead "
+            f"(grm-ledger-tick)"
+        )
+    stripped = _strip_code(raw)
+    if _PURITY_NARRATION_RE.search(stripped) or _PURITY_DELIVERED_MARKER_RE.search(stripped):
+        findings.append(
+            f"{relpath}: release-narration phrasing (e.g. 'shipped in "
+            f"vX.Y', 'Implemented (#...', '— DONE', 'Delivered') — "
+            f"design docs are timeless, not a changelog"
+        )
+    if (_PURITY_WORKMAP_HEADING_RE.search(stripped)
+            or _PURITY_PHASE_CLOSED_HEADING_RE.search(stripped)):
+        findings.append(
+            f"{relpath}: work-item-map / 'Phase N closed' heading — "
+            f"file-level change ledgers belong in release-planning, not "
+            f"the design doc"
+        )
+    return findings
+
+
+def check_design_doc_purity(root: str, _allow_set: set | None = None) -> list:
+    """Flag work-tracking / release-narration pollution in a design doc
+    (#358). Design docs are timeless working agreements; completion state
+    belongs in the release-plan §5 ledger (grm-ledger-tick), never in the
+    doc itself. Walks both design tiers and delegates the actual pattern
+    evaluation to `design_doc_purity_findings` (single source of truth for
+    the five patterns — see that function's docstring for the list).
+
+    DESIGN_PURITY_ALLOW (or _allow_set, for tests — mirrors
+    check_flavor_parity / check_mirrored_script_parity's override param)
+    exempts a specific relative path from every pattern (whole-file
+    allowlist) for the rare doc that legitimately quotes one of these
+    patterns as documented prose about the convention itself, rather than
+    an instance of the pollution it describes.
+    """
+    allow = DESIGN_PURITY_ALLOW if _allow_set is None else _allow_set
+    findings = []
+    for p in _design_doc_purity_paths(root):
+        relpath = rel(root, p)
+        if relpath in allow:
+            continue
+        try:
+            raw = open(p, encoding="utf-8").read()
+        except (OSError, UnicodeDecodeError):
+            raw = None
+        if raw is None:
+            # Unreadable content — the filename pattern is still checkable.
+            if _PURITY_FILENAME_RE.search(os.path.basename(p)):
+                findings.append(
+                    f"{relpath}: filename matches a work-tracking pattern "
+                    f"(*-plan.md / *-candidates.md) — design docs describe "
+                    f"a feature, not a plan; rename or relocate to "
+                    f"release-planning"
+                )
+            continue
+        findings.extend(design_doc_purity_findings(relpath, raw))
     return findings
 
 
@@ -1059,7 +1291,12 @@ def check_design_index_stale(root: str, write: bool = False) -> list:
 
 
 # ── Check 5: release consistency ────────────────────────────────────────
-VER_RE = re.compile(r"^##\s+v(\d+\.\d+)", re.M)
+# Captures an optional third (patch) component: a two-part-only pattern here
+# would silently truncate a vX.Y.Z heading to vX.Y (matching the shared
+# \d+\.\d+ prefix, no error) rather than either parsing or rejecting it —
+# corrupting comparisons/dedup if this repo or the fleet ever tag vX.Y.Z
+# (audit finding, v3.91; see check_tag_format below).
+VER_RE = re.compile(r"^##\s+v(\d+\.\d+(?:\.\d+)?)", re.M)
 def check_release_consistency(root: str) -> list:
     findings = []
     # The release-consistency surface (version-history, roadmap, feature-manifest,
@@ -1079,7 +1316,7 @@ def check_release_consistency(root: str) -> list:
     hist = set(VER_RE.findall(vh))
     # roadmap shipped versions: a vX.Y section whose body says Shipped/released
     shipped = set()
-    for m in re.finditer(r"^##\s+v(\d+\.\d+)(.*?)(?=^##\s+v|\Z)", rm, re.S | re.M):
+    for m in re.finditer(r"^##\s+v(\d+\.\d+(?:\.\d+)?)(.*?)(?=^##\s+v|\Z)", rm, re.S | re.M):
         if re.search(r"shipped|released", m.group(2), re.I):
             shipped.add(m.group(1))
     for v in sorted(hist - shipped, key=lambda s: tuple(map(int, s.split(".")))):
@@ -1103,6 +1340,37 @@ def check_release_consistency(root: str) -> list:
         newest = max(hist, key=lambda s: tuple(map(int, s.split("."))))
         if fw and tuple(map(int, fw.split("."))) < tuple(map(int, newest.split("."))):
             findings.append(f"framework-version {fw} < newest shipped v{newest}")
+    return findings
+
+
+# ── Check 5a: tag format (warn-only, like skill-budget) ─────────────────
+_TWO_PART_TAG_RE = re.compile(r"^v?\d+\.\d+$")
+
+
+def check_tag_format(root: str) -> list:
+    """Warn (never block outside --strict) when this repo's newest git tag is
+    a plain two-part vX.Y instead of the fleet-wide recommended three-part
+    vX.Y.Z (audit finding, v3.91; docs/grimoire/version-design.md). Existing
+    two-part tag history stays fully conformant and is never force-migrated —
+    this is a forward-looking nudge, not a gate. Skipped when git or a tag
+    list is unavailable (not a repo, no tags yet)."""
+    findings = []
+    try:
+        proc = subprocess.run(["git", "tag", "--sort=-v:refname"], cwd=root,
+                              capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.TimeoutExpired):
+        return findings
+    if proc.returncode != 0:
+        return findings
+    tags = [t for t in proc.stdout.splitlines() if t.strip()]
+    if not tags:
+        return findings
+    newest = tags[0]
+    if _TWO_PART_TAG_RE.match(newest):
+        findings.append(
+            f"newest tag {newest!r} is two-part vX.Y; the fleet-wide "
+            "recommended format is three-part vX.Y.Z — no history migration "
+            "required, this is a forward nudge (docs/grimoire/version-design.md)")
     return findings
 
 
@@ -1131,6 +1399,157 @@ def check_manifest_detect_hygiene(root: str) -> list:
                     f"feature-manifest {fid}: detect references sync-excluded "
                     f"path '{pref}' — detect on a distributed artifact instead "
                     f"(it can never pass on a consumer)")
+    return findings
+
+
+# ── Check 5b2: unresolved skill-placeholder tokens (#465) ────────────────
+# A `{xxx-command}`-shaped token left in a SKILL.md's *operative* text (a
+# fenced code block, or a `- [ ]` checklist line) is a live bug: an agent
+# following the skill literally will try to execute the literal token as a
+# shell command. Same defect family as #442's substitute() fail-loud guard —
+# this is the SKILL-prose equivalent, deterministic instead of relying on an
+# agent noticing at run time.
+#
+# Only *operative* positions are scanned (fenced code blocks and checklist
+# items) — a skill that merely *discusses* the token as prose (e.g.
+# grm-hard-reset, grm-sync-from-source documenting the genericization
+# mechanism itself) is not a bug and must not be flagged. Only `SKILL.md`
+# files are in scope ("installed copy of a skill file") — CLAUDE.md's own
+# `{test-command}` etc. table cells are a separate, legitimate per-project
+# bootstrap-fill contract (self-documented in CLAUDE.md §Project commands)
+# and are out of scope here.
+_SKILL_PLACEHOLDER_TOKEN_RE = re.compile(r"\{[a-z][a-z-]*-command\}")
+_CHECKLIST_LINE_RE = re.compile(r"^\s*-\s*\[[ xX]\]")
+
+
+def check_skill_placeholder_tokens(root: str) -> list:
+    """Fail when an installed SKILL.md (`.claude/skills/**` or
+    `.claude/paradigms/**`) still carries a literal, un-substituted
+    `{...-command}`-style placeholder token inside a fenced code block or a
+    `- [ ]` checklist line — the position an agent would read as something to
+    literally run or verify. Root-cause fix: `grm-release-phase` /
+    `grm-release-phase-merge` (and their paradigm variants) now resolve
+    test/build commands via `python3 .claude/skills/grm-build-recipe/recipe.py
+    <target>` instead of carrying a raw placeholder; this check guards against
+    the pattern reappearing."""
+    findings = []
+    patterns = [
+        os.path.join(root, ".claude", "skills", "**", "SKILL.md"),
+        os.path.join(root, ".claude", "paradigms", "**", "*SKILL.md"),
+    ]
+    paths = set()
+    for pat in patterns:
+        paths.update(glob.glob(pat, recursive=True))
+    for path in sorted(paths):
+        rel = os.path.relpath(path, root)
+        try:
+            lines = open(path, encoding="utf-8").read().splitlines()
+        except OSError:
+            continue
+        in_code_block = False
+        for i, ln in enumerate(lines, start=1):
+            stripped = ln.strip()
+            if stripped.startswith("```"):
+                in_code_block = not in_code_block
+                continue
+            m = _SKILL_PLACEHOLDER_TOKEN_RE.search(ln)
+            if not m:
+                continue
+            if in_code_block or _CHECKLIST_LINE_RE.match(ln):
+                findings.append(
+                    f"{rel}:{i}: unresolved placeholder {m.group(0)!r} in "
+                    f"operative position — resolve via "
+                    f"`python3 .claude/skills/grm-build-recipe/recipe.py "
+                    f"<target>` (or equivalent) instead of a raw token")
+    return findings
+
+
+# ── Check 5d: check-for-checks — doctrine meta-check (#440, v3.97) ───────
+# Doctrine (docs/architecture-guidelines.md §Standards doctrine): every
+# mandated standard MUST ship with (a) a deterministic check, (b) a named
+# gate that runs it, (c) a severity ramp (WARN on introduction -> block once
+# cleanup lands). This is the release-gate meta-check for that doctrine: a
+# MUST-clause-shaped rule in docs/coding-standards.md, or an entry in the
+# required-feature catalog, with no paired reference to a deterministic
+# check anywhere in its own section is itself flagged, WARN-tier.
+#
+# Detection heuristic (deliberately simple — WARN-tier advisory, not a hard
+# gate; over-engineering the parser is out of scope):
+#   - A "MUST-clause" is a standalone, upper-case whole-word "MUST" — the
+#     RFC2119-style convention this repo's own catalog already uses for a
+#     hard mandate (see required-feature-catalog.md's "**Spec.** ... MUST
+#     ..." paragraphs). Documented limitation: lower-case "must" is NOT
+#     detected — informal "must" prose is common in explanatory text and
+#     would over-fire; upper-case MUST is this repo's established signal
+#     that a clause is a mandate rather than description.
+#   - The unit scanned is one heading-delimited block: for
+#     coding-standards.md, the text from a "##"/"###" heading to the next
+#     heading of that level or higher; for the catalog, the text of one
+#     "### Entry N — ..." section (which also covers its "Sub-requirements"
+#     subsection and Testable-criterion table). Text before the first
+#     matched heading is out of scope — a MUST inside catalog front-matter
+#     prose (e.g. explaining the mechanism itself, not registering a
+#     mandate) is not a per-entry standard and is not scanned.
+#   - A block "has a check" when it contains any of: an `<!-- audit: -->`
+#     hint, a backtick-quoted `grm-<skill>` reference, a `recipe.py`
+#     reference, a "Testable criterion" table column (the catalog's
+#     per-sub-requirement check column), or the literal word
+#     "deterministic". False negatives are expected (a check described only
+#     in prose with none of these tokens); false positives are cheap to
+#     dismiss because the finding is WARN-tier and self-explains the gap.
+_MUST_CLAUSE_RE = re.compile(r"\bMUST\b")
+_CHECK_FOR_CHECKS_REFERENCE_RE = re.compile(
+    r"<!--\s*audit:|`grm-[a-z0-9-]+|recipe\.py|Testable criterion|deterministic"
+)
+
+
+def _split_headed_blocks(text, heading_re):
+    """Split text into (heading_text, block_text) pairs at each match of
+    heading_re. Text before the first heading match is discarded — callers
+    only care about content paired with a heading."""
+    matches = list(heading_re.finditer(text))
+    blocks = []
+    for i, m in enumerate(matches):
+        start = m.start()
+        end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
+        blocks.append((m.group().strip(), text[start:end]))
+    return blocks
+
+
+def check_for_checks(root: str) -> list:
+    """Release-gate meta-check for the standards doctrine (#440,
+    docs/architecture-guidelines.md §Standards doctrine): a mandated
+    ("MUST") standard with no paired deterministic-check reference in its
+    own section is flagged, WARN-tier. Scans docs/coding-standards.md (by
+    "##"/"###" section) and the required-feature catalog (by "### Entry"
+    section). See the _MUST_CLAUSE_RE / _CHECK_FOR_CHECKS_REFERENCE_RE
+    comment above for the detection heuristic and its documented
+    limitations (upper-case MUST only; text outside a heading is out of
+    scope)."""
+    findings = []
+    targets = [
+        (os.path.join(root, "docs", "coding-standards.md"),
+         re.compile(r"^#{2,3}\s+.+$", re.MULTILINE)),
+        (os.path.join(root, ".claude", "skills", "grm-required-feature-catalog",
+                       "required-feature-catalog.md"),
+         re.compile(r"^###\s+Entry\s+.+$", re.MULTILINE)),
+    ]
+    for path, heading_re in targets:
+        if not os.path.exists(path):
+            continue
+        rel_path = os.path.relpath(path, root)
+        text = open(path, encoding="utf-8").read()
+        for heading, block in _split_headed_blocks(text, heading_re):
+            if not _MUST_CLAUSE_RE.search(block):
+                continue
+            if _CHECK_FOR_CHECKS_REFERENCE_RE.search(block):
+                continue
+            findings.append(
+                f"{rel_path} {heading!r}: MUST-clause rule with no paired "
+                f"deterministic-check reference (WARN — pair it with a "
+                f"check, gate, and severity ramp per docs/architecture-"
+                f"guidelines.md §Standards doctrine, or label it "
+                f"aspirational)")
     return findings
 
 
@@ -1221,6 +1640,18 @@ MIRRORED_SCRIPT_ALLOW = frozenset({
     # parse_usage.py sibling was left without the new __all__ marking rather
     # than touching an unrelated file.
     ("copilot", "parse_usage.py"),
+
+    # ── #436 (v3.99 R8 Pass 1, app-telemetry catalog Entry 9): claude-code/
+    # is the canonical flavor per CLAUDE.md and gained the Entry 9 dispatch
+    # wiring + the 8->9 entry-count self-test updates; root has NOT been
+    # synced onto this item ("adopt into root when wanted" per CLAUDE.md
+    # §Source of truth — a deliberate, deferred choice, not an oversight).
+    # root's required-feature-catalog.md still has 8 entries and root lacks
+    # app_telemetry_conformance.py / app_telemetry_schema.py entirely, so
+    # copying these two files over would break root's own self-test rather
+    # than fix a real gap.
+    ("claude-code", "catalog_conformance.py"),
+    ("claude-code", "catalog_filing.py"),
 })
 
 
@@ -1483,12 +1914,31 @@ def check_server_selftest_parity(root: str) -> list:
 
 # ── Check 6: skill / always-loaded size budget ───────────────────────────
 def check_skill_budget(root: str) -> list:
+    """Flag any shipped flavor's SKILL.md over SKILL_BUDGET, plus root's CLAUDE.md.
+
+    Scans every entry in _SHIPPED_FLAVORS (root + claude-code + codex +
+    copilot), not just root — matching the pattern used by
+    check_shipped_pointers and friends. #399: before this fix the check only
+    ever globbed root's own `.claude/skills`, so a skill that bloated past
+    budget in the canonical `claude-code/` copy (the tree that actually ships)
+    went undetected by this pre-merge gate — only `footprint.py --root
+    claude-code` surfaced it. root's own SKILL.md count is unaffected
+    (flavor="" resolves to root, so this is additive, not a behavior change
+    for consumer-mode single-flavor installs where the other flavor dirs
+    don't exist).
+
+    CLAUDE_BUDGET stays root-only intentionally: each flavor's CLAUDE.md is a
+    separate, independently-owned document (not a copy) and its size is not
+    part of this issue's scope.
+    """
     findings = []
-    for p in sorted(glob.glob(f"{root}/.claude/skills/*/SKILL.md")):
-        n = os.path.getsize(p)
-        if n > SKILL_BUDGET:
-            findings.append(f"{rel(root,p)}: {n} bytes > {SKILL_BUDGET} budget "
-                            f"(split via split_skill.py: lean head + reference.md)")
+    for flavor in _SHIPPED_FLAVORS:
+        flavor_root = os.path.join(root, flavor) if flavor else root
+        for p in sorted(glob.glob(f"{flavor_root}/.claude/skills/*/SKILL.md")):
+            n = os.path.getsize(p)
+            if n > SKILL_BUDGET:
+                findings.append(f"{rel(root,p)}: {n} bytes > {SKILL_BUDGET} budget "
+                                f"(split via split_skill.py: lean head + reference.md)")
     cm = f"{root}/CLAUDE.md"
     if os.path.exists(cm) and os.path.getsize(cm) > CLAUDE_BUDGET:
         findings.append(f"CLAUDE.md: {os.path.getsize(cm)} bytes > {CLAUDE_BUDGET} budget")
@@ -2472,7 +2922,9 @@ def _read_manifest_version(root):
 
 def check_version_claim_freshness(root: str) -> list:
     """Flag a README/CHANGELOG-class doc whose NEWEST version-string claim is
-    >= 1 minor behind the manifest's current version.
+    >= 1 minor behind the manifest's current version (BLOCKING under
+    --strict), plus a WARN-tier sweep of every other doc under docs/
+    (#416, v3.98) — see `_version_claim_fleet_findings` below.
 
     Scans a fixed, deterministic file set (VERSION_CLAIM_CLASS_FILES) for
     version strings matching the project's own vX.Y(.Z) pattern and takes the
@@ -2510,6 +2962,193 @@ def check_version_claim_freshness(root: str) -> list:
             f"behind current v{cur_major}.{cur_minor} — remove hardcoded version "
             f"claims from prose and link docs/version-history.md instead"
         )
+    findings = sorted(findings)
+    findings.extend(_version_claim_fleet_findings(root, current))
+    return findings
+
+
+# ── version-claim-freshness fleet extension (#416, v3.98) ────────────────
+# The blocking loop above only ever covered the fixed README/CHANGELOG
+# class. The architecture audit found staleness endemic in *version-bearing
+# design and operator docs* fleet-wide — a "vX.Y"/"as of vX.Y" claim in a
+# doc's own title or opening blurb, left unmaintained 10-26 releases. This
+# second pass extends the same freshness comparison to every other doc
+# under docs/, WARN-tier only: reported and counted under --strict like
+# check_for_checks/description-cap/anti-patterns above, but it never
+# escalates to the hierarchy-dial's non-negotiable block tier and the
+# existing README/CHANGELOG class above stays the only BLOCKING path.
+#
+# Deliberately narrow scan span: only a doc's own first heading plus its
+# opening paragraph are scanned, not the whole file. A doc's *body*
+# legitimately accumulates many historical version mentions (release notes,
+# changelogs-in-miniature, "as of vX.Y we did A, then vX.Z we did B"
+# narrative) and per-mention flagging over the whole file would fire on
+# every one of those; what actually indicates rot is the doc's own framing
+# — the claim a reader sees first — lagging the manifest.
+#
+# Two exclusions, both reusing existing conventions rather than inventing
+# new ones:
+#   - Release-planning docs (`_RELEASE_PLAN_RE`) are already auto-exempt
+#     elsewhere in this file for the same reason: a plan doc's own "vX.Y"
+#     heading names its subject, not a freshness claim about itself.
+#   - A doc marked "kept for lineage" (case-insensitive, anywhere in the
+#     file) is deliberately historical — the framing docs/version-history.md
+#     and docs/roadmap-archive.md already use for content that is supposed
+#     to reference an old version forever — and is skipped entirely.
+_LINEAGE_MARKER_RE = re.compile(r"kept for lineage", re.I)
+_MD_HEADING_RE = re.compile(r"^#{1,6}[ \t]+.*$", re.MULTILINE)
+
+
+def _doc_heading_and_opening_text(content: str) -> str:
+    """Return a doc's first heading line plus its opening paragraph (the
+    first non-blank block of text following that heading, up to the next
+    blank line or heading) — the only span the fleet-wide WARN check scans
+    for a version claim. '' if the doc has no heading at all."""
+    m = _MD_HEADING_RE.search(content)
+    if not m:
+        return ""
+    para_lines = []
+    for line in content[m.end():].splitlines():
+        stripped = line.strip()
+        if not stripped:
+            if para_lines:
+                break
+            continue
+        if _MD_HEADING_RE.match(line):
+            break
+        para_lines.append(line)
+    return m.group() + "\n" + "\n".join(para_lines)
+
+
+def _version_claim_fleet_findings(root: str, current: tuple) -> list:
+    """WARN-tier findings: a stale vX.Y claim in the heading/opening
+    paragraph of any docs/**/*.md file outside the README/CHANGELOG class.
+    See the module comment above for scope and exclusions."""
+    findings = []
+    cur_major, cur_minor = current
+    class_relpaths = {os.path.normpath(p) for p in VERSION_CLAIM_CLASS_FILES}
+    docs_root = os.path.join(root, "docs")
+    if not os.path.isdir(docs_root):
+        return findings
+    for dirpath, _dirnames, filenames in os.walk(docs_root):
+        for fname in sorted(filenames):
+            if not fname.endswith(".md"):
+                continue
+            p = os.path.join(dirpath, fname)
+            relpath = os.path.relpath(p, root).replace(os.sep, "/")
+            if os.path.normpath(relpath) in class_relpaths:
+                continue
+            if _RELEASE_PLAN_RE.match(relpath):
+                continue
+            try:
+                content = open(p, encoding="utf-8").read()
+            except (OSError, UnicodeDecodeError):
+                continue
+            if _LINEAGE_MARKER_RE.search(content):
+                continue
+            span = _doc_heading_and_opening_text(_strip_code(content))
+            found_versions = [(int(m.group(1)), int(m.group(2)))
+                               for m in _VERSION_CLAIM_RE.finditer(span)]
+            if not found_versions:
+                continue
+            newest = max(found_versions)
+            if newest >= current:
+                continue
+            if newest[0] == cur_major:
+                gap = f"{cur_minor - newest[1]} minor(s)"
+            else:
+                gap = "a major version"
+            findings.append(
+                f"{relpath}: heading/opening-paragraph version claim "
+                f"v{newest[0]}.{newest[1]} is {gap} behind current "
+                f"v{cur_major}.{cur_minor} (WARN — update the claim, relocate "
+                f"it to docs/version-history.md, or mark the section "
+                f"'kept for lineage' if intentionally historical)"
+            )
+    return sorted(findings)
+
+
+# ── Check 22: classifier-compat (epic #393, #421) ─────────────────────────
+# An auto-mode harness safety classifier pattern-matches flag/verb SHAPE, not
+# semantics — a flag literally named `--allow-ahead` reads as [Safety Bypass
+# Flag] regardless of what it does. Two sub-checks over shipped *.py/*.sh
+# (the actual CLI surface; SKILL.md's documented human-confirmed last-resort
+# commands are a distinct, already-governed convention — CLAUDE.md
+# §Commits — and out of scope here): (1) a bypass/override/skip-guard-shaped
+# flag defined by a script outside .claude/hooks/ (hooks ARE the guard
+# layer, so a hook defining e.g. `--force-with-lease` is already vetted);
+# (2) a raw destructive git/shell verb in a script that isn't one of the
+# named wrapper/guard scripts the hooks can already recognize.
+_BYPASS_FLAG_RE = re.compile(
+    r"^--(?:allow|skip|bypass|override)-[\w-]+$|^--no-verify$|^--force-[\w-]+$",
+    re.I,
+)
+_PY_FLAG_DEF_RE = re.compile(r"""add_argument\(\s*['"](--[\w-]+)['"]""")
+_SH_FLAG_DEF_RE = re.compile(r"^\s*(--[\w-]+)\)")
+_DESTRUCTIVE_OP_RE = re.compile(
+    r"\brm\s+-rf\b|\bgit\s+reset\s+--hard\b|\bgit\s+push\s+(?:-f\b|--force\b)"
+    r"|\bgit\s+branch\s+-D\b|\bgit\s+rebase\b|\bgit\s+filter-branch\b"
+)
+
+# Named scripts already known to legitimately wrap a destructive op (their own
+# scratch-dir cleanup, or a print-only suggestion for a human-confirmed batch
+# per CLAUDE.md §Commits) — add an entry only after reading the file and
+# confirming it is a maintained, named wrapper, never a blanket bypass.
+CLASSIFIER_COMPAT_DESTRUCTIVE_OP_ALLOW = frozenset({
+    ".claude/skills/grm-integration-master/branch_cleanup.py",
+    ".claude/skills/grm-sync-from-upstream/sync-from-upstream.sh",
+    # this very file — the destructive-op / bypass-flag literals below are
+    # this check's own regex fixtures and self-test data, not real invocations.
+    ".claude/skills/grm-doc-assurance/doc_assurance.py",
+})
+
+
+def _classifier_compat_scan(relpath, text):
+    """Return classifier-compat findings for one shipped script's text."""
+    findings = []
+    is_hook = relpath.startswith(".claude/hooks/")
+    if not is_hook:
+        if relpath.endswith(".py"):
+            flags = _PY_FLAG_DEF_RE.findall(text)
+        else:
+            flags = [m.group(1) for ln in text.splitlines()
+                     for m in [_SH_FLAG_DEF_RE.match(ln)] if m]
+        for flag in flags:
+            if _BYPASS_FLAG_RE.match(flag):
+                findings.append(
+                    f"{relpath}: flag `{flag}` is bypass-shaped (reads as a "
+                    f"[Safety Bypass Flag] to an auto-mode classifier) and is "
+                    f"not routed through a named guard-vetted script (#393)"
+                )
+    if not is_hook and relpath not in CLASSIFIER_COMPAT_DESTRUCTIVE_OP_ALLOW:
+        for m in _DESTRUCTIVE_OP_RE.finditer(text):
+            line_no = text.count("\n", 0, m.start()) + 1
+            findings.append(
+                f"{relpath}:{line_no}: raw destructive op `{m.group(0)}` "
+                f"outside a named guard-vetted wrapper script (#393)"
+            )
+    return findings
+
+
+def check_classifier_compat(root: str) -> list:
+    """Flag bypass-shaped CLI flag names and raw destructive ops shipped
+    outside a named, guard-vetted wrapper script (epic #393 / #421).
+
+    Deterministic, report-only by default (fails only the --strict gate).
+    """
+    findings = []
+    for sub in ("skills", "hooks", "mcp-servers"):
+        base = os.path.join(root, ".claude", sub)
+        if not os.path.isdir(base):
+            continue
+        for ext in (".py", ".sh"):
+            for p in sorted(glob.glob(f"{base}/**/*{ext}", recursive=True)):
+                relpath = rel(root, p)
+                try:
+                    text = open(p, encoding="utf-8").read()
+                except Exception:
+                    continue
+                findings.extend(_classifier_compat_scan(relpath, text))
     return sorted(findings)
 
 
@@ -2531,6 +3170,108 @@ def _read_hierarchy_dial(root):
     return "warn"
 
 
+# ── Baseline ratchet (#426, v3.93) ──────────────────────────────────────────
+BASELINE_DEFAULT_REL = ".claude/cache/doc-findings-baseline.json"
+
+
+def _baseline_key(check, finding):
+    """Stable identity for one finding, used for baseline set membership."""
+    return f"{check}: {finding}"
+
+
+def _load_baseline(path):
+    """Read a baseline file -> set of finding keys, or None if absent /
+    unreadable (treated as 'no baseline yet' — the caller seeds one)."""
+    if not os.path.exists(path):
+        return None
+    try:
+        with open(path, encoding="utf-8") as fh:
+            data = json.load(fh)
+    except (OSError, ValueError):
+        return None
+    return set(data.get("findings", []))
+
+
+def _write_baseline(path, finding_keys):
+    dirname = os.path.dirname(path)
+    if dirname:
+        os.makedirs(dirname, exist_ok=True)
+    payload = {"version": 1, "findings": sorted(finding_keys)}
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump(payload, fh, indent=2, sort_keys=True)
+        fh.write("\n")
+
+
+def apply_baseline(path, all_findings):
+    """Diff current findings against a stored baseline file (#426 ratchet).
+
+    `all_findings` is {check_name: [finding_str, ...]} for the checks that
+    just ran. Returns a dict describing the trend:
+      {"total", "new", "resolved", "baseline_count", "seeded", "ratcheted",
+       "report"} — `new`/`resolved` are sorted lists of finding keys,
+      `report` a ready-to-print human-readable trend line.
+
+    Semantics:
+      - No baseline file yet -> SEED: write the current findings as the
+        baseline. Nothing counts as new (there is nothing yet to regress
+        against) — a first run never fails the baseline gate.
+      - Baseline exists -> DIFF by identity (`<check>: <finding text>`):
+        findings absent from the baseline are "new" (a regression); findings
+        in the baseline no longer present are "resolved". A finding already
+        in the baseline is still surfaced in the normal per-check output —
+        it just doesn't newly fail anything it wasn't already failing.
+      - Ratchet: when the current set is a SUBSET of the baseline (some
+        findings resolved, none added), the baseline file is rewritten to
+        the smaller current set — debt can only shrink, never silently grow.
+        When there ARE new findings the file is left untouched, so the
+        regression (and the ratchet point) stays visible until it's fixed.
+    """
+    current_keys = {_baseline_key(check, finding)
+                     for check, findings in all_findings.items()
+                     for finding in findings}
+    baseline_keys = _load_baseline(path)
+
+    if baseline_keys is None:
+        _write_baseline(path, current_keys)
+        return {
+            "total": len(current_keys), "new": [], "resolved": [],
+            "baseline_count": len(current_keys), "seeded": True,
+            "ratcheted": False,
+            "report": ("doc-assurance baseline: seeded %d finding(s) to %s "
+                       "(no prior baseline — first run never fails)."
+                       % (len(current_keys), path)),
+        }
+
+    new_keys = sorted(current_keys - baseline_keys)
+    resolved_keys = sorted(baseline_keys - current_keys)
+
+    ratcheted = False
+    if not new_keys and resolved_keys:
+        _write_baseline(path, current_keys)
+        ratcheted = True
+
+    if new_keys:
+        report = ("doc-assurance baseline: %d finding(s), %d NEW since "
+                   "baseline (%d baselined)."
+                   % (len(current_keys), len(new_keys), len(baseline_keys)))
+    elif ratcheted:
+        report = ("doc-assurance baseline: %d finding(s), same as baseline "
+                   "(0 new); %d resolved — baseline ratcheted down from %d "
+                   "to %d."
+                   % (len(current_keys), len(resolved_keys),
+                      len(baseline_keys), len(current_keys)))
+    else:
+        report = ("doc-assurance baseline: %d finding(s), same as baseline "
+                   "(%d baselined, 0 new)."
+                   % (len(current_keys), len(baseline_keys)))
+
+    return {
+        "total": len(current_keys), "new": new_keys, "resolved": resolved_keys,
+        "baseline_count": len(baseline_keys), "seeded": False,
+        "ratcheted": ratcheted, "report": report,
+    }
+
+
 # ── Self-test ────────────────────────────────────────────────────────────
 def self_test() -> tuple:
     """In-memory unit tests for check_design_layout, check_relative_links,
@@ -2549,6 +3290,12 @@ def self_test() -> tuple:
     house-layout-missing docs reported not silently skipped, curated "##"
     sections in docs/grimoire/design/README.md survive generation, idempotent
     re-run is byte-identical, staleness detection on missing/new docs.
+    Baseline ratchet (#426): seed-on-first-run, unchanged-reports-0-new,
+    resolved-finding-ratchets-down, new-finding-flagged, baseline-untouched-
+    while-a-regression-is-outstanding.
+    check-for-checks (#440): MUST-clause with no check reference flagged
+    (coding-standards.md section, catalog Entry); MUST-clause paired with a
+    check reference (grm- skill mention, Testable-criterion table) silent.
     Returns (passed, failed, lines).
     """
     import tempfile, os as _os, shutil
@@ -3055,6 +3802,47 @@ def self_test() -> tuple:
             cases.append(("release-consistency on bare downstream reports, no crash", False))
     finally:
         shutil.rmtree(tmp_dl, ignore_errors=True)
+
+    # 30b. VER_RE captures an optional three-part patch component (audit
+    # finding, v3.91) instead of silently truncating "v3.87.1" to "3.87".
+    _ver_m = VER_RE.match("## v3.87.1 — Patch release")
+    cases.append(("VER_RE captures a three-part version whole (not truncated)",
+                   _ver_m is not None and _ver_m.group(1) == "3.87.1"))
+    _ver_m2 = VER_RE.match("## v3.87 — Two-part release")
+    cases.append(("VER_RE still matches a plain two-part version",
+                   _ver_m2 is not None and _ver_m2.group(1) == "3.87"))
+
+    # 30c. check_tag_format (audit finding, v3.91): warns on a two-part
+    # newest tag, stays silent on a three-part one, never crashes outside a
+    # git repo. A real temp git repo (not a fixture string) exercises the
+    # actual `git tag --sort` subprocess call.
+    tmp_tag = _tmpmod.mkdtemp()
+    try:
+        subprocess.run(["git", "init", "-q"], cwd=tmp_tag, check=True)
+        subprocess.run(["git", "config", "user.email", "t@t"], cwd=tmp_tag, check=True)
+        subprocess.run(["git", "config", "user.name", "t"], cwd=tmp_tag, check=True)
+        open(_os.path.join(tmp_tag, "f"), "w").write("x")
+        subprocess.run(["git", "add", "-A"], cwd=tmp_tag, check=True)
+        subprocess.run(["git", "commit", "-q", "-m", "seed"], cwd=tmp_tag, check=True)
+
+        subprocess.run(["git", "tag", "v1.2"], cwd=tmp_tag, check=True)
+        f_two = check_tag_format(tmp_tag)
+        cases.append(("tag-format warns on a two-part newest tag",
+                       len(f_two) == 1 and "v1.2" in f_two[0]))
+
+        subprocess.run(["git", "tag", "v1.2.1"], cwd=tmp_tag, check=True)
+        f_three = check_tag_format(tmp_tag)
+        cases.append(("tag-format is silent once the newest tag is three-part",
+                       f_three == []))
+    finally:
+        shutil.rmtree(tmp_tag, ignore_errors=True)
+    # No git repo / no tags at all -> no crash, no finding.
+    tmp_notag = _tmpmod.mkdtemp()
+    try:
+        cases.append(("tag-format on a non-repo dir does not crash",
+                       check_tag_format(tmp_notag) == []))
+    finally:
+        shutil.rmtree(tmp_notag, ignore_errors=True)
 
     # ── Documentation portal self-tests (docs-portal-design.md) ─────────
     # Small fixture tree: docs/README.md root + docs/design/foo-design.md,
@@ -3568,6 +4356,536 @@ def self_test() -> tuple:
     finally:
         shutil.rmtree(tmp_v53, ignore_errors=True)
 
+    # 53a. version-claim-freshness (#416): a stale vX.Y claim in a design
+    # doc's own heading/opening paragraph outside the README/CHANGELOG class
+    # is WARN-tier — flagged, but tagged distinctly from the blocking class
+    # findings (matches the check_for_checks "(WARN — ...)" convention).
+    tmp_v53a = _tmpmod.mkdtemp()
+    try:
+        _os.makedirs(_os.path.join(tmp_v53a, ".claude"), exist_ok=True)
+        with open(_os.path.join(tmp_v53a, ".claude", "grimoire-config.json"), "w") as fh:
+            _json_mod.dump({"framework-version": "v3.79"}, fh)
+        _os.makedirs(_os.path.join(tmp_v53a, "docs", "design"), exist_ok=True)
+        open(_os.path.join(tmp_v53a, "docs", "design", "foo-design.md"), "w").write(
+            "# Foo subsystem (as of v1.87)\n\n"
+            "This document describes the foo subsystem as of v1.87.\n"
+        )
+        f53a = check_version_claim_freshness(tmp_v53a)
+        cases.append((
+            "version-claim-freshness: fleet doc stale claim WARNs",
+            any("v1.87" in x and "v3.79" in x and "(WARN" in x for x in f53a)))
+    finally:
+        shutil.rmtree(tmp_v53a, ignore_errors=True)
+
+    # 53b. version-claim-freshness (#416): the "kept for lineage" marker
+    # excludes an otherwise-stale doc from the fleet-wide WARN check.
+    tmp_v53b = _tmpmod.mkdtemp()
+    try:
+        _os.makedirs(_os.path.join(tmp_v53b, ".claude"), exist_ok=True)
+        with open(_os.path.join(tmp_v53b, ".claude", "grimoire-config.json"), "w") as fh:
+            _json_mod.dump({"framework-version": "v3.79"}, fh)
+        _os.makedirs(_os.path.join(tmp_v53b, "docs", "design"), exist_ok=True)
+        open(_os.path.join(tmp_v53b, "docs", "design", "bar-design.md"), "w").write(
+            "# Bar subsystem (as of v1.87)\n\n"
+            "This document describes the bar subsystem as of v1.87 "
+            "(kept for lineage).\n"
+        )
+        f53b = check_version_claim_freshness(tmp_v53b)
+        cases.append((
+            "version-claim-freshness: 'kept for lineage' marker excludes doc",
+            len(f53b) == 0))
+    finally:
+        shutil.rmtree(tmp_v53b, ignore_errors=True)
+
+    # 53c. version-claim-freshness (#416): the existing README/CHANGELOG
+    # blocking finding's text is unchanged (no "(WARN" tag) even when a
+    # docs/ tree with unrelated fleet content is present alongside it.
+    tmp_v53c = _tmpmod.mkdtemp()
+    try:
+        _os.makedirs(_os.path.join(tmp_v53c, ".claude"), exist_ok=True)
+        with open(_os.path.join(tmp_v53c, ".claude", "grimoire-config.json"), "w") as fh:
+            _json_mod.dump({"framework-version": "v3.79"}, fh)
+        open(_os.path.join(tmp_v53c, "README.md"), "w").write(
+            "# Familiar\n\nAt v1.87 this app does X.\n"
+        )
+        _os.makedirs(_os.path.join(tmp_v53c, "docs", "design"), exist_ok=True)
+        open(_os.path.join(tmp_v53c, "docs", "design", "baz-design.md"), "w").write(
+            "# Baz subsystem (as of v1.87)\n\nAs of v1.87 baz does X.\n"
+        )
+        f53c = check_version_claim_freshness(tmp_v53c)
+        class_findings = [x for x in f53c if x.startswith("README.md:")]
+        warn_findings = [x for x in f53c if "(WARN" in x]
+        cases.append((
+            "version-claim-freshness: README blocking finding text unchanged",
+            len(class_findings) == 1
+            and "(WARN" not in class_findings[0]
+            and class_findings[0] == (
+                "README.md: newest version claim v1.87 is a major version "
+                "behind current v3.79 — remove hardcoded version claims "
+                "from prose and link docs/version-history.md instead")
+        ))
+        cases.append((
+            "version-claim-freshness: fleet WARN finding also present alongside class finding",
+            len(warn_findings) == 1))
+    finally:
+        shutil.rmtree(tmp_v53c, ignore_errors=True)
+
+    # 54. classifier-compat: bypass-shaped flag defined by a plain skill
+    # script is flagged (the --allow-ahead-shaped regression this check exists
+    # to catch).
+    tmp_c54 = _tmpmod.mkdtemp()
+    try:
+        skill_dir = _os.path.join(tmp_c54, ".claude", "skills", "grm-fake")
+        _os.makedirs(skill_dir, exist_ok=True)
+        open(_os.path.join(skill_dir, "fake.sh"), "w").write(
+            "#!/usr/bin/env bash\ncase \"$1\" in\n"
+            "  --allow-ahead) ALLOW_AHEAD=1 ;;\nesac\n"
+        )
+        f54 = check_classifier_compat(tmp_c54)
+        cases.append(("classifier-compat: bypass-shaped flag flagged",
+                      any("--allow-ahead" in x and "bypass-shaped" in x for x in f54)))
+    finally:
+        shutil.rmtree(tmp_c54, ignore_errors=True)
+
+    # 55. classifier-compat: raw destructive op in a plain skill script is
+    # flagged; the same op inside a .claude/hooks/ guard script is not.
+    tmp_c55 = _tmpmod.mkdtemp()
+    try:
+        skill_dir = _os.path.join(tmp_c55, ".claude", "skills", "grm-fake")
+        hooks_dir = _os.path.join(tmp_c55, ".claude", "hooks")
+        _os.makedirs(skill_dir, exist_ok=True)
+        _os.makedirs(hooks_dir, exist_ok=True)
+        open(_os.path.join(skill_dir, "fake.py"), "w").write(
+            "import subprocess\nsubprocess.run('git push --force', shell=True)\n"
+        )
+        open(_os.path.join(hooks_dir, "some-guard.sh"), "w").write(
+            "#!/usr/bin/env bash\ngit push --force\n"
+        )
+        f55 = check_classifier_compat(tmp_c55)
+        cases.append(("classifier-compat: raw destructive op in plain skill script flagged",
+                      any("fake.py" in x and "raw destructive op" in x for x in f55)))
+        cases.append(("classifier-compat: same op inside .claude/hooks/ not flagged",
+                      not any("some-guard.sh" in x for x in f55)))
+    finally:
+        shutil.rmtree(tmp_c55, ignore_errors=True)
+
+    # 56. classifier-compat: clean script (no bypass flags, no destructive
+    # ops) yields zero findings.
+    tmp_c56 = _tmpmod.mkdtemp()
+    try:
+        skill_dir = _os.path.join(tmp_c56, ".claude", "skills", "grm-fake")
+        _os.makedirs(skill_dir, exist_ok=True)
+        open(_os.path.join(skill_dir, "fake.py"), "w").write(
+            "import argparse\nap = argparse.ArgumentParser()\n"
+            "ap.add_argument('--dry-run', action='store_true')\n"
+        )
+        f56 = check_classifier_compat(tmp_c56)
+        cases.append(("classifier-compat: clean script yields no findings", len(f56) == 0))
+    finally:
+        shutil.rmtree(tmp_c56, ignore_errors=True)
+
+    # 57. skill-placeholder-tokens (#465): a raw {test-command} left inside a
+    # fenced bash code block in an installed SKILL.md is flagged.
+    tmp_s54 = _tmpmod.mkdtemp()
+    try:
+        skill_dir = _os.path.join(tmp_s54, ".claude", "skills", "grm-fake-merge")
+        _os.makedirs(skill_dir, exist_ok=True)
+        open(_os.path.join(skill_dir, "SKILL.md"), "w").write(
+            "---\nname: grm-fake-merge\ndescription: fake.\n---\n\n"
+            "### 3. Run tests\n\n```bash\n{test-command}\n```\n"
+        )
+        f54 = check_skill_placeholder_tokens(tmp_s54)
+        cases.append(("skill-placeholder-tokens: {test-command} in a fenced code block is flagged",
+                      any("test-command" in x and "grm-fake-merge/SKILL.md" in x for x in f54)))
+    finally:
+        shutil.rmtree(tmp_s54, ignore_errors=True)
+
+    # 58. skill-placeholder-tokens: a raw {build-command} inside a `- [ ]`
+    # checklist line (not in a fenced block) is also flagged.
+    tmp_s55 = _tmpmod.mkdtemp()
+    try:
+        skill_dir = _os.path.join(tmp_s55, ".claude", "skills", "grm-fake-merge")
+        _os.makedirs(skill_dir, exist_ok=True)
+        open(_os.path.join(skill_dir, "SKILL.md"), "w").write(
+            "---\nname: grm-fake-merge\ndescription: fake.\n---\n\n"
+            "Pre-merge checklist:\n\n- [ ] `{build-command}` clean\n"
+        )
+        f55 = check_skill_placeholder_tokens(tmp_s55)
+        cases.append(("skill-placeholder-tokens: {build-command} in a checklist line is flagged",
+                      any("build-command" in x for x in f55)))
+    finally:
+        shutil.rmtree(tmp_s55, ignore_errors=True)
+
+    # 59. skill-placeholder-tokens: the fixed form (recipe.py dispatcher call,
+    # no raw token) is silent — the regression guard passes on fixed content.
+    tmp_s56 = _tmpmod.mkdtemp()
+    try:
+        skill_dir = _os.path.join(tmp_s56, ".claude", "skills", "grm-fake-merge")
+        _os.makedirs(skill_dir, exist_ok=True)
+        open(_os.path.join(skill_dir, "SKILL.md"), "w").write(
+            "---\nname: grm-fake-merge\ndescription: fake.\n---\n\n"
+            "### 3. Run tests\n\n"
+            "```bash\npython3 .claude/skills/grm-build-recipe/recipe.py test\n```\n\n"
+            "- [ ] `python3 .claude/skills/grm-build-recipe/recipe.py build` clean\n"
+        )
+        f56 = check_skill_placeholder_tokens(tmp_s56)
+        cases.append(("skill-placeholder-tokens: fixed recipe.py-dispatcher form is silent",
+                      len(f56) == 0))
+    finally:
+        shutil.rmtree(tmp_s56, ignore_errors=True)
+
+    # 60. skill-placeholder-tokens: a token merely *discussed* as prose
+    # (outside any fenced block / checklist line) is NOT flagged — a
+    # meta/authoring skill documenting the genericization mechanism itself
+    # (e.g. grm-hard-reset, grm-sync-from-source) is not a bug.
+    tmp_s57 = _tmpmod.mkdtemp()
+    try:
+        skill_dir = _os.path.join(tmp_s57, ".claude", "skills", "grm-fake-meta")
+        _os.makedirs(skill_dir, exist_ok=True)
+        open(_os.path.join(skill_dir, "SKILL.md"), "w").write(
+            "---\nname: grm-fake-meta\ndescription: fake.\n---\n\n"
+            "New files arrive generic (placeholder-laden). Re-specialize them "
+            "for this project — fill `{test-command}`, `{build-command}`, etc.\n"
+        )
+        f57 = check_skill_placeholder_tokens(tmp_s57)
+        cases.append(("skill-placeholder-tokens: prose mention outside code/checklist is not flagged",
+                      len(f57) == 0))
+    finally:
+        shutil.rmtree(tmp_s57, ignore_errors=True)
+
+    # 61-65. Baseline ratchet (#426, v3.93): seed / diff / ratchet-shrink /
+    # new-finding regression, all against a throwaway baseline file.
+    tmp_s61 = _tmpmod.mkdtemp()
+    try:
+        bpath = _os.path.join(tmp_s61, "baseline.json")
+
+        # 61. No baseline file yet -> SEED, never reports anything as new.
+        seed = apply_baseline(bpath, {"hierarchy": ["orphan: a.md", "orphan: b.md"]})
+        cases.append(("baseline: first run seeds the file and reports 0 new",
+                      seed["seeded"] and seed["new"] == [] and _os.path.exists(bpath)))
+
+        # 62. Identical findings on the next run -> 0 new, no ratchet.
+        same = apply_baseline(bpath, {"hierarchy": ["orphan: a.md", "orphan: b.md"]})
+        cases.append(("baseline: unchanged findings report 0 new",
+                      same["new"] == [] and not same["ratcheted"]))
+
+        # 63. A finding gets fixed (subset of baseline) -> ratchet shrinks,
+        # baseline file rewritten to the smaller set.
+        shrunk = apply_baseline(bpath, {"hierarchy": ["orphan: a.md"]})
+        reloaded = _load_baseline(bpath)
+        cases.append(("baseline: resolved finding ratchets the baseline down",
+                      shrunk["ratcheted"] and reloaded == {"hierarchy: orphan: a.md"}))
+
+        # 64. A genuinely NEW finding (not in the now-ratcheted baseline) is
+        # reported as new — this is the regression signal --strict gates on.
+        grown = apply_baseline(bpath, {"hierarchy": ["orphan: a.md", "orphan: c.md"]})
+        cases.append(("baseline: a finding absent from baseline is NEW",
+                      grown["new"] == ["hierarchy: orphan: c.md"]))
+
+        # 65. Baseline file is NOT rewritten while a new finding is present —
+        # the regression (and ratchet point) must stay visible next run.
+        cases.append(("baseline: file untouched while a new finding exists",
+                      _load_baseline(bpath) == {"hierarchy: orphan: a.md"}))
+    finally:
+        shutil.rmtree(tmp_s61, ignore_errors=True)
+
+    # 66-70. skill-budget (#399): must scan every shipped flavor, not just
+    # root — a skill that bloats past budget only in claude-code/ (the
+    # canonical, shipped copy) is exactly the case the pre-#399 code missed.
+    tmp_s66 = _tmpmod.mkdtemp()
+    try:
+        def _mk_skill_md(flavor_root, name, size):
+            """Write a SKILL.md of exactly `size` bytes (content is irrelevant —
+            check_skill_budget only measures os.path.getsize)."""
+            d = _os.path.join(flavor_root, ".claude", "skills", name)
+            _os.makedirs(d, exist_ok=True)
+            with open(_os.path.join(d, "SKILL.md"), "wb") as fh:
+                fh.write(b"x" * size)
+
+        # root has one clean skill; claude-code has one over-budget skill.
+        _mk_skill_md(tmp_s66, "root-clean", 1000)
+        _mk_skill_md(_os.path.join(tmp_s66, "claude-code"), "cc-bloated", SKILL_BUDGET + 500)
+        _mk_skill_md(_os.path.join(tmp_s66, "claude-code"), "cc-clean", 1000)
+        f66 = check_skill_budget(tmp_s66)
+        cases.append(("skill-budget: over-budget SKILL.md in claude-code/ is caught",
+                      any("claude-code/.claude/skills/cc-bloated/SKILL.md" in x for x in f66)))
+        cases.append(("skill-budget: clean claude-code skill not flagged",
+                      not any("cc-clean" in x for x in f66)))
+        cases.append(("skill-budget: clean root skill not flagged",
+                      not any("root-clean" in x for x in f66)))
+        cases.append(("skill-budget: exactly one finding for the one bloated skill",
+                      len(f66) == 1))
+    finally:
+        shutil.rmtree(tmp_s66, ignore_errors=True)
+
+    # 71-74. check-for-checks (#440, v3.97): doctrine meta-check — a
+    # MUST-clause section with no paired deterministic-check reference is
+    # flagged; a MUST-clause section that references a check (grm- skill,
+    # recipe.py, or a Testable-criterion table) is silent. Covers both
+    # scanned targets: docs/coding-standards.md and the required-feature
+    # catalog.
+    tmp_cfc1 = _tmpmod.mkdtemp()
+    try:
+        _os.makedirs(_os.path.join(tmp_cfc1, "docs"), exist_ok=True)
+        open(_os.path.join(tmp_cfc1, "docs", "coding-standards.md"), "w").write(
+            "# Coding Standards\n\n"
+            "## Unchecked rule\n\n"
+            "Every module MUST carry a one-line summary comment.\n\n"
+            "## Checked rule\n\n"
+            "Every recipe MUST expose `build`/`run`/`deploy`. Enforced by "
+            "`grm-install-doctor`.\n"
+        )
+        f_cfc1 = check_for_checks(tmp_cfc1)
+        cases.append(("check-for-checks: coding-standards.md MUST-clause with no "
+                      "check reference is flagged",
+                      any("Unchecked rule" in x for x in f_cfc1)))
+        cases.append(("check-for-checks: coding-standards.md MUST-clause paired "
+                      "with a grm- skill reference is silent",
+                      not any("Checked rule" in x for x in f_cfc1)))
+    finally:
+        shutil.rmtree(tmp_cfc1, ignore_errors=True)
+
+    tmp_cfc2 = _tmpmod.mkdtemp()
+    try:
+        catalog_dir = _os.path.join(tmp_cfc2, ".claude", "skills",
+                                     "grm-required-feature-catalog")
+        _os.makedirs(catalog_dir, exist_ok=True)
+        open(_os.path.join(catalog_dir, "required-feature-catalog.md"), "w").write(
+            "# Required-feature catalog\n\n"
+            "### Entry 1 — Unchecked Mandate\n\n"
+            "**Spec.** Every Grimoire web app MUST do the unchecked thing.\n\n"
+            "### Entry 2 — Checked Mandate\n\n"
+            "**Spec.** Every Grimoire web app MUST do the checked thing.\n\n"
+            "| ID | Requirement | Testable criterion |\n"
+            "|----|-------------|--------------------|\n"
+            "| X-1 | does the thing | a probe confirms it |\n"
+        )
+        f_cfc2 = check_for_checks(tmp_cfc2)
+        cases.append(("check-for-checks: catalog Entry with no Testable-criterion "
+                      "table or check reference is flagged",
+                      any("Unchecked Mandate" in x for x in f_cfc2)))
+        cases.append(("check-for-checks: catalog Entry with a Testable-criterion "
+                      "table is silent",
+                      not any("Checked Mandate" in x for x in f_cfc2)))
+    finally:
+        shutil.rmtree(tmp_cfc2, ignore_errors=True)
+
+    # 75-90. design-doc-purity (#358, v3.98): each of the five pollution
+    # patterns gets a compliant + non-compliant fixture pair, plus the
+    # allowlist mechanism, the README-index exclusion, and the recursive
+    # subdirectory scan.
+    def _purity_tree(root_dir, tier="docs/design", fname="foo-design.md",
+                      content="# Foo\n\n## Motivation\nWhy.\n"):
+        d = _os.path.join(root_dir, tier)
+        _os.makedirs(d, exist_ok=True)
+        open(_os.path.join(d, fname), "w").write(content)
+
+    # 75/76. Status line — flagged in the opening ~10 lines, clean without it.
+    tmp_p75 = _tmpmod.mkdtemp()
+    try:
+        _purity_tree(tmp_p75, content="# Foo\n\n> **Status**: shipped\n\n## Motivation\nWhy.\n")
+        f75 = check_design_doc_purity(tmp_p75)
+        cases.append(("design-doc-purity: Status: line in opening lines flagged",
+                      any("Status" in x and "foo-design.md" in x for x in f75)))
+    finally:
+        shutil.rmtree(tmp_p75, ignore_errors=True)
+
+    tmp_p76 = _tmpmod.mkdtemp()
+    try:
+        _purity_tree(tmp_p76)
+        f76 = check_design_doc_purity(tmp_p76)
+        cases.append(("design-doc-purity: doc with no Status: line passes", len(f76) == 0))
+    finally:
+        shutil.rmtree(tmp_p76, ignore_errors=True)
+
+    # 77/78. Checked box — flagged anywhere in the doc, clean when unchecked.
+    tmp_p77 = _tmpmod.mkdtemp()
+    try:
+        _purity_tree(tmp_p77, content=(
+            "# Foo\n\n## Motivation\nWhy.\n\n## Acceptance\n- [x] done thing\n"
+        ))
+        f77 = check_design_doc_purity(tmp_p77)
+        cases.append(("design-doc-purity: checked '- [x]' box flagged",
+                      any("checked" in x and "foo-design.md" in x for x in f77)))
+    finally:
+        shutil.rmtree(tmp_p77, ignore_errors=True)
+
+    tmp_p78 = _tmpmod.mkdtemp()
+    try:
+        _purity_tree(tmp_p78, content=(
+            "# Foo\n\n## Motivation\nWhy.\n\n## Acceptance\n- [ ] pending thing\n"
+        ))
+        f78 = check_design_doc_purity(tmp_p78)
+        cases.append(("design-doc-purity: unchecked '- [ ]' box passes", len(f78) == 0))
+    finally:
+        shutil.rmtree(tmp_p78, ignore_errors=True)
+
+    # 79/80. Release-narration phrasing — flagged in prose, not inside a
+    # fenced code example.
+    tmp_p79 = _tmpmod.mkdtemp()
+    try:
+        _purity_tree(tmp_p79, content=(
+            "# Foo\n\n## Motivation\nThis feature shipped in v3.42 and is "
+            "Implemented (#123).\n"
+        ))
+        f79 = check_design_doc_purity(tmp_p79)
+        cases.append(("design-doc-purity: release-narration phrasing flagged",
+                      any("release-narration" in x for x in f79)))
+    finally:
+        shutil.rmtree(tmp_p79, ignore_errors=True)
+
+    tmp_p80 = _tmpmod.mkdtemp()
+    try:
+        _purity_tree(tmp_p80, content=(
+            "# Foo\n\n## Motivation\nExample output:\n\n```\nshipped in v3.42\n```\n"
+        ))
+        f80 = check_design_doc_purity(tmp_p80)
+        cases.append(("design-doc-purity: fenced-code narration example not flagged",
+                      len(f80) == 0))
+    finally:
+        shutil.rmtree(tmp_p80, ignore_errors=True)
+
+    # 80a/80b. The bare word "delivered" used as ordinary prose (not a
+    # release-status marker) must NOT be flagged; a standalone "Delivered"
+    # status marker (bolded, at a bullet/line end) must be.
+    tmp_p80a = _tmpmod.mkdtemp()
+    try:
+        _purity_tree(tmp_p80a, content=(
+            "# Foo\n\n## Motivation\nA browser-delivered web app is "
+            "delivered mechanically at session start.\n"
+        ))
+        f80a = check_design_doc_purity(tmp_p80a)
+        cases.append(("design-doc-purity: 'delivered' used as ordinary prose not flagged",
+                      len(f80a) == 0))
+    finally:
+        shutil.rmtree(tmp_p80a, ignore_errors=True)
+
+    tmp_p80b = _tmpmod.mkdtemp()
+    try:
+        _purity_tree(tmp_p80b, content=(
+            "# Foo\n\n## Motivation\nWhy.\n\n## Follow-ups\n"
+            "- ~~Second instance of the thing~~ **Delivered**\n"
+        ))
+        f80b = check_design_doc_purity(tmp_p80b)
+        cases.append(("design-doc-purity: standalone 'Delivered' status marker flagged",
+                      any("release-narration" in x for x in f80b)))
+    finally:
+        shutil.rmtree(tmp_p80b, ignore_errors=True)
+
+    # 81/82. Work-item-map / "Phase N closed" heading — flagged; an ordinary
+    # heading passes.
+    tmp_p81 = _tmpmod.mkdtemp()
+    try:
+        _purity_tree(tmp_p81, content=(
+            "# Foo\n\n## Motivation\nWhy.\n\n## File-level changes\n- a.py\n"
+        ))
+        f81 = check_design_doc_purity(tmp_p81)
+        cases.append(("design-doc-purity: work-item-map heading flagged",
+                      any("work-item-map" in x for x in f81)))
+    finally:
+        shutil.rmtree(tmp_p81, ignore_errors=True)
+
+    tmp_p81b = _tmpmod.mkdtemp()
+    try:
+        _purity_tree(tmp_p81b, content=(
+            "# Foo\n\n## Motivation\nWhy.\n\n## Phase 2 closed\nDetails.\n"
+        ))
+        f81b = check_design_doc_purity(tmp_p81b)
+        cases.append(("design-doc-purity: 'Phase N closed' heading flagged",
+                      any("work-item-map" in x for x in f81b)))
+    finally:
+        shutil.rmtree(tmp_p81b, ignore_errors=True)
+
+    tmp_p82 = _tmpmod.mkdtemp()
+    try:
+        _purity_tree(tmp_p82, content=(
+            "# Foo\n\n## Motivation\nWhy.\n\n## Design\nHow it works.\n"
+        ))
+        f82 = check_design_doc_purity(tmp_p82)
+        cases.append(("design-doc-purity: ordinary heading passes", len(f82) == 0))
+    finally:
+        shutil.rmtree(tmp_p82, ignore_errors=True)
+
+    # 83/84. Filename pattern — *-plan.md / *-candidates.md under a design
+    # tier flagged; an ordinary *-design.md filename passes.
+    tmp_p83 = _tmpmod.mkdtemp()
+    try:
+        _purity_tree(tmp_p83, fname="rollout-plan.md",
+                      content="# Rollout\n\n## Motivation\nWhy.\n")
+        f83 = check_design_doc_purity(tmp_p83)
+        cases.append(("design-doc-purity: *-plan.md filename flagged",
+                      any("filename" in x and "rollout-plan.md" in x for x in f83)))
+    finally:
+        shutil.rmtree(tmp_p83, ignore_errors=True)
+
+    tmp_p83b = _tmpmod.mkdtemp()
+    try:
+        _purity_tree(tmp_p83b, fname="workflow-candidates.md",
+                      content="# Workflow candidates\n\n## Motivation\nWhy.\n")
+        f83b = check_design_doc_purity(tmp_p83b)
+        cases.append(("design-doc-purity: *-candidates.md filename flagged",
+                      any("filename" in x and "workflow-candidates.md" in x for x in f83b)))
+    finally:
+        shutil.rmtree(tmp_p83b, ignore_errors=True)
+
+    tmp_p84 = _tmpmod.mkdtemp()
+    try:
+        _purity_tree(tmp_p84, fname="foo-design.md")
+        f84 = check_design_doc_purity(tmp_p84)
+        cases.append(("design-doc-purity: ordinary *-design.md filename passes", len(f84) == 0))
+    finally:
+        shutil.rmtree(tmp_p84, ignore_errors=True)
+
+    # 85. The allowlist exempts a specific path from every pattern (passed
+    # via _allow_set, mirroring check_flavor_parity/check_mirrored_script_parity's
+    # test-override convention — no need to monkey-patch the module global).
+    tmp_p85 = _tmpmod.mkdtemp()
+    try:
+        _purity_tree(tmp_p85, content=(
+            "# Foo\n\n> Status: shipped\n\n## Motivation\nWhy.\n\n"
+            "## Acceptance\n- [x] done\n"
+        ))
+        f85 = check_design_doc_purity(tmp_p85, _allow_set={"docs/design/foo-design.md"})
+        cases.append(("design-doc-purity: DESIGN_PURITY_ALLOW exempts a listed path",
+                      len(f85) == 0))
+    finally:
+        shutil.rmtree(tmp_p85, ignore_errors=True)
+
+    # 86. README.md index pages are excluded from the scan even when they
+    # contain pollution-shaped content.
+    tmp_p86 = _tmpmod.mkdtemp()
+    try:
+        _purity_tree(tmp_p86, fname="README.md", content=(
+            "# Design docs\n\n> Status: shipped\n\n- [x] done\n"
+        ))
+        f86 = check_design_doc_purity(tmp_p86)
+        cases.append(("design-doc-purity: README.md index page excluded from scan",
+                      len(f86) == 0))
+    finally:
+        shutil.rmtree(tmp_p86, ignore_errors=True)
+
+    # 87. Recursive scan reaches a design-tier subdirectory (docs/design/ux/).
+    tmp_p87 = _tmpmod.mkdtemp()
+    try:
+        _purity_tree(tmp_p87, tier="docs/design/ux", fname="ux-design.md",
+                      content="# UX\n\n> Status: shipped\n\n## Motivation\nWhy.\n")
+        f87 = check_design_doc_purity(tmp_p87)
+        cases.append(("design-doc-purity: subdirectory (docs/design/ux/) scanned",
+                      any("ux-design.md" in x for x in f87)))
+    finally:
+        shutil.rmtree(tmp_p87, ignore_errors=True)
+
+    # 88. Both design tiers (docs/design/ and docs/grimoire/design/) are scanned.
+    tmp_p88 = _tmpmod.mkdtemp()
+    try:
+        _purity_tree(tmp_p88, tier="docs/grimoire/design", fname="bar-design.md",
+                      content="# Bar\n\n> Status: shipped\n\n## Motivation\nWhy.\n")
+        f88 = check_design_doc_purity(tmp_p88)
+        cases.append(("design-doc-purity: docs/grimoire/design/ tier scanned",
+                      any("bar-design.md" in x for x in f88)))
+    finally:
+        shutil.rmtree(tmp_p88, ignore_errors=True)
+
     lines, passed, failed = [], 0, 0
     for label, ok in cases:
         lines.append(f"  {'PASS' if ok else 'FAIL'}: {label}")
@@ -3590,6 +4908,11 @@ def main() -> None:
     write = "--write-map" in args
     write_portal = "--write-portal" in args
     write_design_index = "--write-design-index" in args
+    baseline_arg = None
+    if "--baseline" in args:
+        idx = args.index("--baseline")
+        has_value = idx + 1 < len(args) and not args[idx + 1].startswith("--")
+        baseline_arg = args[idx + 1] if has_value else BASELINE_DEFAULT_REL
     if "--root" in args:
         idx = args.index("--root")
         root = os.path.abspath(args[idx + 1])
@@ -3621,6 +4944,7 @@ def main() -> None:
     named = [a for a in args if a in CHECKS] or CHECKS
     total = 0
     hierarchy_findings_count = 0
+    all_findings = {}
     for c in named:
         if consumer_mode and c in _FRAMEWORK_ONLY_CHECKS:
             print(f"[{c}] skipped (consumer-mode)")
@@ -3630,7 +4954,11 @@ def main() -> None:
         elif c == "links":               f = check_links(root)
         elif c == "docs-map":            f = check_docs_map(root, write=write)
         elif c == "release-consistency": f = check_release_consistency(root)
+        elif c == "tag-format":          f = check_tag_format(root)
         elif c == "manifest-detect-hygiene": f = check_manifest_detect_hygiene(root)
+        elif c == "skill-placeholder-tokens": f = check_skill_placeholder_tokens(root)
+        elif c == "check-for-checks":     f = check_for_checks(root)
+        elif c == "design-doc-purity":    f = check_design_doc_purity(root)
         elif c == "shipped-pointers":    f = check_shipped_pointers(root)
         elif c == "mirrored-script-parity": f = check_mirrored_script_parity(root)
         elif c == "ported-pair-presence": f = check_ported_pair_presence(root)
@@ -3643,6 +4971,7 @@ def main() -> None:
         elif c == "anti-patterns":       f = check_anti_patterns(root)
         elif c == "product-readme-present": f = check_product_readme_present(root)
         elif c == "version-claim-freshness": f = check_version_claim_freshness(root)
+        elif c == "classifier-compat":    f = check_classifier_compat(root)
         elif c == "portal-stale":
             if write_portal:
                 portal_path = os.path.join(root, PORTAL_REL_PATH)
@@ -3673,11 +5002,27 @@ def main() -> None:
         for x in f:
             print(f"   - {x}")
         total += len(f)
+        all_findings[c] = f
     print(f"\ndoc-assurance: {total} finding(s) across {len(named)} check(s).")
+
+    # Baseline ratchet (#426, v3.93): print the trend, and — when active —
+    # this REPLACES the raw total-based --strict gate below with a
+    # new-findings-only gate (findings already in the baseline don't newly
+    # fail anything they weren't already failing).
+    trend = None
+    if baseline_arg is not None:
+        baseline_path = (baseline_arg if os.path.isabs(baseline_arg)
+                          else os.path.join(root, baseline_arg))
+        trend = apply_baseline(baseline_path, all_findings)
+        print(trend["report"])
+
     # Exit logic: --strict (or dial=block) causes non-zero on any finding.
     # For dial=block, only hierarchy findings block; other checks obey strict.
     if dial == "block" and hierarchy_findings_count:
         sys.exit(1)
+    elif trend is not None:
+        if strict and trend["new"]:
+            sys.exit(1)
     elif strict and total:
         sys.exit(1)
 

@@ -136,8 +136,11 @@ If there are conflicts:
 ### 3. Run tests
 
 ```bash
-{test-command}
+python3 .claude/skills/grm-build-recipe/recipe.py test
 ```
+
+Resolves the project's actual test command from `.claude/recipes.json` (the
+`grm-build-recipe` dispatcher, `≡ just test`) — never a literal placeholder.
 
 If tests pass: continue.
 
@@ -217,7 +220,8 @@ Proceed to the next branch without pausing.
 
 After the last branch in a phase is merged and tested:
 
-1. Run `{build-command}` to confirm the integrated build is clean.
+1. Run `python3 .claude/skills/grm-build-recipe/recipe.py build` to confirm the
+   integrated build is clean (resolved from `.claude/recipes.json`, `≡ just build`).
 2. Proceed immediately to `grm-release-phase` for the next phase (or the final
    merge if all phases are ☑).
 
@@ -227,8 +231,8 @@ After the last branch in a phase is merged and tested:
 
 Pre-merge checklist (verify silently):
 
-- [ ] `{test-command}` green on `version/{X.Y}`
-- [ ] `{build-command}` clean
+- [ ] `python3 .claude/skills/grm-build-recipe/recipe.py test` green on `version/{X.Y}`
+- [ ] `python3 .claude/skills/grm-build-recipe/recipe.py build` clean
 - [ ] All §5 rows ☑ Merged
 - [ ] `version-history.md` entry written on `version/{X.Y}`
 - [ ] **Before-promotion divergence gate clean** — `divergence-check` reports no
@@ -240,7 +244,7 @@ Execute autonomously:
 ```bash
 git switch dev
 git merge --no-ff version/{X.Y}
-{test-command}
+python3 .claude/skills/grm-build-recipe/recipe.py test
 ```
 
 If tests pass:

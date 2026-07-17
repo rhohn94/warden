@@ -23,6 +23,27 @@ Before writing anything, do a final verbal check:
 Do not proceed until the user explicitly confirms. This is the last cheap
 revision point.
 
+**Reuse-gate defect check (mandatory).** For every item in the approved
+report, read its "Reuse resolution:" line (emitted by `grm-release-planning`
+Step 3's mandatory component-registry consult). An item is a **plan defect**
+if either:
+
+- it has a `provides` overlap (`reuse_gate.py` reported a non-empty
+  `overlap-tags` for one of its candidate tags) and its resolution line is
+  `justified-new` **with no reason**, or has no "Reuse resolution:" line at
+  all; or
+- it is missing a "Reuse resolution:" line entirely (every item needs one,
+  including the no-op case).
+
+A defect blocks locking the plan: either add the missing justification, or
+change the item to consume the cataloged component instead of
+re-implementing it. A `no-op` or `no cataloged overlap` resolution is never a
+defect — treat it the same as an empty `Grimoire-Requirement` result: a valid
+outcome, not a gap to chase. This mirrors the `Grimoire-Requirement`
+never-silently-trimmed check below (§Scope-trimming rule) — both are
+mandatory reads that degrade to "nothing found" as a legitimate outcome, but
+never to "wasn't checked."
+
 ---
 
 ## Step 2 — Write the planning doc with `status: draft`
@@ -58,7 +79,14 @@ block the initial write.
   - Description
   - Acceptance criteria
   - Branch name
-  - Design doc reference}
+  - Design doc reference
+  - Reuse resolution (carried verbatim from the report's Step 3 consult —
+    `consumes <id> (<capability>)` / `justified-new because <reason>` /
+    `no cataloged overlap (queried: <tags>)` / `no-op (registry absent/empty)`)
+  - Surface (#362, only when the report tagged one): `gui:web` / `gui:desktop`
+    — carried verbatim from the report's GUI-surface flag. Absent for a
+    non-GUI item; `grm-release-phase` reads this to attach the `gui-test`
+    done-criterion at dispatch (Step 5.5's "UI / served page" row).}
 
 ---
 
@@ -220,3 +248,6 @@ absent from §4 with explicit justification is a scope error.
   are expensive and protected by the hook.
 - Silently omitting a `Grimoire-Requirement` item from §2 without a §4 entry —
   the never-trim rule requires user-visible justification for any such removal.
+- Locking the plan (Step 6) with an item that has `provides` overlap and an
+  empty or missing "Reuse resolution:" justification — that is a plan defect
+  per Step 1's reuse-gate check, not a detail to fix later.

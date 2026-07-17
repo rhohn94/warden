@@ -144,38 +144,52 @@ load-bearing F3-then-F1 runtime order from
 seeded roadmap; if seeding is skipped or the roadmap is unseeded, the bridge
 still proceeds gracefully (§7.4).
 
-### 6.5.7 Web-app catalog filing (conditional — web-app projects only)
+### 6.5.7 Required-feature catalog filing (family-neutral)
 
-**Only when `web-app.value` is `"yes"` in the written config.** After the
-baseline-roadmap rows are seeded (§6.5.2), trigger the required-feature
-catalog filing hand-off:
+**Runs for every project family**, not just web apps (generalized in v3.97,
+#413 — through catalog-version 8 this step only fired for
+`web-app.value == "yes"`). After the baseline-roadmap rows are seeded
+(§6.5.2), trigger the required-feature catalog filing hand-off:
 
-1. Read `.claude/skills/grm-web-app-apply/required-feature-catalog.md` for the
-   entry list and `catalog-version`.
-2. Deduplicate: list all `Grimoire-Requirement`-tagged issues (open **and**
-   closed) and skip any entry whose `[key: <key>]` marker is already present
-   in an existing issue title.
-3. For each unfiled entry, spawn a **Reporter** (`grm-agent-reporter` skill) to file
-   one `Grimoire-Requirement`-tagged ticket via `grm-feedback-to-issue`, using
-   the title, body, labels, and `audience: "internal"` from the catalog entry.
-   `ensure_label` is called automatically before filing (WEB-5).
+1. **Resolve the family.** `web-app.value == "yes"` resolves family `web`
+   directly (the config already declares it). Otherwise reuse
+   `grm-quick-start-template` §1's own detection (the `grm-workflow-bootstrap`
+   signal table) rather than a second detector — this step never invents its
+   own family classifier. If no signal is available at all (a from-scratch
+   repo with no scaffold and `web-app.value: "no"`), skip this step for now;
+   it can be re-run later via `grm-required-feature-catalog` directly once the
+   project's family is known (e.g. after `grm-quick-start-template` runs).
+2. Plan: `python3 .claude/skills/grm-required-feature-catalog/catalog_filing.py
+   plan --root . --family <resolved-family>`.
+3. For each `file` / `file-blocked` / `activate` result, spawn a **Reporter**
+   (`grm-agent-reporter` skill) to file one `Grimoire-Requirement`-tagged
+   ticket via `grm-feedback-to-issue`, using the title, body, labels, and
+   `audience: "internal"` from the catalog entry (`file-blocked` also gets the
+   `blocked-on-upstream` label and the entry's `activation-event` text).
+   `ensure_label` is called automatically before filing (WEB-5). Any
+   `manual-review` result is evaluated by this agent per the entry's own
+   "Detect." guidance. Then `catalog_filing.py record --root . --key <key>
+   --status {filed,blocked-on-upstream}` for each entry acted on.
 
-This is idempotent: a re-run of onboarding files nothing if every entry is
-already filed. If the project's issue tracker is not yet configured (roadmap
-default), the Reporter files into the roadmap backend — no special case needed.
+This is re-runnable: a re-run of onboarding (or a direct
+`grm-required-feature-catalog` invocation later) files only new/changed
+entries per `catalog_filing.py`'s persisted state
+(`.claude/required-feature-catalog-state.json`) — see
+`grm-required-feature-catalog/SKILL.md` §1 for the full action-code table. If
+the project's issue tracker is not yet configured (roadmap default), the
+Reporter files into the roadmap backend — no special case needed.
 
 Design authority: `docs/grimoire/design/web-app-support-design.md` §5.2 (filing flow).
-Catalog source: `.claude/skills/grm-web-app-apply/required-feature-catalog.md`.
-
-**Non-web projects:** skip §6.5.7 entirely.
+Catalog source: `.claude/skills/grm-required-feature-catalog/required-feature-catalog.md`.
 
 ---
 
 ## Anti-patterns
 
 - Running `git init` silently on the interactive path — the §0.2 confirmation
-  is mandatory; only `SKIP ONBOARDING` carries implied consent, and even then
-  the action must be announced.
+  is mandatory; only the trigger (`RUN NON-INTERACTIVE ONBOARDING` / legacy
+  `SKIP ONBOARDING`) carries implied consent, and even then the action must
+  be announced.
 - Re-running `git init` or making a second initial commit when a repo already
   exists — §0 is skipped wholesale in the idempotent case (§0.4).
 - Creating `dev` / `version/*` during §0 — onboarding produces only "a repo on
@@ -209,9 +223,9 @@ Catalog source: `.claude/skills/grm-web-app-apply/required-feature-catalog.md`.
   after the config exists.
 - Auto-running the first-release-planning bridge under Supervised or Weiss —
   those paradigms **prompt-offer** (§7.1); only Noir auto-kicks-off.
-- Prompt-offering the bridge under `SKIP ONBOARDING` for Supervised/Weiss —
-  there is no interactive session; it is a no-op with a pointer (§7.2). Only
-  Noir auto-runs under SKIP.
+- Prompt-offering the bridge under the non-interactive trigger for
+  Supervised/Weiss — there is no interactive session; it is a no-op with a
+  pointer (§7.2). Only Noir auto-runs under the trigger.
 - Hard-coding the baseline capability rows in this skill — §6.5 always reads
   them from `baseline-requirements.md` (the single point of maintenance).
 - Seeding baseline rows under the user's own roadmap headings, or omitting the
@@ -254,11 +268,13 @@ Catalog source: `.claude/skills/grm-web-app-apply/required-feature-catalog.md`.
 - Skipping §3.5 activation, or running it before §3 writes the config — the
   switch skill reads the written `value` (or its argument) and must run after
   the config exists.
-- Running the §6.5.7 catalog filing step for a non-web project — it is
-  conditional; skip it entirely when `web-app.value` is not `"yes"`.
+- Inventing a second family/profile detector inside §6.5.7 instead of reusing
+  `grm-quick-start-template` §1's detection — this step trusts that single
+  source of truth for the resolved family.
 - Filing catalog entries without deduplicating against existing tagged issues
   first — always check `Grimoire-Requirement`-tagged issues (open and closed)
-  before filing, so re-runs are no-ops (§6.5.7).
+  before filing, so re-runs are no-ops (§6.5.7); `catalog_filing.py`'s
+  persisted state is a planning aid, not a replacement for this check.
 
 ## Default label taxonomy seeding (v1.31, #69)
 
@@ -283,10 +299,11 @@ Noir picks a sensible default (recommend `v0.1` for a greenfield project with no
 shipped surface) and notes it in the proposed plan; the prompt-offer paradigms
 surface the choice to the user.
 
-### 7.2 `SKIP ONBOARDING` interaction
+### 7.2 `RUN NON-INTERACTIVE ONBOARDING` interaction
 
-`SKIP ONBOARDING` (§2) is a non-interactive path; the bridge respects the
-inferred paradigm:
+The non-interactive path (§2 — triggered by `RUN NON-INTERACTIVE ONBOARDING`,
+the legacy `SKIP ONBOARDING` literal, or a committed kickoff file per §2.0) is
+non-interactive; the bridge respects the inferred paradigm:
 
 - **Noir inferred** → the bridge **auto-runs** exactly as in §7.1 (the whole
   point of the non-interactive path is full hands-off setup *including* the
@@ -421,7 +438,8 @@ browser-web slice is `web-app = yes`.
 - **Only when the GUI-presence answer is `Yes`** and the `grm-workflow-bootstrap`
   Step 3 Q9 evidence names a **web slice** — rows 8–13/15 (browser/meta web
   frameworks), corroborated by rows 17–18, **or** a server web framework
-  (Flask/Django/Express/FastAPI/Rails/Gin) serving HTML/templates — pre-fill
+  (Flask/Django/Express/FastAPI/Rails/Gin) serving HTML/templates, **or** row
+  21 (Rust `axum`/`actix-web`/`rocket` + a view-layer peer) — pre-fill
   `web-app = yes` with the detected `stack` and **surface the evidence**, then
   ask the user to **confirm or change** via `AskUserQuestion`. Pre-selection
   follows the Q9 confidence levels: High → pre-select "Yes (web app)";
@@ -553,12 +571,60 @@ an agreed plan*. It is **independent** of the other dials. The `Auto` value is
 
 ---
 
-## §2 — Non-interactive path (`SKIP ONBOARDING`)
+## §2 — Non-interactive path (`RUN NON-INTERACTIVE ONBOARDING` / legacy `SKIP ONBOARDING`)
 
-When the first prompt contains the literal string `SKIP ONBOARDING`
-(case-sensitive, any position in the prompt), first run the git-repo-init
-prerequisite (§0) with implied-consent-and-announce semantics (§0.2), then
-bypass the interview and infer config from the prompt text using these rules:
+### §2.0 — Kickoff-file trigger (committed, non-chat) (v3.94, #430)
+
+A live-chat literal is not the only way to reach this path. **Before**
+checking the live prompt text at all, check for a **committed kickoff file**:
+
+1. Look for a root `KICKOFF.md` or `FIRST-RELEASE-PROMPT.md` (repo-root
+   only, case-sensitive filename; check `KICKOFF.md` first, then
+   `FIRST-RELEASE-PROMPT.md`).
+2. If found, read its content. If it contains the trigger literal `RUN
+   NON-INTERACTIVE ONBOARDING` (case-sensitive) — or, for backward
+   compatibility, the legacy literal `SKIP ONBOARDING` — treat the **file's
+   content** as the *effective first prompt* for every inference rule in the
+   table below, concatenated after the live chat prompt (so a project name
+   or other detail the user typed live is still available to the inference
+   rules; the file supplies the trigger and whatever else it carries).
+3. A bare "go", an empty prompt, or literally anything else typed into chat
+   is now sufficient to trigger the full non-interactive bootstrap — the
+   trigger lived in the commit, not the keystroke.
+4. If no kickoff file exists, or one exists but does not contain the
+   trigger, fall through to the ordinary live-prompt check below (no
+   behavior change from before this section existed).
+
+This closes the failure mode the feature addresses: a kickoff artifact
+committed to a fresh scaffold (e.g. by a Project Manager laying down a
+fleet-wide convention across several repos) was previously **inert** — the
+trigger, present in the file, was never read unless a human happened to
+retype it live in chat. Two fleet repos sat 12 days at zero code this way.
+§2.0 makes the committed file self-executing on the very next prompt, of any
+shape, because the sentinel-detection instruction (`CLAUDE.md` line 1, and
+this skill's entry point) now checks the file **first**, before the prompt.
+
+**Idempotency / re-trigger safety:** this check runs only while the sentinel
+(`CLAUDE.md` line 1) is still present — sentinel removal (§5) is the final
+step of both paths, so an already-onboarded project's `CLAUDE.md` never
+re-arms this check, regardless of whether a stray `KICKOFF.md` /
+`FIRST-RELEASE-PROMPT.md` is later left behind in the tree. A leftover
+kickoff file in an onboarded project is inert prose, not a live trigger.
+
+**Rename rationale:** `RUN NON-INTERACTIVE ONBOARDING` names the thing to
+*do*; the legacy `SKIP ONBOARDING` literal named the thing to skip, and was
+read by some agents as "skip the bootstrap entirely" rather than "run the
+non-interactive path" — the opposite of the intent. Both literals are
+accepted, case-sensitive, everywhere this section says "the trigger."
+
+### §2.1 — Live-prompt / effective-prompt trigger
+
+When the effective first prompt (§2.0's kickoff-file content, or otherwise
+the live chat prompt) contains the trigger — `RUN NON-INTERACTIVE ONBOARDING`
+or the legacy `SKIP ONBOARDING` (case-sensitive, any position) — first run
+the git-repo-init prerequisite (§0) with implied-consent-and-announce
+semantics (§0.2), then bypass the interview and infer config from the
+effective prompt text using these rules:
 
 | Field | Inference rule | Default |
 |-------|----------------|---------|
@@ -567,7 +633,7 @@ bypass the interview and infer config from the prompt text using these rules:
 | `workflow-variant.value` | First case-insensitive match of `Fast`, `Efficient`, or `Cheap-Slow` anywhere in the prompt (also accept legacy `Careful-Serial`, which `grm-workflow-variant-switch` migrates to `Cheap-Slow`). Independent of paradigm — do **not** derive from it. Active field — **no** `in-development` flag. | `"Efficient"` |
 | `model-effort-profile.value` | First case-insensitive match of `Medium`, `High Effort`, `Low Effort`, `Efficient`, `Autonomous`, or `Eco/Budget` anywhere in the prompt (resolve `noir` → `Autonomous`). If none matched → `Medium`. Independent of paradigm — do **not** derive from it. Active field — **no** `in-development` flag. | `"Medium"` |
 | GUI presence | `gui`, `ui`, `interface`, `web`, `app`, `frontend` (case-insensitive) → `yes`. `headless`, `cli`, `api` → `no`. Otherwise → `not yet`. | `"not yet"` |
-| `web-app` block | A **browser web-framework** keyword/file signal in the prompt or repo — Q9 rows 8–18 (`react`/`react-dom`, `vue`, `svelte`/`@sveltejs/kit`, `@angular/core`, `solid-js`, `next`/`nuxt`/`@remix-run/*`/`astro`/`gatsby`, `vite`/`tailwind` config) **or** a server web framework (Flask/Django/Express/FastAPI/Rails/Gin) serving views → write `web-app: { value: "yes", stack: <detected hint> }`. A native/TUI/headless signal (Q9 rows 1–7/9/14/16/19–20), or **no** web signal → **omit the block entirely** (absence = default ≡ `"no"`). Because `SKIP ONBOARDING` is non-interactive, inference **is** the answer — there is no confirm step; the block is written only on a positive web signal, so a false positive is bounded to genuinely web-shaped repos. Authority: `web-app-support-design.md` §2.3. | block absent (`"no"`) |
+| `web-app` block | A **browser web-framework** keyword/file signal in the prompt or repo — Q9 rows 8–18 (`react`/`react-dom`, `vue`, `svelte`/`@sveltejs/kit`, `@angular/core`, `solid-js`, `next`/`nuxt`/`@remix-run/*`/`astro`/`gatsby`, `vite`/`tailwind` config) **or** a server web framework (Flask/Django/Express/FastAPI/Rails/Gin) serving views **or** Q9 row 21 (Rust `axum`/`actix-web`/`rocket` + a view-layer peer) → write `web-app: { value: "yes", stack: <detected hint> }`. A native/TUI/headless signal (Q9 rows 1–7/9/14/16/19–20), or **no** web signal → **omit the block entirely** (absence = default ≡ `"no"`). Because this path is non-interactive, inference **is** the answer — there is no confirm step; the block is written only on a positive web signal, so a false positive is bounded to genuinely web-shaped repos. Authority: `web-app-support-design.md` §2.3. | block absent (`"no"`) |
 | `grm-issue-tracker` block | First case-insensitive match of `github` in the prompt → write the block with `provider: "github"` and capture an adjacent `owner/repo` pattern as `repo` (null if none found). Keywords `internal` + `external` both present → dual-tracker config (two entries). If only `roadmap` or no tracker keyword: **omit the block entirely** (absence is the forward-compat default). Full inference rules: `issue-tracker-design.md §9.2`. | block absent (roadmap default) |
 | `release-phase-model.value` | `Auto` inferred **only** when the prompt matches `Auto` (case-insensitive, near "release"/"phase"/"orchestration") **and** the inferred paradigm is `Autonomous`/`Noir`; otherwise `Default`. Never `Auto` under a non-Noir paradigm (Noir-only guard). Independent of the other dials. | `"Default"` |
 
@@ -577,8 +643,11 @@ paradigm), §3.2 (activate profile), §3.3 (activate execution strategy), §3.4
 §3.5 (activate release-phase model), §4 (bootstrap), §5 (remove sentinel), then
 confirm:
 
-> "SKIP ONBOARDING detected. Config written with inferred values — review
-> `.claude/grimoire-config.json` and adjust if needed."
+> "RUN NON-INTERACTIVE ONBOARDING detected. Config written with inferred
+> values — review `.claude/grimoire-config.json` and adjust if needed."
+
+(If the legacy `SKIP ONBOARDING` literal was what matched, use that name in
+the confirmation instead — echo back whichever literal actually triggered.)
 
 ---
 
@@ -640,8 +709,8 @@ above:
 Full schema for the `grm-issue-tracker` block: `docs/grimoire/design/issue-tracker-design.md §5.1`.
 
 The `web-app` block (v3.26) is **optional and additive** — write it **only**
-when Step 4 confirmed an affirmative web answer (or `SKIP ONBOARDING` inferred a
-positive web signal, §2). Absence is the default (absence ≡ `value: "no"`), so a
+when Step 4 confirmed an affirmative web answer (or the non-interactive path
+inferred a positive web signal, §2). Absence is the default (absence ≡ `value: "no"`), so a
 non-web project carries **no** `web-app` key. When present, it sits alongside the
 fields above and does **not** bump `schema-version`:
 
@@ -726,8 +795,8 @@ restore instruction; this cannot happen here because §3 just wrote it.
 ## §3.4 — Activate the issue tracker (conditional)
 
 **Only runs when the user chose a non-roadmap provider in Step 6.** If the
-roadmap default was selected (or inferred under `SKIP ONBOARDING`), §3.4 is
-**skipped entirely** — the `grm-issue-tracker` block is absent from config and the
+roadmap default was selected (or inferred under the non-interactive path),
+§3.4 is **skipped entirely** — the `grm-issue-tracker` block is absent from config and the
 abstraction's §5.2 fallback provides the default. Do not call
 `grm-issue-tracker-switch` for the roadmap-default case.
 
@@ -746,7 +815,7 @@ This mirrors §3.1–§3.3 exactly in invocation style:
   Schema-version stays at 3 (no bump — same graduation precedent as
   `model-effort-profile` and `workflow-variant`).
 
-**`SKIP ONBOARDING` integration:** after inferring the tracker config (§2), call
+**Non-interactive-path integration:** after inferring the tracker config (§2), call
 §3.4 only if a non-roadmap provider was inferred. If roadmap is the inferred
 default, §3.4 is a no-op (do not call the skill).
 
@@ -768,7 +837,7 @@ idempotent — if the value is already active it exits early.
 
 Because onboarding only offers `Auto` under Noir (§Step 7), the guard never
 fires on a well-formed interactive run; it is defence-in-depth for the
-`SKIP ONBOARDING` path and for re-runs. If the activation is rejected (e.g. an
+non-interactive path and for re-runs. If the activation is rejected (e.g. an
 `Auto` value paired with a non-Noir paradigm), the dial stays at `Default` —
 log the rejection and continue; do not block onboarding.
 

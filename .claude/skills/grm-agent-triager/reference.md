@@ -107,8 +107,12 @@ considered Ready for dispatch. If no milestone is clearly applicable, assign
 
 **How to pick the target milestone:**
 
-1. Read `docs/roadmap.md` §v{X.Y} for the currently in-flight release version to
-   understand that release's scope.
+1. Get the currently in-flight release version's scope without reading the
+   whole roadmap: `python3 .claude/skills/grm-doc-section/doc_section.py
+   --file docs/roadmap.md --heading "## v{X.Y}"` (#407) — pass just the
+   version prefix; the extractor resolves the full heading (e.g. `## v3.96 —
+   Token diet`) via its unambiguous-prefix fallback and returns only that
+   release's section.
 2. Ask: does this issue fit the current version's scope and capacity? If yes →
    assign `milestone:v{X.Y}` (e.g. `milestone:v3.36`).
 3. If the issue is out of scope for the current release but a future version is

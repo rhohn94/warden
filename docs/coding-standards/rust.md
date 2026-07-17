@@ -46,6 +46,10 @@ Per-technology coding standards for Rust. Read alongside the cross-language
 - Property-based testing with `proptest` or `quickcheck` is encouraged for
   functions with non-trivial input spaces.
 - Name tests descriptively: `given_empty_input_returns_error`, not `test1`.
+- `recipe.py test` / `just test` run the **full** suite (`cargo test`: in-module
+  unit tests + crate-root `tests/` integration tests). `recipe.py unit-test` /
+  `just unit-test` (#360) run only `cargo test --lib` — the in-module
+  `#[cfg(test)]` unit tests, excluding crate-root `tests/`.
 
 ## Module & package structure
 
@@ -97,6 +101,26 @@ use the `tracing` ecosystem behind one telemetry init function:
 - **API/service:** `tracing` spans per request with latency fields; an
   HTTP-client middleware layer for downstream-call traces.
 - **CLI:** record the subcommand, flags, and exit code at the top-level handler.
+
+## Logging
+
+See `../coding-standards.md` §Logging for the standard field contract
+(`ts`/`level`/`target`/`msg`/`correlation_id`/`instance`/`version`, JSON-lines
+to stdout). The `logging_init.rs` starter module — built on
+`tracing`/`tracing-subscriber` with a custom JSON-lines `FormatEvent`,
+replacing the old `env_logger`/`log` plain-text default — ships in the `cli`,
+`gui`, and `service` quick-start templates' `src/`; call
+`logging_init::init(&cfg.log_level, &logging_init::instance_id(),
+env!("CARGO_PKG_VERSION"))` once in `main`, before anything else, and use
+`tracing::{trace,debug,info,warn,error}!` at every call site downstream — no
+per-call formatting or field-passing needed. `correlation_id` is ambient
+(thread-local): call `logging_init::set_correlation_id(id)` once at the top
+of a request/task, `clear_correlation_id()` at the end.
+
+Not shipped in the `lib` profile (a pure library has no `fn main()` process
+to log from) or the `web` profile (its Rust payload is scaffold-seam-only as
+of this spec — port the module by hand once that template gains a real
+entrypoint).
 
 
 ## Audit hints

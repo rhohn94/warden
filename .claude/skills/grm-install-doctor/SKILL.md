@@ -129,6 +129,14 @@ Map each remaining finding to its owning skill and act in this order:
    `.claude/architecture-rules.json` and adapt the layer globs; or, if the
    project deliberately declines, commit a rules file with `"opt_out": true` +
    an `"opt_out-reason"` so the decision is tracked, not silent.
+8. **Hook-contract claim-unmet FAIL** (#441) → a config-claimed capability
+   (e.g. `autonomous-push.enabled`) whose implementing hook's `HOOK_CONTRACT`
+   stamp doesn't declare it. Re-sync `.claude/hooks/` from upstream via
+   `grm-sync-from-upstream` (hooks are an atomic-replace artifact class,
+   v3.90) to pick up a hook version whose stamp matches its real behavior, or
+   unset the config claim if it no longer applies. **Never** hand-edit the
+   `HOOK_CONTRACT` line to silence the mismatch without confirming the hook's
+   actual behavior supports the claim.
 
 After repairs, **re-run Step 1** (the audit is idempotent) and emit a fresh
 report showing what changed. A second clean run is the success signal.
@@ -185,6 +193,9 @@ The helper emits a Markdown report (or JSON with `--json`). Shape:
 ## Architecture-rules adoption (.claude/architecture-rules.json)
 | `.claude/architecture-rules.json` | WARN | absent — architecture fitness rules not adopted; copy a per-family starter … |
 
+## Hook capability contracts (config claims vs installed HOOK_CONTRACT stamps)
+| `hook-contract:autonomous-push.enabled` | FAIL | config claims 'autonomous-push.enabled' but push-guard.sh does not declare capability 'autonomous-push' … |
+
 ## Notes
 - Feature-adoption is NOT audited mechanically: run each feature-manifest detect …
 ```
@@ -205,6 +216,8 @@ not write it to a file unless the user asks.
 ## Reference (load on demand)
 
 - `Step 1 — Audit (always; read-only)` — see `reference.md`
+- `Hook capability contracts (config claims vs installed stamps, #441)` — see
+  `reference.md` §1e
 - `Anti-patterns` — see `reference.md`
 - `Config validation` — see `reference.md`
 - `Justfile contract check` — see `reference.md`

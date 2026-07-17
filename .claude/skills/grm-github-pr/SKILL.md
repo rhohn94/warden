@@ -1,6 +1,6 @@
 ---
 name: grm-github-pr
-description: Open, review, and merge GitHub pull requests at a release merge boundary when github-pr.enabled is true. The integration master / Project Manager pushes the head branch, opens a PR (idempotent), dispatches a Reviewer that posts findings onto the PR, then merges via gh pr merge — replacing the local --no-ff merge. Opening/merging a PR is push-class: human-gated unless autonomous-push.enabled. Use when opening, reviewing, or merging a release PR.
+description: Open, review, and merge GitHub pull requests at a release merge boundary when github-pr.enabled is true — replaces the local --no-ff merge with a Reviewer-vetted `gh pr merge`. Opening/merging a PR is push-class: human-gated unless autonomous-push.enabled. Use when opening, reviewing, or merging a release PR.
 ---
 
 # github-pr — PR-based review & merge

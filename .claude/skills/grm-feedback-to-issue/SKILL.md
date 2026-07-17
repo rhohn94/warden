@@ -83,7 +83,7 @@ Derive each IssueDraft field:
 |---|---|
 | `title` | One imperative sentence ≤80 chars. Start with a verb (Crash, Fix, Add). No filler words. |
 | `body` | 2–4 paragraph markdown (§2 body structure). ≤400 words. Synthesize — do not transcribe verbatim. |
-| `labels` | `bug` (crash/error), `enhancement` (feature/improvement), `question` (unclear), `docs` (gap), `ux` (usability), `Grimoire-Requirement` (framework-mandated requirement — see §9). Multiple allowed. |
+| `labels` | `bug` (crash/error), `enhancement` (feature/improvement), `question` (unclear), `docs` (gap), `ux` (usability), `Grimoire-Requirement` (framework-mandated requirement — see §9), `gui` + `gui:web`/`gui:desktop` (GUI surface — see §10). Multiple allowed. |
 | `audience` | See §3. |
 | `tracker` | Leave `null` — routing resolves via audience (§4). |
 
@@ -232,6 +232,38 @@ Grimoire repository for that rationale). When filing an issue tagged with it:
    is applied only when the *caller* explicitly requests it (e.g. the catalog
    filing flow in WEB-7, or an integration master explicitly seeding a
    framework requirement). Never infer it from the feedback text.
+
+---
+
+## §10 — GUI surface labels: `gui` / `gui:web` / `gui:desktop` (#362)
+
+Unlike `Grimoire-Requirement`, these three labels ARE inferred from feedback
+text — they mark "this work touches a GUI surface," not a framework-internal
+requirement, so heuristic auto-apply is the intended behavior.
+
+1. **`gui` heuristic.** Apply `gui` when the feedback text mentions any of:
+   UI, screen, page, component, screenshot, Preview, window, panel, button,
+   dialog, render(ed/ing), or the project's own `web-app.value`/app-profile
+   already marks it a web or desktop GUI project (§Audience resolution's
+   project-context read already surfaces this signal — reuse it, don't
+   re-derive).
+2. **Platform sub-label.** When `gui` applies, additionally apply:
+   - `gui:web` — the project is a web app (`web-app.value: "yes"`), or the
+     feedback mentions a browser-rendered surface (page, route, DOM,
+     Preview).
+   - `gui:desktop` — the project's stack/profile is `gui`/`native` (egui/
+     eframe or similar), or the feedback mentions a native window/panel.
+   - Ambiguous or undetermined: apply `gui` alone; do not guess the platform.
+3. **Multiple allowed** alongside the existing `bug`/`enhancement`/etc. labels
+   — a GUI bug is still `bug` + `gui` (+ platform).
+4. **Auto-ensured** — like every label FI1 applies, `IssueTracker.create()`
+   calls `ensure_label` before filing, so `gui`/`gui:web`/`gui:desktop` exist
+   on GitHub the first time they're used.
+5. **Planning consequence** — a `gui`-labeled issue that `grm-release-planning`
+   picks up should carry the GUI-surface flag (`Surface: gui:web`/`gui:desktop`)
+   into the work-items report, so `grm-release-phase` attaches the `gui-test`
+   done-criterion at dispatch. See
+   `docs/grimoire/design/runtime-verification-design.md` §GUI testing.
 
 ---
 

@@ -14,7 +14,7 @@ python3 .claude/skills/grm-install-doctor/install_doctor.py audit --no-network  
 python3 .claude/skills/grm-install-doctor/install_doctor.py --self-test     # offline self-tests
 ```
 
-The script performs four audits and emits the health-report artifact (see
+The script performs five audits and emits the health-report artifact (see
 *Output format*). It exits `0` when healthy, `1` when any check is degraded,
 `2` on a usage/internal error.
 
@@ -139,6 +139,43 @@ feature is actually **adopted**, not merely *available*:
 This is the same delta-and-detect procedure as `grm-sync-from-upstream` Step 4.5;
 do not duplicate it — follow that section.
 
+### 1e — Hook capability contracts (config claims vs installed stamps, #441)
+
+Every shipped guard hook (`protected-branch-guard.sh`, `push-guard.sh`,
+`stealth-guard.sh`, `worktree-guard.sh`, `bundled-sync-guard.sh`,
+`release-plan-guard.sh`, `autonomy-allow.sh`) carries a machine-readable
+`# HOOK_CONTRACT: vN capabilities=[cap-a,cap-b,...]` comment in its first
+lines, declaring what that hook version actually enforces. The helper
+cross-checks a small registry (`CAPABILITY_CLAIMS` in `install_doctor.py`)
+mapping a `grimoire-config.json` dial to the capability it implies and the
+hook(s) that implement it — e.g. `autonomous-push.enabled: true` implies
+`push-guard.sh` AND `autonomy-allow.sh` must both declare capability
+`autonomous-push`.
+
+Three outcomes per registry entry:
+
+- **claim-satisfied** — the config dial is set AND every implementing hook
+  declares the capability → a silent `OK` row (visible, never a problem).
+- **claim-unmet** — the config dial is set but at least one implementing
+  hook's stamp lacks the capability (a stale hook — the exact warden
+  incident: `autonomous-push.enabled` claimed for weeks after
+  `push-guard.sh` predated the feature) → **FAIL**, a `PROBLEM_STATUSES`
+  member that drives exit 1.
+- **no-claims** — the config dial isn't set for this project → the entry is
+  skipped entirely, not even an `OK` row.
+
+An absent hook file (never synced) declares zero capabilities, so it fails
+any claim naming it — the fail-closed direction for a health check. The
+repair step for a claim-unmet FAIL is **re-sync `.claude/hooks/` from
+upstream** (hooks are an atomic-replace artifact class, v3.90) to pick up a
+hook version whose stamp matches its real behavior, or unset the config
+claim if it no longer applies. Never hand-edit a `HOOK_CONTRACT` line to
+silence the mismatch without confirming the hook's actual behavior supports
+the claim — that turns a real mechanical signal into a lie.
+
+Design rationale and the full contract-header format are a framework-internal
+design spec — see the upstream Grimoire repository for that rationale.
+
 ---
 
 ---
@@ -164,6 +201,11 @@ do not duplicate it — follow that section.
   its config was never enabled. Always confirm via the `detect` predicate.
 - **Committing or pushing** — this skill reads, audits, and (on repair) calls
   other skills; it never commits.
+- **Hand-editing a `HOOK_CONTRACT` line to silence a claim-unmet FAIL** — the
+  stamp must reflect the hook's actual behavior. If a claim is genuinely
+  unmet, re-sync the hook from upstream (or unset the config claim); never
+  edit the header to match the config without confirming the hook does what
+  it now claims.
 
 ## Config validation (v1.31, #68)
 

@@ -1,6 +1,6 @@
 ---
 name: grm-coding-practices-audit
-description: Audit a codebase against the project's coding standards and architecture guidelines and produce a structured adherence report; optionally file one Issue Tracker issue per gap. Agent-driven (no linter/AST). The audit surface is read from machine-readable audit-hints in the standards docs, so it grows as those docs evolve. Use when auditing adherence to coding standards or filing issues for standards gaps.
+description: Audit a codebase against the project's coding standards and architecture guidelines and produce a structured adherence report; optionally file one Issue Tracker issue per gap. Agent-driven (no linter/AST). Use when auditing adherence to coding standards or filing issues for standards gaps.
 ---
 
 # Coding-practices audit

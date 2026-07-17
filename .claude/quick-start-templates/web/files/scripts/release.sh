@@ -14,16 +14,27 @@
 #   3. Bump the project's version file(s) — generic across stacks (Cargo.toml /
 #      package.json / a VERSION file), highest-precedence source wins.
 #   4. `recipe.py test`, then `recipe.py build --release` (or the `just`
-#      equivalents), archive (delegates to `just package` when available), commit
-#      the version bump, and tag.
+#      equivalents); on a Cargo (rust) project, asserts target/release/ actually
+#      holds artifacts after a prod build (#442 — refuses to package a debug
+#      binary as a release asset); archive (delegates to `just package` when
+#      available), commit the version bump, and tag.
 #   5. Milestone reconciliation (§Milestone reconciliation below): resolve the
 #      issues carrying the `milestone:v{X.Y}` label for this version through the
 #      grm-issue-tracker abstraction (NOT raw `gh`), fold their titles into the
 #      release notes, and gate on `deploy_policy` if open stragglers remain.
+#   6. Publish (§Publish below, #418): once the tag has reached the remote, run
+#      the ASSERTING publisher (`publish_release.py`, already shipped at
+#      `.claude/skills/grm-project-release/` — the same tool the framework's own
+#      self-hosted `scripts/release.sh` calls) so `gh release create`/asset
+#      upload/checksum verification happen as ONE guarded step inside this
+#      entrypoint instead of scattered raw verbs the harness classifier would
+#      gate individually. Skippable (`--no-publish` / `RELEASE_SKIP_PUBLISH`)
+#      for tag-only releases or a project not publishing via GitHub Releases.
 #
 # PARAMETERIZED, not hardcoded to Grimoire's own doc layout. Every stack-specific
 # knob comes from (highest wins):
-#   1. CLI flags (--changelog / --release-branch / --version / --dry-run / --no-verify)
+#   1. CLI flags (--changelog / --release-branch / --version / --dry-run /
+#      --no-verify / --no-publish)
 #   2. a small manifest file (default scripts/release-manifest.sh, sourced as
 #      shell vars) — see the RELEASE_* contract below.
 #   3. built-in fallbacks (docs/version-history.md, `main`, auto-detected version files).
@@ -34,14 +45,18 @@
 # This is a REFERENCE / TEMPLATE implementation. It cannot know a project's real
 # release infra, so a missing-but-required precondition is a LOUD failure (e.g. no
 # changelog heading, an already-present tag), never a silent no-op. `--dry-run`
-# prints every mutating action and changes nothing (no bump, commit, tag, or push).
-# It NEVER pushes — pushing a release stays a human/integration-master action.
+# prints every mutating action and changes nothing (no bump, commit, tag, publish,
+# or push). It NEVER pushes — pushing a release stays a human/integration-master
+# action, and the publish step (§Publish) is itself gated on the tag having
+# already reached the remote — a read-only check, this script never pushes to
+# satisfy it.
 #
 # Self-test: `scripts/release.sh --self-test` runs an offline temp-dir round trip
 # (a synthetic git repo + changelog + version files: assert version derivation,
-# each guard, the multi-stack bump, dry-run inertness, a real bump+commit+tag, and
-# the milestone-notes fold). No repo bash --self-test convention exists (the .sh
-# hooks are python polyglots), so a temp-dir round trip is used.
+# each guard, the multi-stack bump, dry-run inertness, a real bump+commit+tag, the
+# milestone-notes fold, and the publish gate — blocked before the tag reaches a
+# synthetic remote, proceeding once it does). No repo bash --self-test convention
+# exists (the .sh hooks are python polyglots), so a temp-dir round trip is used.
 set -euo pipefail
 
 # ── manifest contract (RELEASE_* shell vars a project may set) ────────────────
@@ -54,12 +69,24 @@ set -euo pipefail
 #   RELEASE_PACKAGE_CMD     archive command (default: `just package` if a justfile
 #                           has a package recipe; else skipped with a note)
 #   RELEASE_MILESTONE_PREFIX  label prefix for the milestone convention (default milestone:v)
+#   RELEASE_REMOTE          git remote the tag must reach before publish runs (default origin)
+#   RELEASE_PUBLISH_CMD     publish command run once the tag is confirmed on the
+#                           remote (default: publish_release.py --tag v$VERSION,
+#                           the ASSERTING publisher — every dist/ asset must land
+#                           on the GitHub Release and its sha256 must match
+#                           SHA256SUMS, else hard-fail; `just package`'s dist/
+#                           output — release.json + SHA256SUMS + tarball — is
+#                           exactly what it expects, so no extra wiring needed)
 # Optional hooks (env, default-skip):
 #   RELEASE_SKIP_VERIFY     when "1", skip test+build (a CI that ran them earlier)
+#   RELEASE_SKIP_PUBLISH    when "1" (or --no-publish), skip the remote-tag check
+#                           and the publish step entirely — tag-only releases, or
+#                           a project that doesn't publish via GitHub Releases
 DEFAULT_MANIFEST="scripts/release-manifest.sh"
 DEFAULT_CHANGELOG="docs/version-history.md"
 DEFAULT_BRANCH="main"
 DEFAULT_MILESTONE_PREFIX="milestone:v"
+DEFAULT_REMOTE="origin"
 # The issue-tracker abstraction (routes across github + roadmap backends without
 # per-provider branching in this script). Overridable for a relocated skill dir.
 ISSUE_TRACKER="${ISSUE_TRACKER:-.claude/skills/grm-issue-tracker/issue_tracker.py}"
@@ -138,6 +165,24 @@ run_guards() {
     changelog_has_entry "$changelog" "$version" \
         || die "guard: no changelog entry for v$version in $changelog — add the release section first."
     note "guards passed: branch=$branch clean tag-absent changelog-entry-present for v$version."
+}
+
+# ── remote-tag verification (#418) ─────────────────────────────────────────
+# READ-ONLY: this script never pushes (see header). It only confirms the tag
+# already reached the remote before letting publish run against it — mirrors
+# the framework's own self-hosted `scripts/release.sh` (its #298 fix): a fresh
+# tag can't be published yet (GitHub can't see it), so the expected flow is
+# (1) this check fails fast with a "push it first" message, (2) the tag +
+# branch get pushed via the human-gated / autonomous-push integration step,
+# (3) re-run ONLY the publish command (not the whole ceremony — the tag
+# already exists and guards would refuse a second full run anyway).
+remote_configured() {
+    git remote get-url "$1" >/dev/null 2>&1
+}
+
+tag_pushed() {
+    local remote="$1" version="$2"
+    [ -n "$(git ls-remote --tags "$remote" "refs/tags/v$version" 2>/dev/null)" ]
 }
 
 # ── multi-stack version bump ──────────────────────────────────────────────────
@@ -263,6 +308,42 @@ sys.stdout.write("\n".join(lines))
 PY
 }
 
+# ── rust-stack release-profile assertion (#442 fix suggestion 3) ──────────────
+# Cargo always writes a plain `cargo build` to target/debug/ and only writes
+# target/release/ for a `--release` (or `--profile release`) invocation. If
+# the recipe.py `build` env param's ${env}->cargo-profile wiring is ever
+# broken again (the exact #442 failure mode), a "prod" build silently stays a
+# debug build while this ceremony reports success. When Cargo.toml is present
+# and the build step actually ran with env=prod, assert target/release/ holds
+# real output — refuse to package/tag a debug binary as a release asset.
+# RELEASE_PROFILE_ASSERT_CMD overrides with a project-specific check (e.g. a
+# workspace with a non-default target-dir); unset + no Cargo.toml == skipped.
+assert_release_profile() {
+    local build_cmd="$1"
+    [ -f Cargo.toml ] || return 0
+    case "$build_cmd" in
+        *--env\ prod*|*--env=prod*) ;;
+        *) return 0 ;;  # not a prod build — nothing to assert
+    esac
+    if [ -n "${RELEASE_PROFILE_ASSERT_CMD:-}" ]; then
+        note "release-profile assert: $RELEASE_PROFILE_ASSERT_CMD"
+        act bash -c "$RELEASE_PROFILE_ASSERT_CMD"
+        return $?
+    fi
+    if [ "${DRY_RUN:-0}" = "1" ]; then
+        echo "  [dry-run] assert target/release/ holds built artifacts (rust release-profile check)"
+        return 0
+    fi
+    if [ ! -d target/release ] || [ -z "$(find target/release -maxdepth 1 -type f 2>/dev/null)" ]; then
+        die "release-profile assert: target/release/ is missing or empty after a" \
+            "prod build — the build likely produced a DEBUG binary instead of" \
+            "--release (see #442). Set RELEASE_PROFILE_ASSERT_CMD in the manifest" \
+            "to customize this check, or fix the build command's \${env}->cargo" \
+            "profile wiring."
+    fi
+    note "release-profile assert: target/release/ contains built artifacts — OK."
+}
+
 # Gate on deploy_policy when open stragglers remain under the milestone.
 #   auto    → proceed with a loud warning.
 #   pr_gate/manual → refuse unless RELEASE_ALLOW_OPEN_MILESTONE=1 (explicit override).
@@ -309,7 +390,7 @@ PY
 # ── the release flow ──────────────────────────────────────────────────────────
 run_release() {
     local manifest="$DEFAULT_MANIFEST"
-    local cli_changelog="" cli_branch="" cli_version="" cli_no_verify=""
+    local cli_changelog="" cli_branch="" cli_version="" cli_no_verify="" cli_no_publish=""
     DRY_RUN=0
     while [ $# -gt 0 ]; do
         case "$1" in
@@ -317,6 +398,7 @@ run_release() {
             --release-branch) cli_branch="$2"; shift 2;;
             --version) cli_version="$2"; shift 2;;
             --no-verify) cli_no_verify=1; shift;;
+            --no-publish) cli_no_publish=1; shift;;
             --dry-run) DRY_RUN=1; shift;;
             --manifest) manifest="$2"; shift 2;;
             *) die "unknown argument: $1 (see the header for usage)";;
@@ -371,6 +453,7 @@ run_release() {
         act bash -c "$test_cmd"
         note "build: $build_cmd"
         act bash -c "$build_cmd"
+        assert_release_profile "$build_cmd"
     fi
     # Archive: prefer the manifest's package cmd, else `just package` when present.
     if [ -z "$package_cmd" ] && command -v just >/dev/null 2>&1 \
@@ -419,8 +502,37 @@ run_release() {
     note "tagged v$version. NOTE: this script does NOT push — push the tag + branch"
     note "      via the integration master / your human-gated release step."
 
-    # Emit the assembled release notes to stdout (the caller feeds these to
-    # `gh release create --notes-file` alongside the changelog section).
+    # 7. Publish (#418) — once the tag has reached the remote, run the
+    #    ASSERTING publisher as ONE guarded step, replacing scattered raw
+    #    `gh release create`/upload/checksum verbs. Skippable for tag-only
+    #    releases. On a fresh tag (not pushed yet) this fails fast with an
+    #    actionable message instead of letting the publish command fail on a
+    #    tag GitHub can't see yet — re-run ONLY the publish command after the
+    #    tag is pushed, not the whole ceremony (guards would refuse a second
+    #    full run: the tag now exists).
+    local remote; remote="${RELEASE_REMOTE:-$DEFAULT_REMOTE}"
+    local publish_cmd
+    publish_cmd="${RELEASE_PUBLISH_CMD:-python3 .claude/skills/grm-project-release/publish_release.py --tag v$version}"
+    if [ -n "$cli_no_publish" ] || [ "${RELEASE_SKIP_PUBLISH:-0}" = "1" ]; then
+        note "skipping remote-tag check + publish (--no-publish / RELEASE_SKIP_PUBLISH)."
+    elif [ "$DRY_RUN" = "1" ]; then
+        echo "  [dry-run] git ls-remote --tags $remote refs/tags/v$version   (verify pushed before publish)"
+        echo "  [dry-run] $publish_cmd"
+    else
+        note "verifying v$version reached remote '$remote' before publish..."
+        remote_configured "$remote" \
+            || die "remote '$remote' is not configured — cannot verify v$version was pushed. Configure it (or set RELEASE_REMOTE), push v$version, then re-run ONLY the publisher: \`$publish_cmd\`."
+        tag_pushed "$remote" "$version" \
+            || die "tag v$version not found on remote '$remote' — push it first (e.g. \`git push $remote v$version\`), then re-run ONLY the publisher: \`$publish_cmd\`."
+        note "v$version confirmed on remote '$remote' — publishing: $publish_cmd"
+        bash -c "$publish_cmd" \
+            || die "publish FAILED. The tag v$version exists and is fine: do NOT delete/re-tag; fix the cause, then re-run ONLY the publisher: \`$publish_cmd\`."
+    fi
+
+    # Emit the assembled milestone notes to stdout (useful for a customized
+    # RELEASE_PUBLISH_CMD that wants to pass them to `gh release create
+    # --notes-file`; the default publish_release.py assembles its own Release
+    # body from the changelog and does not need this).
     if [ -n "$notes" ]; then
         printf '%s\n' "$notes"
     fi
@@ -476,6 +588,7 @@ EOF
       mkdir -p scripts
       cat > scripts/release-manifest.sh <<'EOF'
 RELEASE_SKIP_VERIFY="1"
+RELEASE_SKIP_PUBLISH="1"
 EOF
       git add -A; git commit -qm "seed"
     )
@@ -568,6 +681,7 @@ EOF
 EOF
       cat > scripts/release-manifest.sh <<'EOF'
 RELEASE_SKIP_VERIFY="1"
+RELEASE_SKIP_PUBLISH="1"
 EOF
       git add -A; git commit -qm seed )
     out="$( cd "$td2" && bash "$script_path" 2>/dev/null )"
@@ -598,6 +712,7 @@ EOF
 EOF
       cat > scripts/release-manifest.sh <<'EOF'
 RELEASE_SKIP_VERIFY="1"
+RELEASE_SKIP_PUBLISH="1"
 EOF
       git add -A; git commit -qm seed )
     if ( cd "$td3" && bash "$script_path" --dry-run ) >/dev/null 2>&1; then
@@ -633,6 +748,7 @@ VERSION = "0.0.0"
 EOF
       cat > scripts/release-manifest.sh <<'EOF'
 RELEASE_SKIP_VERIFY="1"
+RELEASE_SKIP_PUBLISH="1"
 RELEASE_VERSION_FILES="src/version.py"
 EOF
       git add -A; git commit -qm seed )
@@ -668,6 +784,7 @@ EOF
 EOF
       cat > scripts/release-manifest.sh <<'EOF'
 RELEASE_SKIP_VERIFY="1"
+RELEASE_SKIP_PUBLISH="1"
 RELEASE_VERSION_FILES="VERSION does/not/exist.py"
 EOF
       git add -A; git commit -qm seed )
@@ -680,17 +797,151 @@ EOF
     fi
     rm -rf "$td5"
 
+    # 13. #442 release-profile assertion: a non-Cargo build is a no-op (nothing
+    #     to assert); a Cargo project's prod build with an empty/missing
+    #     target/release/ is refused; one with real artifacts passes; a dev
+    #     (non-prod) build is skipped even with Cargo.toml present.
+    local td6; td6="$(mktemp -d)"
+    # no Cargo.toml at all — always a no-op regardless of build_cmd.
+    if ! ( cd "$td6" && bash "$script_path" --assert-release-profile "recipe.py build --env prod" ); then
+        echo "self-test: assert_release_profile should no-op without Cargo.toml" >&2; fail=1
+    fi
+    ( cd "$td6" && : > Cargo.toml )
+    # a non-prod build_cmd is skipped even with Cargo.toml present.
+    if ! ( cd "$td6" && bash "$script_path" --assert-release-profile "recipe.py build --env dev" ); then
+        echo "self-test: assert_release_profile should skip a non-prod build" >&2; fail=1
+    fi
+    # prod build, no target/release/ at all — refused.
+    if ( cd "$td6" && bash "$script_path" --assert-release-profile "recipe.py build --env prod" ) >/dev/null 2>&1; then
+        echo "self-test: assert_release_profile should refuse a missing target/release/" >&2; fail=1
+    fi
+    # prod build, target/release/ exists but is empty — still refused.
+    ( cd "$td6" && mkdir -p target/release )
+    if ( cd "$td6" && bash "$script_path" --assert-release-profile "recipe.py build --env prod" ) >/dev/null 2>&1; then
+        echo "self-test: assert_release_profile should refuse an empty target/release/" >&2; fail=1
+    fi
+    # prod build, target/release/ holds a real artifact — passes.
+    ( cd "$td6" && touch target/release/demo )
+    if ! ( cd "$td6" && bash "$script_path" --assert-release-profile "recipe.py build --env prod" ); then
+        echo "self-test: assert_release_profile should pass with real target/release/ artifacts" >&2; fail=1
+    fi
+    # a project-supplied override always wins, bypassing the target/release/ check.
+    ( cd "$td6" && rm -rf target )
+    if ! ( cd "$td6" && RELEASE_PROFILE_ASSERT_CMD="true" bash "$script_path" --assert-release-profile "recipe.py build --env prod" ); then
+        echo "self-test: RELEASE_PROFILE_ASSERT_CMD override should be honored" >&2; fail=1
+    fi
+    rm -rf "$td6"
+
+    # A bare local repo as a synthetic "origin" (#418: the remote-tag check
+    # needs a real remote to query — no network, just a second local repo).
+    # push_tag=1 pre-pushes an annotated v9.9 to it (then drops the local ref,
+    # so the run's own tag-exists guard still sees a fresh, untagged repo) to
+    # model "the tag already reached the remote". push_tag=0 leaves the remote
+    # tag-less, modeling "not pushed yet". Echoes the bare repo path.
+    _remote_setup() {
+        local td="$1" push_tag="$2"
+        local bare; bare="$(mktemp -d)"
+        git init -q --bare "$bare"
+        ( cd "$td" && git remote add origin "$bare" )
+        if [ "$push_tag" = "1" ]; then
+            ( cd "$td" && git tag -a v9.9 -m pre \
+                && git push -q origin v9.9 \
+                && git tag -d v9.9 ) >/dev/null 2>&1
+        fi
+        echo "$bare"
+    }
+
+    # 14. #418 publish gate (a): the tag is NOT yet on the remote — the real
+    #     run still tags v9.9 (tagging happens before the publish check), but
+    #     fails fast BEFORE running RELEASE_PUBLISH_CMD, with an actionable
+    #     "push it first, then re-run ONLY the publisher" message.
+    local td7; td7="$(mktemp -d)"
+    ( cd "$td7"
+      git init -q; git config user.email t@t; git config user.name t
+      mkdir -p .claude/skills/grm-issue-tracker .claude/skills/stub docs scripts
+      cat > .claude/skills/grm-issue-tracker/issue_tracker.py <<'EOF'
+import sys
+print("[]")
+EOF
+      cat > docs/version-history.md <<'EOF'
+# Version History
+
+## v9.9 — Test release
+
+- entry
+EOF
+      # Records whether it actually ran (touches a sentinel next to itself),
+      # so the assertions below can prove publish was/wasn't reached.
+      cat > .claude/skills/stub/publish_sentinel.py <<'EOF'
+import pathlib
+pathlib.Path(__file__).with_name("publish_ran.marker").touch()
+EOF
+      cat > scripts/release-manifest.sh <<'EOF'
+RELEASE_SKIP_VERIFY="1"
+RELEASE_PUBLISH_CMD="python3 .claude/skills/stub/publish_sentinel.py"
+EOF
+      git add -A; git commit -qm seed )
+    local bare7; bare7="$(_remote_setup "$td7" 0)"   # remote configured, v9.9 NOT pushed
+    local out rc
+    if out="$( cd "$td7" && bash "$script_path" 2>&1 )"; then rc=0; else rc=$?; fi
+    [ "$rc" -eq 0 ] && { echo "self-test: run must fail when the tag is not on the remote" >&2; fail=1; }
+    ( cd "$td7" && git rev-parse -q --verify refs/tags/v9.9 ) >/dev/null 2>&1 \
+        || { echo "self-test: tag v9.9 should still be created before the publish gate runs" >&2; fail=1; }
+    echo "$out" | grep -q "not found on remote" \
+        || { echo "self-test: missing not-found-on-remote message" >&2; fail=1; }
+    echo "$out" | grep -q "push it first" \
+        || { echo "self-test: missing push-first guidance" >&2; fail=1; }
+    [ -f "$td7/.claude/skills/stub/publish_ran.marker" ] \
+        && { echo "self-test: publish must NOT run when the tag is unpushed" >&2; fail=1; }
+    rm -rf "$td7" "$bare7"
+
+    # 15. #418 publish gate (b): the tag IS already on the remote — publish
+    #     proceeds (the gate is a precondition check, not a permanent block).
+    local td8; td8="$(mktemp -d)"
+    ( cd "$td8"
+      git init -q; git config user.email t@t; git config user.name t
+      mkdir -p .claude/skills/grm-issue-tracker .claude/skills/stub docs scripts
+      cat > .claude/skills/grm-issue-tracker/issue_tracker.py <<'EOF'
+import sys
+print("[]")
+EOF
+      cat > docs/version-history.md <<'EOF'
+# Version History
+
+## v9.9 — Test release
+
+- entry
+EOF
+      cat > .claude/skills/stub/publish_sentinel.py <<'EOF'
+import pathlib
+pathlib.Path(__file__).with_name("publish_ran.marker").touch()
+EOF
+      cat > scripts/release-manifest.sh <<'EOF'
+RELEASE_SKIP_VERIFY="1"
+RELEASE_PUBLISH_CMD="python3 .claude/skills/stub/publish_sentinel.py"
+EOF
+      git add -A; git commit -qm seed )
+    local bare8; bare8="$(_remote_setup "$td8" 1)"   # v9.9 pre-pushed to the remote
+    ( cd "$td8" && bash "$script_path" ) >/dev/null 2>&1 \
+        || { echo "self-test: run should succeed once the tag is on the remote" >&2; fail=1; }
+    [ -f "$td8/.claude/skills/stub/publish_ran.marker" ] \
+        || { echo "self-test: publish must run once the tag is confirmed pushed" >&2; fail=1; }
+    rm -rf "$td8" "$bare8"
+
     if [ "$fail" -ne 0 ]; then
         echo "release.sh self-test: FAILED" >&2; return 1
     fi
-    echo "release.sh self-test: OK (version derivation, guards, multi-stack bump, dry-run inertness, real bump+commit+tag, already-released refusal, milestone notes fold, open-milestone gate + override, version.py constant-anchor bump, missing-declared-file tolerance)"
+    echo "release.sh self-test: OK (version derivation, guards, multi-stack bump, dry-run inertness, real bump+commit+tag, already-released refusal, milestone notes fold, open-milestone gate + override, version.py constant-anchor bump, missing-declared-file tolerance, #442 rust release-profile assertion, #418 publish gate [blocks unpushed / proceeds once pushed])"
     return 0
 }
 
 case "${1:-}" in
     --self-test) shift; self_test ;;
+    # test-only entry point (#442): exercise assert_release_profile in
+    # isolation without running the full ceremony. Not part of the public CLI.
+    --assert-release-profile) shift; assert_release_profile "$1" ;;
     -h|--help)
-        sed -n '2,60p' "$0" | sed 's/^# \{0,1\}//'
+        sed -n '2,84p' "$0" | sed 's/^# \{0,1\}//'
         ;;
     *) run_release "$@" ;;
 esac

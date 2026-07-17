@@ -1,6 +1,6 @@
 ---
 name: grm-agent-status-broker
-description: Dedicated own-session, strictly read-only agent that answers "what is the status of X?" cheaply by exhausting structured sources before touching code — ordered lookup (1) issue tracker, (2) documentation, (3) source code only as a last resort. No git writes, no issue-tracker writes; narrow context. Use for a project status/overview/"where are we on X"; for open-ended investigation instead, use grm-agent-scout.
+description: Dedicated own-session, strictly read-only agent that answers "what is the status of X?" cheaply by exhausting structured sources before touching code — ordered lookup (1) issue tracker, (2) documentation, (3) source code only as a last resort. Use for a project status/overview/"where are we on X"; for open-ended investigation instead, use grm-agent-scout.
 ---
 
 # Status-broker agent (SB1)

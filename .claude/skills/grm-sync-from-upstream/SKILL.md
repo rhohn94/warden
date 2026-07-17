@@ -24,13 +24,16 @@ placeholders in newly-added generic files, and deciding what to keep.
 > a file you have customized: clean upstream changes auto-apply, collisions
 > become git conflict markers (both sides preserved), and a differing file with
 > no recorded base is reported, not overwritten. Every rewrite is backed up.
+>
+> **One deliberate exception — guard hooks (v3.90).** Upstream files under
+> `.claude/hooks/` are **REPLACED wholesale** on `--apply` (backed up, loudly
+> reported), never 3-way merged. Project behavior belongs in
+> `.claude/grimoire-config.json`, never in hand-edits to hook code.
 
-> **Upgrading a pre-v3.42 project?** Every skill name below is written with its
-> current `grm-` prefix. A project whose `framework-version` is below `v3.42`
-> (or has none) only has the OLD bare names on disk — invoke skills bare
-> (`sync-from-upstream`, `config-validate`, `install-doctor`, …) until the
-> `skill-namespacing` adopt step completes in Step 4.5, then switch to `grm-*`.
-> Full rule: `reference.md` "Pre-v3.42 projects: use bare skill names…" (#200).
+> **Upgrading a pre-v3.42 project?** Skill names below carry the `grm-` prefix;
+> a pre-v3.42 project only has the OLD bare names on disk — invoke skills bare
+> until the `skill-namespacing` adopt step completes in Step 4.5. Full rule:
+> `reference.md` "Pre-v3.42 projects: use bare skill names…" (#200).
 
 ---
 
@@ -50,11 +53,11 @@ placeholders in newly-added generic files, and deciding what to keep.
 ### BMI-3 boundary rules (where a sync may run)
 
 `--apply` runs only on the integration line (`branch-model.integration-branch`,
-default `dev`) and refuses when `main` carries work the line lacks (a real fork).
-By default the two lines must also be tree-identical; after a sync the line is
-normally one commit ahead of `main`, which blocks the next sync — pass
-**`--allow-ahead`** to permit a merely-ahead line (a genuine fork is still
-refused, #144/#146/#162/#173). Full rule + recovery: `reference.md` BMI-3 rules.
+default `dev`) and refuses when `main` carries work the line lacks (a real
+fork) — the whole safety property, never relaxed. Being merely **ahead** of
+`main` proceeds by default (#419) — no flag, no token required. `--apply` also
+best-effort **self-updates** itself from upstream `main` (#443) first. Full
+rule + recovery: `reference.md` BMI-3 rules.
 
 ---
 
@@ -94,9 +97,10 @@ non-empty value, so set it once and it persists across future bootstrap runs.
 | `UPDATE`   | You never edited it; upstream changed. | Applied automatically (fast-forward). |
 | `local`    | You customized it; upstream unchanged. | Kept your version. |
 | `MERGED`   | Both changed, no overlap. | Auto-merged — review the combined diff. |
-| `CONFLICT` | Both changed the same region. | Git markers on `--apply`; resolve by hand, then advance the base (re-run, or `--mark-resolved`). |
+| `CONFLICT` | Both changed the same region. | Git markers on `--apply`; resolve by hand (re-run, or `--mark-resolved` / `--all-resolved`). |
+| `RESOLVED` | A re-presenting `CONFLICT` you already hand-resolved. | Base auto-advanced (#420), LOCAL untouched — nothing to do. |
 | `REVIEW`   | Differs, but no recorded base. | Kept local. Reconcile by hand, or `--adopt-base` if your copy already matches upstream. |
-| #180/#181  | Two never-blocking warnings (see Step 4). | Missing-symbol; resolved-but-stale-base. |
+| #180       | Never-blocking warning (see Step 4). | Missing-symbol. |
 
 ## Step 3 — Apply
 
@@ -106,17 +110,18 @@ non-empty value, so set it once and it persists across future bootstrap runs.
 
 Writes new files, fast-forward `UPDATE`s, and clean `MERGED` results; writes
 conflict markers for `CONFLICT` files; backs up everything it rewrites. It
-advances the base only for files that landed cleanly — `CONFLICT` files keep
-their old base so a re-run finishes the job after you resolve them.
+advances the base for files that landed cleanly, and (#420) for a `CONFLICT`
+re-presenting an already-resolved fix — a genuinely new/unresolved `CONFLICT`
+keeps its old base so a re-run finishes the job after you resolve it.
 
 ---
 
 ## Step 4 — Resolve and re-specialize
 
-- **CONFLICT files:** resolve the conflict markers, remove them, then advance the
-  base. A re-run advances it only if the result equals UPSTREAM; a *blended* or
-  permanently-diverged resolution re-conflicts, so advance that one file's base
-  with **`--mark-resolved <file>`** (surgical, unlike `--adopt-base`). Detail plus
+- **CONFLICT files:** resolve the conflict markers, remove them, commit — the
+  **next** `--apply` auto-advances that file's base for you (#420), so the same
+  conflict never re-presents. To advance it right away, or for several files at
+  once, use **`--mark-resolved <file>`** or **`--all-resolved`**. Detail plus
   the #180/#181 warnings: see `reference.md` Merge-walk warnings.
 - **NEW files:** they arrive **generic** (placeholder-laden). Re-specialize
   them for this project — fill `{test-command}`, `{build-command}`,
@@ -132,8 +137,12 @@ their old base so a re-run finishes the job after you resolve them.
 
 ## Step 4.5 — Feature adoption phase
 
-After a clean `--apply` (zero unresolved CONFLICT files), the script prints an
-adoption phase report. Act on it as follows:
+After a clean `--apply` (zero unresolved CONFLICT files), run
+`adoption_delta.py --format table`; read only its output, never the raw table.
+
+> **Stale-namespacing block (v3.90).** The report flags bare-named skill dirs
+> coexisting with `grm-*` twins. That cutover is a **migration**: offer it,
+> never auto-run (Noir included). See `reference.md` Step 4.55.
 
 ### Per-feature adoption loop
 
@@ -212,30 +221,19 @@ No commits from this skill.
 
 ---
 
-## Feature manifest — v3.53 additions
+## Reference (load on demand — all sections below live in `reference.md`)
 
-`manifest-version: 62`. v3.53 ships one new adoption feature:
-
-- **`standard-justfile-recipes`** — Justfile contract: `build`, `run`, and
-  `deploy` recipes with standard argument signatures. Projects with a `justfile`
-  that still carry a `grimoire:placeholder` marker on those recipes are offered
-  the adoption step, which instructs implementing them per
-  `docs/design/justfile-standard-design.md` and verifying with `grm-install-doctor`.
-
----
-
-## Reference (load on demand)
-
-- `When to use this skill` — see `reference.md`
-- `Pre-v3.42 projects: use bare skill names until the sync completes (#200)` — see `reference.md`
-- `Anti-patterns` — see `reference.md`
-- `Stale-upstream rename detection (non-destructive)` — see `reference.md`
-- `Recognized sync artifact — `.claude/component-registry.json`` — see `reference.md`
-- `Merge-walk warnings (#180 / #181)` — see `reference.md`
-- `What the script tells you` — see `reference.md`
-- `How to evaluate the manifest` — see `reference.md`
-- `Advancing `framework-version`` — see `reference.md`
-- `Paradigm-file update caveat` — see `reference.md`
-- `When the adoption phase is a no-op` — see `reference.md`
-- `BMI-3 boundary rules (full)` — see `reference.md`
-- `Step 4.55 — Complete the grm- skill namespacing (remove bare-named survivors)` — see `reference.md`
+- `When to use this skill`
+- `Feature manifest — v3.53 additions (standard-justfile-recipes)`
+- `Pre-v3.42 projects: use bare skill names until the sync completes (#200)`
+- `Anti-patterns`
+- `Stale-upstream rename detection (non-destructive)`
+- `Recognized sync artifact — `.claude/component-registry.json``
+- `Merge-walk warnings (#180 / #181)`
+- `What the script tells you`
+- `How to evaluate the manifest`
+- `Advancing `framework-version``
+- `Paradigm-file update caveat`
+- `When the adoption phase is a no-op`
+- `BMI-3 boundary rules (full)`
+- `Step 4.55 — Complete the grm- skill namespacing (remove bare-named survivors)`

@@ -1,10 +1,10 @@
 {
-  "interface-version": 6,
+  "interface-version": 9,
   "stack": "server",
   "targets": {
     "build": {
       "command": "just build ${env}",
-      "implemented": false,
+      "implemented": true,
       "params": {"env": {"default": "dev"}}
     },
     "stop": {
@@ -14,26 +14,52 @@
     },
     "server": {
       "command": "just run ${env} ${port}",
-      "implemented": false,
+      "implemented": true,
       "params": {"port": {"default": "3000"}, "env": {"default": "dev"}}
     },
     "test": {
       "command": "just test ${filter}",
-      "implemented": false,
+      "implemented": true,
+      "params": {"filter": {"default": ""}, "watch": {"default": ""}}
+    },
+    "unit-test": {
+      "command": "just unit-test ${filter}",
+      "implemented": true,
       "params": {"filter": {"default": ""}, "watch": {"default": ""}}
     },
     "seed": {"command": null, "implemented": false},
     "migrate": {"command": null, "implemented": false},
-    "lint": {"command": null, "implemented": false},
-    "clean": {"command": null, "implemented": false},
-    "package": {"command": null, "implemented": false},
+    "lint": {
+      "command": "just lint",
+      "implemented": true,
+      "params": {}
+    },
+    "clean": {
+      "command": "just clean",
+      "implemented": true,
+      "params": {}
+    },
+    "package": {
+      "command": "just package ${version} ${target}",
+      "implemented": true,
+      "params": {"version": {"default": ""}, "target": {"default": ""}}
+    },
     "deploy": {
       "command": "just deploy ${env}",
-      "implemented": false,
+      "implemented": true,
       "params": {"env": {"default": "staging"}}
     },
-    "smoke": {"command": null, "implemented": false},
-    "release": {"command": null, "implemented": false},
+    "smoke": {
+      "command": "just smoke ${port}",
+      "implemented": true,
+      "params": {"port": {"default": "3000"}}
+    },
+    "gui-test": {"command": null, "implemented": false},
+    "release": {
+      "command": "just release",
+      "implemented": true,
+      "params": {}
+    },
     "sync-deps": {
       "command": "just sync-deps ${mode}",
       "implemented": true,

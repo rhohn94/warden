@@ -465,6 +465,20 @@
       "regenerate_disposition": "delete+restore from golden"
     },
     {
+      "path": ".claude/skills/grm-fleet-audit/capability_overlap.py",
+      "class": "pure-framework",
+      "ships": true,
+      "regenerate_disposition": "delete+restore from golden",
+      "notes": "Capability-overlap checklist item (#412, v3.97): scans a set of local repo paths against capability-overlap-patterns.json, flags rule-of-two violations, pre-fills extraction tickets."
+    },
+    {
+      "path": ".claude/skills/grm-fleet-audit/capability-overlap-patterns.json",
+      "class": "pure-framework",
+      "ships": true,
+      "regenerate_disposition": "delete+restore from golden",
+      "notes": "Heuristic grep-set data file (#412, v3.97) -- one entry per component-taxonomy §3 capability; format documented in the file's own _comment field."
+    },
+    {
       "path": ".claude/skills/grm-files-manifest/SKILL.md",
       "class": "pure-framework",
       "ships": true,
@@ -749,6 +763,24 @@
       "regenerate_disposition": "delete+restore from golden"
     },
     {
+      "path": ".claude/skills/grm-required-feature-catalog/SKILL.md",
+      "class": "pure-framework",
+      "ships": true,
+      "regenerate_disposition": "delete+restore from golden"
+    },
+    {
+      "path": ".claude/skills/grm-required-feature-catalog/catalog_filing.py",
+      "class": "pure-framework",
+      "ships": true,
+      "regenerate_disposition": "delete+restore from golden"
+    },
+    {
+      "path": ".claude/skills/grm-required-feature-catalog/required-feature-catalog.md",
+      "class": "pure-framework",
+      "ships": true,
+      "regenerate_disposition": "delete+restore from golden"
+    },
+    {
       "path": ".claude/skills/grm-agent-reporter/SKILL.md",
       "class": "pure-framework",
       "ships": true,
@@ -925,12 +957,6 @@
     },
     {
       "path": ".claude/skills/grm-web-app-apply/reference.md",
-      "class": "pure-framework",
-      "ships": true,
-      "regenerate_disposition": "delete+restore from golden"
-    },
-    {
-      "path": ".claude/skills/grm-web-app-apply/required-feature-catalog.md",
       "class": "pure-framework",
       "ships": true,
       "regenerate_disposition": "delete+restore from golden"

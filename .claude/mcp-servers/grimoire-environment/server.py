@@ -7,10 +7,11 @@ built on the reusable stdlib runtime (.claude/mcp-servers/lib/mcp_runtime.py).
 No third-party dependencies (#75: Python 3 stdlib only).
 
 Lifecycle operations (kill, start) are deliberately EXCLUDED from this server.
-Per docs/grimoire/design/environment-manager-design.md §3, lifecycle actions require
-per-action authorization — that responsibility stays agent-side where the
-authorization gate is enforced. This server is read-only: it inspects, never
-mutates.
+Per the environment-manager-design.md §3 framework spec (which lives only in
+the upstream Grimoire repository, not in this project's own docs/), lifecycle
+actions require per-action authorization — that responsibility stays
+agent-side where the authorization gate is enforced. This server is
+read-only: it inspects, never mutates.
 
 Tools exposed:
   list_processes  — list all TCP listeners (lsof/ss, structured JSON)

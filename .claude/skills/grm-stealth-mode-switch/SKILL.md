@@ -1,15 +1,6 @@
 ---
 name: grm-stealth-mode-switch
-description: >-
-  Turn Grimoire Stealth Mode on or off. Stealth Mode is an orthogonal operating
-  mode (independent of work paradigm) that leaves zero AI/agent fingerprints in
-  anything reaching source control: Grimoire's own files are excluded locally
-  (never committed), comments and commit messages carry no AI/Claude tells, code
-  mirrors the surrounding style over Grimoire's standards, the agent never pushes,
-  and it leaves no dangling branch it created. Activation discloses + records the
-  ephemeral-context risk (deleting the local clone loses the Grimoire context).
-  Idempotent and reversible; toggling never edits a committed file. Use when the
-  user wants to enable or disable stealth mode, or to hide that they're using AI.
+description: Turn Grimoire Stealth Mode on or off — an operating mode orthogonal to work paradigm that leaves zero AI/agent fingerprints in source control (local-only Grimoire files, tell-free commits/comments, no pushes, no dangling branches). Idempotent and reversible. Use when the user wants to enable or disable stealth mode, or to hide that they're using AI.
 ---
 
 # stealth-mode-switch

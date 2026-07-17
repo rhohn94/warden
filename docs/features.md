@@ -190,7 +190,7 @@ tags). Destructive push flags (`--force`, `--delete`) are always denied.
 **What it checks:** the remote ref(s) in a `git push` invocation.  
 **Blocked operations:** pushes to any ref not on the allowlist; any push with
 destructive flags; any push from a non-master worktree.  
-**Allowed refs:** `main`, `dev`, and `refs/tags/vX.Y`.
+**Allowed refs:** `main`, `dev`, and `refs/tags/vX.Y[.Z]` (three-part vX.Y.Z is the fleet-wide recommended format; two-part vX.Y remains fully supported).
 
 ### `worktree-guard.sh`
 

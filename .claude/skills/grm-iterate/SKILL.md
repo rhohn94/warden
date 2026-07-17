@@ -1,6 +1,6 @@
 ---
 name: grm-iterate
-description: Drive systematic, repeated improvement on one project facet (UX, code quality, performance, security, backend, test coverage, docs, …) through a quota-driven loop — critically audit the facet, file issues until a T-shirt-size quota floor is met, run a full release cycle on them, and repeat. Invoked as "iterate on {facet}" with an optional count (default 1; "until-clean"). Use when asked to "iterate on X" or run an improvement loop on a facet.
+description: Drive systematic, repeated improvement on one project facet (UX, code quality, performance, security, backend, test coverage, docs, …) through a quota-driven audit-file-release loop. Invoked as "iterate on {facet}" with an optional count (default 1; "until-clean"). Use when asked to "iterate on X" or run an improvement loop on a facet.
 ---
 
 # Iterate on {facet} (IT1)

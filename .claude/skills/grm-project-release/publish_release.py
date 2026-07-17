@@ -7,10 +7,13 @@ stack-agnostic `grm-project-release` helper: it does NOT build assets itself
 **already-built asset set in `dist/`** and does the four things a bare
 `gh release create` cannot guarantee on its own:
 
-  preflight → assemble expected asset list → publish → POST-PUBLISH ASSERT
+  preflight → verify → assemble expected asset list → publish → POST-PUBLISH ASSERT
 
 - **preflight** — clean working tree; the annotated tag being published exists
   and points at HEAD; `gh auth status` succeeds.
+- **verify** (v3.90) — run the repo's optional `[assert] verify` commands from
+  `publish.toml` (e.g. a codesign check); any non-zero exit hard-fails BEFORE
+  anything publishes, so an unsigned artifact can't look like success.
 - **assemble** — read the expected asset list from the builder's OUTPUT. The
   canonical `SHA256SUMS` (emitted by `build_distributables.py`) is the source of
   truth: every file it lists must be published, and its recorded sha256 is the
@@ -25,8 +28,21 @@ stack-agnostic `grm-project-release` helper: it does NOT build assets itself
   loud gate the tag-pusher sees red on if the channel did not actually receive
   the bytes.
 
-`--check` mode is the **skipped-publish gate**: it fails when the repo's newest
-tag has no matching GitHub Release carrying the conformant asset trio. The
+`--check` mode is the **skipped-publish gate**: it fails when any tag *since
+the last conformant release* has no matching GitHub Release carrying the
+conformant asset trio — not just the newest tag (v3.87 shipped a real,
+non-notes-only release with NO GitHub Release at all, and sat invisible to
+`--check` for three releases because it only ever inspected the newest tag;
+see docs/grimoire/design/release-pipeline-design.md §Skipped-publish gate
+scan window). "The last conformant release" is a persisted checkpoint
+(`.claude/cache/publish-check-state.json`, gitignored — per-clone state, like
+the sync-continuation token): each passing `--check` advances it to the
+newest tag, so steady-state runs only re-scan tags newer than the checkpoint;
+an absent/stale checkpoint (first run, or a checkpoint tag no longer in the
+repo's tag list) falls back to scanning every tag back to `--check-floor`
+(default `v3.76`, when this asserted publisher itself shipped — tags before
+it predate the asset-trio contract and are excluded, not "failures"), which
+is exactly the one-time bounded sweep that would have caught v3.87. The
 documented opt-out is the `notes-only` convention — a tag whose
 `docs/version-history.md` section is annotated `<!-- release: notes-only -->`
 is exempt (a docs/marketing tag that ships no distributables).
@@ -34,13 +50,14 @@ is exempt (a docs/marketing tag that ships no distributables).
 Stdlib-only; shells out to `git` and `gh`. Run `--self-test` (no network) to
 verify the pipeline logic against a synthetic `dist/`.
 
-Design: docs/grimoire/design/release-distribution-design.md §Publisher-with-assertion.
+Design: docs/grimoire/design/release-pipeline-design.md §Publisher-with-assertion.
 """
 from __future__ import annotations
 
 import argparse
 import hashlib
 import json
+import os
 import re
 import subprocess
 import sys
@@ -60,6 +77,51 @@ RELEASE_JSON_NAME = "release.json"
 #: version-history.md marker that exempts a tag from the skipped-publish gate:
 #: a notes-only (docs/marketing) tag ships no distributables by design.
 NOTES_ONLY_MARKER = "<!-- release: notes-only -->"
+
+#: --check's persisted "last conformant release" checkpoint (gitignored,
+#: per-clone state — like the sync-continuation token). Absent/stale falls
+#: back to a full-history scan.
+CHECK_STATE_NAME = ".claude/cache/publish-check-state.json"
+
+#: A checkpoint-free full scan never goes older than this tag — the asserted
+#: publisher (and the asset-trio conformance contract it enforces) shipped in
+#: v3.76 (RPI-1, #286); tags before it predate the contract entirely and
+#: legitimately carry no conformant Release. Without this floor, a first-ever
+#: full scan on this repo reports ~65 pre-contract tags as "failures" alongside
+#: the one real gap (v3.87) it exists to catch. A repo whose own publisher
+#: shipped at a different version overrides via `--check-floor`.
+CHECK_FLOOR_TAG = "v3.76"
+
+#: Optional per-repo publish assertions (v3.90, autonomous-wave): the
+#: `[assert]` table of publish.toml may declare `verify = ["cmd", …]` — shell
+#: commands run from the repo root at the `verify` stage (after preflight,
+#: before anything publishes). Any non-zero exit hard-fails the run, so an
+#: unsigned or malformed artifact can no longer look like publish success
+#: (the retro-game-player unsigned-DMG failure mode: its release script
+#: exited 0 when signing creds were absent). Signed-if-configured example:
+#:   [assert]
+#:   verify = ["codesign --verify --deep dist/MyApp.dmg"]
+PUBLISH_MANIFEST_NAME = "publish.toml"
+
+
+def load_verify_commands(root: Path) -> list[str]:
+    """The repo's `[assert] verify` command list from publish.toml ([] when the
+    manifest or table is absent). A malformed manifest is a loud `verify`-stage
+    failure, never a silent skip."""
+    path = Path(root) / PUBLISH_MANIFEST_NAME
+    if not path.is_file():
+        return []
+    import tomllib  # stdlib on 3.11+ (the dependency-channel design's floor)
+    try:
+        data = tomllib.loads(path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        raise PublishError("verify",
+                           f"cannot parse {PUBLISH_MANIFEST_NAME}: {exc}")
+    cmds = (data.get("assert") or {}).get("verify") or []
+    if not isinstance(cmds, list) or not all(isinstance(c, str) for c in cmds):
+        raise PublishError("verify", f"{PUBLISH_MANIFEST_NAME} [assert] verify "
+                                     "must be a list of command strings")
+    return cmds
 
 
 class PublishError(RuntimeError):
@@ -134,7 +196,8 @@ class PublishRelease:
 
     def __init__(self, root: Path = ROOT, tag: str | None = None,
                  staging: str = STAGING_DIR, dry_run: bool = False,
-                 runner=None):
+                 runner=None, check_state_path: Path | None = None,
+                 check_floor: str | None = CHECK_FLOOR_TAG):
         self.root = Path(root)
         self.dry_run = dry_run
         self._runner = runner or self._default_runner
@@ -143,6 +206,9 @@ class PublishRelease:
         self.notes_path = self.staging / "notes.md"
         self.tag = tag or self.default_tag()
         self.git_sha = ""
+        self.check_floor = check_floor
+        self.check_state_path = (Path(check_state_path) if check_state_path
+                                 else self.root / CHECK_STATE_NAME)
 
     # -- infrastructure ------------------------------------------------------
 
@@ -224,6 +290,19 @@ class PublishRelease:
         self._run(["gh", "auth", "status"], stage,
                   "gh is not authenticated — run `gh auth login`")
 
+    def verify(self) -> None:
+        """Run the repo's `[assert] verify` commands (publish.toml) before
+        anything publishes — the signed-if-configured gate. Runs even under
+        --dry-run (a dry run that skips verification gives false confidence;
+        verify commands are assertions by contract, not mutations)."""
+        stage = "verify"
+        for cmd in load_verify_commands(self.root):
+            self._run(["sh", "-c", cmd], stage,
+                      f"publish assertion failed — `{cmd}` exited non-zero; "
+                      "the artifact set is not in a publishable state (e.g. "
+                      "unsigned where signing is configured)")
+            print(f"✓ verify: `{cmd}`")
+
     def publish(self) -> None:
         """Create (or idempotently refresh) the GitHub Release with notes from
         version-history.md and every built asset. Skipped under --dry-run."""
@@ -296,38 +375,104 @@ class PublishRelease:
 
     # -- --check skipped-publish gate ----------------------------------------
 
-    def check(self) -> int:
-        """Fail (exit 1) when the newest tag has no matching GitHub Release
-        carrying its asset trio — the skipped-publish gate. Opt-out: a tag whose
-        version-history section carries the notes-only marker is exempt."""
-        history_path = self.root / "docs" / "version-history.md"
-        history = history_path.read_text() if history_path.is_file() else ""
-        if section_is_notes_only(history, self.tag):
-            print(f"✓ check: {self.tag} is a notes-only tag "
-                  f"(marker present) — skipped-publish gate opted out.")
-            return 0
-        exists = self._runner(["gh", "release", "view", self.tag])
-        if exists.returncode != 0:
-            print(f"check: FAILED — tag {self.tag} has NO matching GitHub "
-                  "Release. Either publish it (run the publisher) or annotate "
-                  f"its version-history section with `{NOTES_ONLY_MARKER}` if "
-                  "it is intentionally notes-only.", file=sys.stderr)
-            return 1
+    def all_tags(self) -> list:
+        """Every git tag, newest-first (same sort as default_tag(), full list)."""
+        out = self._run(["git", "tag", "--sort=-v:refname"], "check",
+                         "cannot list git tags")
+        return [t for t in out.splitlines() if t.strip()]
+
+    def read_check_checkpoint(self) -> str | None:
+        """The tag `--check` last confirmed fully conformant, or None when no
+        checkpoint has ever been recorded (first run — falls back to a full
+        scan) or the checkpoint's own file is missing/unparseable."""
+        if not self.check_state_path.is_file():
+            return None
         try:
-            listed = self._fetch_release_assets(self.tag, "check")
+            data = json.loads(self.check_state_path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            return None
+        tag = data.get("last-conformant-tag")
+        return tag if isinstance(tag, str) and tag else None
+
+    def write_check_checkpoint(self, tag: str) -> None:
+        """Persist `tag` as the new last-conformant checkpoint (temp + replace)."""
+        self.check_state_path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = self.check_state_path.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps({"last-conformant-tag": tag}, indent=2) + "\n",
+                       encoding="utf-8")
+        os.replace(tmp, self.check_state_path)
+
+    def _tag_conformance(self, tag: str, history: str) -> tuple[bool, str]:
+        """(conformant, message) for one tag: notes-only marker exempts it;
+        otherwise it needs a GitHub Release carrying the asset trio."""
+        if section_is_notes_only(history, tag):
+            return True, f"{tag} is a notes-only tag (marker present) — opted out."
+        exists = self._runner(["gh", "release", "view", tag])
+        if exists.returncode != 0:
+            return False, (f"{tag} has NO matching GitHub Release. Either "
+                           "publish it (run the publisher) or annotate its "
+                           f"version-history section with `{NOTES_ONLY_MARKER}` "
+                           "if it is intentionally notes-only.")
+        try:
+            listed = self._fetch_release_assets(tag, "check")
         except PublishError as exc:
-            print(f"check: FAILED — {exc}", file=sys.stderr)
-            return 1
+            return False, f"{tag}: {exc}"
         trio_ok = (RELEASE_JSON_NAME in listed and CHECKSUMS_NAME in listed
                    and any(n.endswith(".tar.gz") for n in listed))
         if not trio_ok:
-            print(f"check: FAILED — release {self.tag} exists but does not "
-                  f"carry the conformant asset trio (need a .tar.gz + "
-                  f"{RELEASE_JSON_NAME} + {CHECKSUMS_NAME}); found "
-                  f"{sorted(listed)}.", file=sys.stderr)
+            return False, (f"{tag} has a release but not the conformant asset "
+                           f"trio (need a .tar.gz + {RELEASE_JSON_NAME} + "
+                           f"{CHECKSUMS_NAME}); found {sorted(listed)}.")
+        return True, f"{tag} has a published Release with the asset trio."
+
+    def check(self) -> int:
+        """Fail (exit 1) when ANY tag since the last conformant release (a
+        persisted checkpoint — see module docstring) has no matching GitHub
+        Release carrying its asset trio. Not just the newest tag: a lone gap
+        sandwiched between two conformant releases (the v3.87 case) is exactly
+        what a newest-only check would miss. Opt-out: a tag whose
+        version-history section carries the notes-only marker is exempt."""
+        history_path = self.root / "docs" / "version-history.md"
+        history = history_path.read_text() if history_path.is_file() else ""
+
+        tags = self.all_tags()
+        if not tags:
+            print("check: FAILED — no git tags exist.", file=sys.stderr)
             return 1
-        print(f"✓ check: {self.tag} has a published Release with the asset "
-              "trio.")
+        checkpoint = self.read_check_checkpoint()
+        if checkpoint and checkpoint in tags:
+            idx = tags.index(checkpoint)
+            window = tags[:idx]  # newer than the checkpoint, checkpoint excluded
+        else:
+            # No (usable) checkpoint — full-history scan, bounded at the floor
+            # (the publisher's own conformance contract didn't exist before
+            # it) so a first-ever run doesn't drown the real gap it's meant to
+            # catch under a pile of legitimately pre-contract tags.
+            window = tags
+            if self.check_floor and self.check_floor in tags:
+                window = tags[:tags.index(self.check_floor) + 1]
+
+        if not window:
+            print(f"✓ check: {tags[0]} — already at the last conformant "
+                  "checkpoint, nothing new to scan.")
+            return 0
+
+        failures: list[str] = []
+        for tag in window:
+            ok, msg = self._tag_conformance(tag, history)
+            print(("✓ check: " if ok else "check: FAILED — ") + msg,
+                  file=sys.stdout if ok else sys.stderr)
+            if not ok:
+                failures.append(tag)
+
+        if failures:
+            print(f"check: FAILED — {len(failures)} tag(s) since the last "
+                  f"conformant checkpoint have no conformant Release: "
+                  f"{failures}.", file=sys.stderr)
+            return 1
+        self.write_check_checkpoint(tags[0])
+        print(f"✓ check: {len(window)} tag(s) scanned since the last "
+              f"checkpoint — all conformant. Checkpoint advanced to {tags[0]}.")
         return 0
 
     # -- driver --------------------------------------------------------------
@@ -336,6 +481,7 @@ class PublishRelease:
         """Run the full publish pipeline; returns a process exit code."""
         try:
             self.preflight()
+            self.verify()
             self.publish()
             self.assert_published()
         except PublishError as exc:
@@ -465,20 +611,121 @@ def _self_test() -> int:
             check(exc.stage == "assert", "sha-drift fails at assert stage")
         tarball.write_bytes(b"tar-bytes")  # restore
 
-        # --check gate: release with trio => pass.
+        # --check gate: release with trio => pass. `git tag` mocks 2 tags
+        # (v9.9, v9.8); seed the checkpoint at v9.8 so the scan window is just
+        # {v9.9} — preserves the original single-tag-check semantics exactly
+        # (v9.8's own conformance is exercised separately below.)
+        pub.write_check_checkpoint("v9.8")
         check(pub.check() == 0, "check passes when trio published")
-        # --check gate: no release => fail.
+        check(pub.read_check_checkpoint() == "v9.9",
+              "a passing check advances the checkpoint to the newest tag")
+        # --check gate: no release => fail. Re-seed the checkpoint at v9.8 (the
+        # prior pass advanced it to v9.9, which would otherwise make this
+        # check's window empty — a checkpointed tag is trusted, never
+        # re-verified, so the window must include v9.9 again to observe it
+        # going from conformant to not).
+        pub.write_check_checkpoint("v9.8")
         state["release_exists"] = False
         check(pub.check() == 1, "check fails when no release")
+        check(pub.read_check_checkpoint() == "v9.8",
+              "a failing check must NOT advance the checkpoint")
         # --check opt-out: notes-only marker => pass even with no release.
         (root / "docs" / "version-history.md").write_text(history_no)
         pub_no = PublishRelease(root=root, runner=fake_runner)
+        pub_no.write_check_checkpoint("v9.8")  # isolate the window to {v9.9} again
         check(pub_no.check() == 0, "check opts out on notes-only marker")
+        (root / "docs" / "version-history.md").write_text(history)
+        state["release_exists"] = True
 
         # dry-run never touches gh writes.
         (root / "docs" / "version-history.md").write_text(history)
         dry = PublishRelease(root=root, dry_run=True, runner=fake_runner)
         check(dry.run() == 0, "dry-run returns 0")
+
+    # -- --check multi-tag scan: the v3.87 "sandwiched gap" regression -------
+    # v9.9 and v9.7 have conformant releases; v9.8 (in between) does NOT — a
+    # newest-only check would never see v9.8's gap (exactly what let v3.87
+    # slip through for three releases). A per-tag-aware fake runner models
+    # per-tag release state (unlike the flat `state["listed"]` set above,
+    # which only ever modeled a single most-recently-published tag).
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        (root / "docs").mkdir()
+        (root / "docs" / "version-history.md").write_text(
+            "# Version history\n\n"
+            "## v9.9 — Newest\n\n- ok\n\n"
+            "## v9.8 — The gap\n\n- shipped a real change, never published\n\n"
+            "## v9.7 — Older, conformant\n\n- ok\n"
+        )
+        releases = {"v9.9": {"release.json", "grimoire-v9.9.tar.gz", CHECKSUMS_NAME},
+                    "v9.7": {"release.json", "grimoire-v9.7.tar.gz", CHECKSUMS_NAME}}
+
+        def scan_runner(cmd):
+            class R:
+                returncode = 0
+                stdout = ""
+                stderr = ""
+            r = R()
+            if cmd[:2] == ["git", "tag"]:
+                r.stdout = "v9.9\nv9.8\nv9.7\n"
+            elif cmd[:3] == ["gh", "release", "view"] and "--json" not in cmd:
+                r.returncode = 0 if cmd[3] in releases else 1
+            elif cmd[:3] == ["gh", "release", "view"] and "--json" in cmd:
+                r.stdout = json.dumps(
+                    {"assets": [{"name": n} for n in releases.get(cmd[3], set())]})
+            return r
+
+        state_path = root / CHECK_STATE_NAME
+        pub_scan = PublishRelease(root=root, tag="v9.9", runner=scan_runner,
+                                  check_state_path=state_path)
+        rc = pub_scan.check()
+        check(rc == 1, f"full scan (no checkpoint) must catch the v9.8 gap (got {rc})")
+        check(not state_path.is_file(),
+              "a failing multi-tag scan must not write a checkpoint")
+
+        # Publish v9.8's missing release; the SAME full scan (still no
+        # checkpoint) now finds all three tags conformant.
+        releases["v9.8"] = {"release.json", "grimoire-v9.8.tar.gz", CHECKSUMS_NAME}
+        rc = pub_scan.check()
+        check(rc == 0, f"full scan passes once every tag is conformant (got {rc})")
+        check(pub_scan.read_check_checkpoint() == "v9.9",
+              "checkpoint advances to the newest tag after a clean full scan")
+
+        # A checkpoint at v9.8 narrows the NEXT scan to {v9.9} only — v9.8/v9.7
+        # are not re-queried (deleting their release state must not matter).
+        del releases["v9.8"]; del releases["v9.7"]
+        pub_scan.write_check_checkpoint("v9.8")
+        rc = pub_scan.check()
+        check(rc == 0, f"checkpointed scan only re-checks tags newer than it (got {rc})")
+
+        # A checkpoint naming a tag no longer in the repo's tag list (e.g. a
+        # rewritten/deleted tag) falls back to a full scan rather than
+        # crashing or silently trusting a dangling pointer.
+        pub_scan.write_check_checkpoint("v0.0-does-not-exist")
+        rc = pub_scan.check()
+        check(rc == 1, f"a stale/unknown checkpoint falls back to a full scan (got {rc})")
+
+        # The floor bounds a checkpoint-free full scan: v9.8 stays a real gap
+        # (newer than the floor), but v9.7 (at/older than the floor) is
+        # excluded — a pre-contract tag must not be reported as a failure.
+        import contextlib
+        import io
+        pub_scan.check_state_path.unlink(missing_ok=True)  # clear checkpoint
+        pub_floored = PublishRelease(root=root, tag="v9.9", runner=scan_runner,
+                                     check_state_path=state_path, check_floor="v9.8")
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            rc = pub_floored.check()
+        check(rc == 1, f"floored scan still catches the v9.8 gap (got {rc})")
+        check("v9.7" not in out.getvalue() + err.getvalue(),
+              "floored scan must not even query/report a tag at/older than the floor")
+        # An unknown floor tag (not in the repo's history) is ignored — the
+        # scan falls back to unbounded, exactly like no floor at all.
+        pub_unknown_floor = PublishRelease(root=root, tag="v9.9", runner=scan_runner,
+                                           check_state_path=state_path,
+                                           check_floor="v0.0-does-not-exist")
+        rc = pub_unknown_floor.check()
+        check(rc == 1, f"an unknown floor tag falls back to unbounded scan (got {rc})")
 
     # -- preflight rejects a dirty tree --------------------------------------
     with tempfile.TemporaryDirectory() as td:
@@ -505,6 +752,47 @@ def _self_test() -> int:
         except PublishError as exc:
             check(exc.stage == "preflight", "dirty tree fails at preflight")
 
+    # -- verify stage: [assert] verify commands from publish.toml (v3.90) ----
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        # No publish.toml at all → no commands, verify is a no-op.
+        check(load_verify_commands(root) == [], "no manifest => no verify cmds")
+        p = PublishRelease(root=root, tag="v9.9")
+        p.verify()  # must not raise
+        # publish.toml without an [assert] table → still no commands.
+        (root / PUBLISH_MANIFEST_NAME).write_text(
+            '[publish]\nname = "x"\n', encoding="utf-8")
+        check(load_verify_commands(root) == [], "no [assert] => no verify cmds")
+        # Passing command → verify succeeds.
+        (root / PUBLISH_MANIFEST_NAME).write_text(
+            '[assert]\nverify = ["exit 0"]\n', encoding="utf-8")
+        p = PublishRelease(root=root, tag="v9.9")
+        p.verify()  # must not raise
+        # Failing command → hard PublishError at the verify stage.
+        (root / PUBLISH_MANIFEST_NAME).write_text(
+            '[assert]\nverify = ["exit 3"]\n', encoding="utf-8")
+        p = PublishRelease(root=root, tag="v9.9")
+        try:
+            p.verify()
+            check(False, "failing verify command must raise")
+        except PublishError as exc:
+            check(exc.stage == "verify", "failing command fails at verify stage")
+        # Malformed verify value → loud verify-stage error, never a skip.
+        (root / PUBLISH_MANIFEST_NAME).write_text(
+            '[assert]\nverify = "not-a-list"\n', encoding="utf-8")
+        try:
+            load_verify_commands(root)
+            check(False, "non-list verify must raise")
+        except PublishError as exc:
+            check(exc.stage == "verify", "non-list verify fails at verify stage")
+        # Unparseable TOML → loud verify-stage error.
+        (root / PUBLISH_MANIFEST_NAME).write_text("[assert\n", encoding="utf-8")
+        try:
+            load_verify_commands(root)
+            check(False, "malformed TOML must raise")
+        except PublishError as exc:
+            check(exc.stage == "verify", "malformed TOML fails at verify stage")
+
     if failures:
         for f in failures:
             print(f"FAIL: {f}", file=sys.stderr)
@@ -527,9 +815,15 @@ def main(argv: list[str] | None = None) -> int:
                         help="run everything except the gh writes; print the "
                              "asset list a real publish would upload")
     parser.add_argument("--check", action="store_true",
-                        help="skipped-publish gate: fail when the newest tag "
-                             "has no matching GitHub Release carrying the asset "
-                             "trio (opt-out: notes-only version-history marker)")
+                        help="skipped-publish gate: fail when any tag since "
+                             "the last conformant checkpoint has no matching "
+                             "GitHub Release carrying the asset trio (opt-out: "
+                             "notes-only version-history marker)")
+    parser.add_argument("--check-floor", default=CHECK_FLOOR_TAG,
+                        help="oldest tag a checkpoint-free full --check scan "
+                             f"will consider (default: {CHECK_FLOOR_TAG}, when "
+                             "the asserted publisher shipped); pass '' to scan "
+                             "the entire tag history")
     parser.add_argument("--self-test", action="store_true",
                         help="run the in-file tests (no network)")
     args = parser.parse_args(argv)
@@ -538,7 +832,8 @@ def main(argv: list[str] | None = None) -> int:
         return _self_test()
 
     pub = PublishRelease(root=Path(args.root), tag=args.tag,
-                         staging=args.staging, dry_run=args.dry_run)
+                         staging=args.staging, dry_run=args.dry_run,
+                         check_floor=args.check_floor or None)
     if args.check:
         return pub.check()
     return pub.run()

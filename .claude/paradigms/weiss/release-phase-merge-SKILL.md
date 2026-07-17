@@ -92,8 +92,11 @@ guidance, then `git merge --continue`.
 ### 4. Run tests
 
 ```bash
-{test-command}
+python3 .claude/skills/grm-build-recipe/recipe.py test
 ```
+
+Resolves the project's actual test command from `.claude/recipes.json` (the
+`grm-build-recipe` dispatcher, `≡ just test`) — never a literal placeholder.
 
 Report result to the user. If tests fail, describe the failure and ask how
 to proceed — do not decide unilaterally.
@@ -114,7 +117,8 @@ git commit -m "docs(release-v{X.Y}): tick §5 — {branch} merged ({short-sha})"
 
 After the last branch in a phase is merged:
 
-1. Run `{build-command}` and report to the user.
+1. Run `python3 .claude/skills/grm-build-recipe/recipe.py build` and report to
+   the user (resolved from `.claude/recipes.json`, `≡ just build`).
 2. Ask: "All items in this phase are merged. Proceed to the next phase, or
    would you like to review anything first?"
 
@@ -124,8 +128,8 @@ After the last branch in a phase is merged:
 
 Present the pre-merge checklist to the user:
 
-- [ ] `{test-command}` green on `version/{X.Y}`
-- [ ] `{build-command}` clean
+- [ ] `python3 .claude/skills/grm-build-recipe/recipe.py test` green on `version/{X.Y}`
+- [ ] `python3 .claude/skills/grm-build-recipe/recipe.py build` clean
 - [ ] All §5 rows ☑ Merged
 - [ ] `version-history.md` entry written
 
@@ -135,7 +139,7 @@ confirmation before each command:
 ```bash
 git switch dev
 git merge --no-ff version/{X.Y}
-{test-command}
+python3 .claude/skills/grm-build-recipe/recipe.py test
 ```
 
 After tests pass, ask before deleting the staging branch:

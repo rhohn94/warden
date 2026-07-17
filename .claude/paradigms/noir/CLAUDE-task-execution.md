@@ -11,4 +11,12 @@ Review your own diff against the acceptance criteria before reporting done.
 Add/update `docs/design/{feature}-design.md` when the task introduces a
 feature (**`grm-design-doc-scaffold`** skill). Doc-location map + subagent
 model/effort table: **`grm-repo-reference`** skill.
+
+**Done-criteria for a work item that creates or materially reshapes a
+reusable component:** add/update that component's `component.json` in the
+same branch — fold cataloging into the work that already holds the context,
+instead of a standalone pass later (`docs/grimoire/design/component-catalog-architecture-design.md`;
+vocabulary: `docs/grimoire/design/component-taxonomy.md`). Applies to a
+`components/`/`lib/`-shaped unit (or an existing `component.json`/front-matter
+owner) another project could vendor — not app-internal glue.
 <!-- PARADIGM_SECTION:task-execution:end -->

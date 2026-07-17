@@ -45,7 +45,17 @@ from typing import Any, Optional
 # Constants
 # ---------------------------------------------------------------------------
 
-DEFAULT_LIMIT = 30                       # R1 §5: bounded --limit
+
+# R1 §5 introduced a bounded --limit (was 30) to keep interactive `list`/
+# `search` calls cheap. That same constant doubled as the *hard ceiling* every
+# backend clamps a caller-supplied `limit` to (`effective_limit = min(limit,
+# DEFAULT_LIMIT)` below) — so a caller that explicitly asked for more (e.g.
+# grm-issue-reconcile scanning a large backlog for release candidates) was
+# silently truncated back down to 30 with no warning, dropping real candidates
+# past the cap (#468; confirmed field-side as goon-cave#734). Raised to cover
+# a realistic fleet backlog size (observed open-issue counts up to the low
+# hundreds per repo, #468's fleet-triage evidence) while staying finite.
+DEFAULT_LIMIT = 500                      # R1 §5 / #468: bounded --limit
 VALID_PROVIDERS = {"roadmap", "github", "grimoire"}
 VALID_AUDIENCES = {"internal", "external"}
 VALID_STATES = {"open", "closed", "all"}

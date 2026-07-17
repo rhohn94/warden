@@ -1,6 +1,6 @@
 ---
 name: grm-component-catalog-export
-description: Scan a project's reusable components and emit a machine- and human-readable catalog report (each component's id, summary, profile tags, provides/requires, compatibility signals, stability). For downstream Grimoire consumers to discover what's available and author quick-start templates. Read-only. Use when exporting the component catalog or listing available components.
+description: Scan a project's reusable components and emit a machine- and human-readable catalog report, for downstream Grimoire consumers to discover what's available and author quick-start templates. Read-only. Use when exporting the component catalog or listing available components.
 ---
 
 # Component-catalog export

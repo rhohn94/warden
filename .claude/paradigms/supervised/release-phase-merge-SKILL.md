@@ -101,10 +101,11 @@ If there are conflicts: resolve them, then `git merge --continue`. Never use
 ### 4. Run tests
 
 ```bash
-{test-command}
+python3 .claude/skills/grm-build-recipe/recipe.py test
 ```
 
-Replace `{test-command}` with your project's test command (see CLAUDE.md).
+Resolves the project's actual test command from `.claude/recipes.json` (the
+`grm-build-recipe` dispatcher, `≡ just test`) — never a literal placeholder.
 
 If tests fail: do **not** tick ☑ Merged. Instead:
 
@@ -135,7 +136,8 @@ git commit -m "docs(release-v{X.Y}): tick §5 — {branch} merged ({short-sha})"
 
 After the last branch in a phase is merged and tested:
 
-1. Run `{build-command}` to confirm the integrated build is clean.
+1. Run `python3 .claude/skills/grm-build-recipe/recipe.py build` to confirm the
+   integrated build is clean (resolved from `.claude/recipes.json`, `≡ just build`).
 2. Report the phase complete to the user.
 3. Ask: "Proceed to Phase {N+1} prompts?" — run `grm-release-phase` if yes.
 
@@ -147,8 +149,8 @@ When all phases are ☑ Merged and the user confirms readiness:
 
 ### Pre-merge checklist
 
-- [ ] `{test-command}` green on `version/{X.Y}`
-- [ ] `{build-command}` clean
+- [ ] `python3 .claude/skills/grm-build-recipe/recipe.py test` green on `version/{X.Y}`
+- [ ] `python3 .claude/skills/grm-build-recipe/recipe.py build` clean
 - [ ] All §5 rows ☑ Merged
 - [ ] `version-history.md` entry written on `version/{X.Y}` (required
        by `grm-project-release` later)
@@ -162,7 +164,7 @@ Ask: "Merge `version/{X.Y}` into `dev`?" and wait for explicit confirmation.
 ```bash
 git switch dev
 git merge --no-ff version/{X.Y}
-{test-command}
+python3 .claude/skills/grm-build-recipe/recipe.py test
 ```
 
 If tests pass, ask before deleting the staging branch (destructive op):

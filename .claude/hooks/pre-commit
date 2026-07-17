@@ -1,0 +1,58 @@
+#!/usr/bin/env python3
+""":"
+# Bash polyglot preamble — bash ignores the shebang and lands here.
+# Re-execute with python3, or emit a clear error if unavailable.
+if command -v python3 >/dev/null 2>&1; then
+  exec python3 "$0" "$@"
+fi
+printf 'error: %s requires python3. Re-run as: python3 %s %s\n' "$0" "$0" "$*" >&2
+exit 0
+":"""
+# HOOK_CONTRACT: v1 capabilities=[pre-commit-block-gate]
+"""pre-commit — OPTIONAL hard-block variant of the post-commit test gate (#361).
+
+A REAL git hook (see post-commit's docstring for the activation step,
+`git config core.hooksPath .claude/hooks`, and why this differs from the
+project's other 8 PreToolUse guard hooks).
+
+This is the OPTIONAL variant for projects that want a hard block instead of
+force-correction: it runs the same fast unit-test check via the shared
+engine (grm-build-recipe/post_commit_gate.py) and refuses the commit
+(nonzero exit) on red — but ONLY when the project has explicitly opted in
+via `code-quality.post-commit-test-gate.mode: "block"` (in addition to
+`enabled: true`). Any other mode (the default `force-correct`, or
+`advisory`) degrades this hook to a silent no-op — the engine's own
+`--mode precommit` dispatch enforces that, so wiring this file into
+`core.hooksPath` is always safe even for a project that only wants the
+post-commit force-correction behavior.
+
+Escape hatch: git's own `--no-verify` (the existing repo convention — every
+other blocking check in this project's git-hooks family, where one exists,
+honors it too) — `git commit --no-verify` skips this hook entirely.
+Human-run, never automated.
+"""
+import os
+import subprocess
+import sys
+
+
+def main() -> int:
+    try:
+        out = subprocess.run(["git", "rev-parse", "--show-toplevel"],
+                             capture_output=True, text=True, timeout=5)
+    except (OSError, subprocess.SubprocessError):
+        return 0
+    if out.returncode != 0:
+        return 0
+    root = out.stdout.strip()
+    engine = os.path.join(root, ".claude", "skills", "grm-build-recipe",
+                          "post_commit_gate.py")
+    if not os.path.isfile(engine):
+        return 0
+    result = subprocess.run([sys.executable, engine, "--mode", "precommit",
+                             "--root", root])
+    return result.returncode
+
+
+if __name__ == "__main__":
+    sys.exit(main())

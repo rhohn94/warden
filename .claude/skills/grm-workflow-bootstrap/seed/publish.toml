@@ -40,6 +40,19 @@ channel = "stable"
 # else. Omit this key to use the conservative default (shown below verbatim).
 # `target/`, `.git/`, `vendor/`, `.claude/`, `dist/`, and `__pycache__/` are
 # ALWAYS excluded regardless of these globs.
+
+# [assert] — optional publish assertions (v3.90), read by publish_release.py's
+# `verify` stage: each command runs from the repo root AFTER preflight and
+# BEFORE anything publishes; any non-zero exit hard-fails the release run. Use
+# it to make signing (or any artifact invariant) load-bearing — an unsigned
+# artifact must fail the release, never exit 0 looking like success. This
+# table is valid in ANY stack's publish.toml, not just library producers.
+#
+# [assert]
+# verify = [
+#   "codesign --verify --deep dist/MyApp.dmg",   # signed-if-configured
+#   "test -s dist/release.json",                 # manifest present + non-empty
+# ]
 include = [
   "src/**",        # crate sources
   "Cargo.toml",    # manifest (required)

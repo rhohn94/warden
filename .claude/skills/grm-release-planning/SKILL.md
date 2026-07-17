@@ -92,6 +92,45 @@ by origins A–C. An issue that overlaps a flagship or carryover item should be
 noted as already-covered but must still be listed. A zero result means no
 framework-required issues are open; that is a valid outcome.
 
+> **Component-registry reuse consult (mandatory).** Mirrors the
+> `Grimoire-Requirement` tracker read above — the one wired loop that already
+> works — but for reuse instead of framework-required scope. For every item
+> collected from A–D: read the capability vocabulary
+> (`docs/grimoire/design/component-taxonomy.md` §3) and identify which
+> `provides`/`requires` terms plausibly describe what the item would build
+> (e.g. "add session middleware" → `auth`). An item that maps to zero
+> taxonomy terms needs no query. For every item that maps to one or more
+> terms, run (batch every collected item's candidate tags into one call):
+> `python3 .claude/skills/grm-release-planning/reuse_gate.py query <tag> [<tag> ...]`
+> This command is **never optional** once an item has candidate tags — same
+> "must still run" contract as the Grimoire-Requirement read, and the same
+> "a zero/no-op result is a valid outcome" contract. It queries
+> `.claude/component-registry.json` for `provides` overlap against those tags
+> and returns a `"no-op": true` result when the registry is absent or has no
+> cataloged components — this is the documented, **expected** outcome on a
+> project (including this one) that hasn't populated a registry yet; proceed
+> with the plan unmodified rather than blocking or erroring.
+>
+> Record the outcome against each item as a **"Reuse resolution:"** line —
+> one of:
+>   - `Reuse resolution: consumes <component-id> (<capability>)` — overlap
+>     found; the plan will use the cataloged component instead of building new.
+>   - `Reuse resolution: justified-new because <reason>` — overlap found, but
+>     the plan deliberately builds new anyway. The reason is mandatory; an
+>     item with overlap and no reason is a plan defect (checked by
+>     `grm-release-agreement` Step 1).
+>   - `Reuse resolution: no cataloged overlap (queried: <tags>)` — the item
+>     had candidate tags but none matched a cataloged component.
+>   - `Reuse resolution: no-op (component-registry.json absent/empty)` — the
+>     gate degraded gracefully (this repo's own case); nothing to justify.
+> Carry the chosen line into the item's entry when `grm-release-agreement`
+> writes `docs/release-planning/release-planning-v{X.Y}.md` §2.{N} — see that
+> skill's Step 2 template.
+
+> **GUI-surface flag (#362).** Tag a GUI item `Surface: gui:web`/`gui:desktop`
+> so `grm-release-phase` attaches the `gui-test` done-criterion at dispatch.
+> See `runtime-verification-design.md` §GUI testing.
+
 ---
 
 ## Step 4 — Size each item in tokens
@@ -157,10 +196,13 @@ One paragraph: flagship name, the problem it solves, non-goals.
 ### 1. Flagship — {Name}
 Table: # | Item | Tokens | Rationale
 Subtotal line.
+One "Reuse resolution:" line per item beneath the table (Step 3's mandatory
+component-registry consult).
 
 ### 2. Carryovers from v{X.Y-1}
 One sub-section per thematic group.
 Table per group: # | Item | Tokens | Rationale
+One "Reuse resolution:" line per item beneath each group's table.
 
 ### 3. Work Items Summary
 Master table: # | Area | Item | Est. Tokens
@@ -200,3 +242,9 @@ automatically — wait for the user to confirm scope. When scope is settled:
   the report is a conversation starter, not a final plan.
 * Pulling items from `roadmap.md §v{X.Y+1}` or later — stay one version at a
   time.
+* Skipping the component-registry reuse consult, or treating a `"no-op":
+  true` result as license to skip recording a "Reuse resolution:" line —
+  every item gets one, even when the outcome is no-op.
+* Finding a `provides` overlap and writing "justified-new" with no reason —
+  the reason is the whole point; `grm-release-agreement` Step 1 treats it as
+  a plan defect.

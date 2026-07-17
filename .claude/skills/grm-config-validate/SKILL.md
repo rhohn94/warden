@@ -1,6 +1,6 @@
 ---
 name: grm-config-validate
-description: Validate .claude/grimoire-config.json against the declared schema (known blocks + value sets, cross-rules like Auto-requires-Noir), report unknown/missing fields, and run an idempotent migration that fills additive defaults. Read-only by default; --migrate writes atomically. Called by install-doctor as part of the health audit. Use when validating or migrating the config.
+description: Validate .claude/grimoire-config.json against the declared schema, report unknown/missing fields, and run an idempotent migration that fills additive defaults. Read-only by default; --migrate writes atomically. Use when validating or migrating the config.
 ---
 
 # config-validate

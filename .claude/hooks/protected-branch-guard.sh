@@ -8,6 +8,7 @@ fi
 printf 'error: %s requires python3. Re-run as: python3 %s %s\n' "$0" "$0" "$*" >&2
 exit 1
 ":"""
+# HOOK_CONTRACT: v1 capabilities=[protected-branch-block,branch-hygiene-block,history-rewrite-block,cross-worktree-hijack-block,master-head-drift-block,release-boundary-guard,worktree-cleanup-allow]
 """Protected-branch guard (deny-by-default).
 
 Blocks history-mutating git operations (commit, merge, rebase,

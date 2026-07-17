@@ -1,0 +1,159 @@
+# Quick-start task runner (just — https://github.com/casey/just) — CLI app.
+#
+# Ships the full build-recipe vocabulary (RSS-3, #321): every INTERFACE target
+# has a standard `just` recipe here — the one place recipes live. `recipe.py
+# <t>` routes to `just <t>` via .claude/recipes.json.
+#
+# UNLIKE the placeholder generation this template replaces, build/run/test/
+# package/release/smoke are REAL — they call `cargo` and the shared
+# scripts/{package,release}.sh directly, no `# grimoire:placeholder` bodies.
+# `run`/`stop`/`seed`/`migrate`/`deploy` stay informative placeholders where a
+# one-shot CLI genuinely has nothing to implement (documented inline; see
+# template.json post-apply-notes for the full what-runs-vs-what's-a-seam list).
+# Authority: docs/design/justfile-standard-design.md +
+# docs/grimoire/design/build-recipe-interface-design.md.
+
+set shell := ["bash", "-uc"]
+
+# build — compile the CLI. env: "dev" = `cargo build`; "prod" = `--release`.
+# `just` binds recipe args POSITIONALLY (not `key=value`) — accept the
+# documented `env=prod` spelling too (the same convenience `deploy`'s
+# dry_run/`smoke-visual`'s update_baselines accept in the web quick-start
+# template) by stripping a leading `env=`. This also makes package.sh's own
+# `PACKAGE_BUILD_CMD` default (`just build env=prod`) actually trigger a
+# release build instead of silently falling through to a dev build.
+build env="dev":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    e="{{env}}"; e="${e#env=}"
+    if [ "$e" = "prod" ]; then cargo build --release; else cargo build; fi
+
+# run — execute the CLI (dev-mode). `port` is part of the INTERFACE signature
+# for cross-profile uniformity (recipe.py always passes env+port); unused by a
+# CLI (no server to bind). Pass args directly to `cargo run -- <args>` for
+# ad-hoc development instead.
+run env="dev" port="3000":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    e="{{env}}"; e="${e#env=}"
+    if [ "$e" = "prod" ]; then cargo run --release; else cargo run; fi
+
+# stop — a one-shot CLI has no persistent process to stop; present for
+# vocabulary uniformity (see the lib quick-start template).
+stop port="":
+    @echo "A one-shot CLI has no persistent process to stop."
+
+# test — run the test suite (unit + the process-spawning integration test in
+# tests/cli_integration.rs; cargo drives both).
+test filter="" watch="":
+    cargo test {{filter}}
+
+# unit-test — fast, isolated subset only: in-module #[cfg(test)] unit tests
+# via `cargo test --lib` (#360). Excludes the process-spawning integration
+# test in tests/cli_integration.rs — that stays in `just test`'s full run.
+unit-test filter="" watch="":
+    cargo test --lib {{filter}}
+
+# seed — populate a local data store with fixtures.
+seed fixture="" env="dev":
+    @echo "A CLI scaffold has no data store to seed by default (fixture {{fixture}}, env {{env}})."
+
+# migrate — run pending schema / data migrations.
+migrate env="dev":
+    @echo "A CLI scaffold has no data store to migrate by default (env {{env}})."
+
+# lint — static analysis / formatting checks.
+lint:
+    cargo clippy --all-targets -- -D warnings
+
+# clean — remove build artifacts.
+clean:
+    cargo clean
+    rm -rf dist
+
+# package — assemble a versioned, distributable bundle in dist/. Delegates to
+# the shared scripts/package.sh (resolves VERSION + TRIPLE, builds, stages
+# dist/<name>-v{VER}-{TRIPLE}/, emits grimoire-build-info.json + release.json +
+# SHA256SUMS, tars deterministically). Parameterized via
+# scripts/package-manifest.sh. version/target default to "" so package.sh
+# auto-detects from the manifest.
+package version="" target="":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    args=()
+    [ -n "{{version}}" ] && args+=(--version "{{version}}")
+    [ -n "{{target}}" ] && args+=(--triple "{{target}}")
+    scripts/package.sh ${args[@]+"${args[@]}"}
+
+# deploy — a CLI ships via `package` + `release` (crate/binary distribution),
+# not a live-environment push; implement only if your CLI has a daemon mode.
+deploy env dry_run="false":
+    @echo "A CLI has no deploy target — package + release publish it (env {{env}})."
+
+# smoke — boot-free liveness check: -V runs and exits 0 (build first if needed).
+smoke port="3000":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    bin="target/release/cli-app"
+    [ -x "$bin" ] || bin="target/debug/cli-app"
+    if [ ! -x "$bin" ]; then
+        echo "smoke: no binary at target/{release,debug}/cli-app — run 'just build' first." >&2
+        exit 1
+    fi
+    out="$("$bin" -V)"
+    echo "smoke: OK — $out"
+
+# gui-test — platform-differentiated GUI feature test (#362); a CLI has no
+# GUI surface to test.
+gui-test baseline="main":
+    @echo "A CLI has no GUI surface to gui-test (baseline {{baseline}})."
+
+# release — the changelog-derived release ceremony (no args). Delegates to the
+# shared scripts/release.sh (derives VERSION from docs/version-history.md,
+# guards, bumps Cargo.toml, tests + builds, archives via `just package`,
+# commits + tags, then publishes once the tag reaches the remote — see the
+# script header for the full ceremony).
+release *ARGS:
+    scripts/release.sh {{ARGS}}
+
+# sync-deps — reconcile / vendor first-party deps from a release channel.
+# Delegates to the framework consume-side script; mode selects --check/--update/--offline.
+sync-deps mode="":
+    python3 .claude/skills/grm-sync-deps/sync_deps.py {{mode}}
+
+# vendor-check — dependency-channel conformance gate (exit 0/nonzero). Delegates
+# to the framework script; full selects the whole-vendor audit.
+vendor-check full="":
+    python3 .claude/skills/grm-dependency-audit/dependency_channel_conformance.py --root . {{full}}
+
+# trim — safe worktree reap (dry-run by default) + this worktree's own cargo-
+# artifact sweep (#446). Human/master-invoked convenience, not an automated
+# call site — unlike worktree_reap.py's own destructive-by-default CLI
+# posture (every other #449 call site already wraps it in its own
+# confirmation layer, disk-branch-hygiene-design.md §Scope), `trim` inverts
+# that: dry-run (preview only) unless `--confirm` is passed. `--dry-run` is
+# accepted explicitly too (the acceptance-tested spelling) and always wins
+# over `--confirm` if both are given. `--landed-ref REF` overrides what
+# "landed" means for the #444 predicate (default `dev`; pass
+# `--landed-ref version/3.95` during an in-flight release). Auto-discovers
+# dead agent-branch worktrees (`claude/…`, #456 namespace) — never touches a
+# human branch/worktree.
+#
+# CAVEAT — the cargo sweep is scoped to THIS worktree only: a worktree that
+# gets reaped above already loses its whole target/ for free via
+# `git worktree remove`, so there is nothing extra to sweep there. Sweeping
+# THIS worktree's own target/ cannot generically know whether a build here
+# is still needed, so it stays behind the same explicit `--confirm` gate
+# (never runs on a bare `just trim` or `--dry-run`) and is documented here as
+# a known, deliberate limitation rather than solved automatically.
+trim *ARGS:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    python3 .claude/skills/grm-worktree-preflight/trim.py {{ARGS}}
+    a=" {{ARGS}} "
+    if [[ "$a" == *" --confirm "* && "$a" != *" --dry-run "* ]]; then
+        echo "trim: sweeping this worktree's own cargo build artifacts (cargo clean)…"
+        cargo clean
+    else
+        echo "trim: DRY-RUN — would also run 'cargo clean' in this worktree (pass --confirm to sweep it; forces a full rebuild on the next 'just build')."
+    fi

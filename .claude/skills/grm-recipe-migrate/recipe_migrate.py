@@ -4,9 +4,9 @@ recipe vocabulary (RSS-5, #323).
 
 Grimoire's build-recipe interface (`grm-build-recipe`) and the justfile
 standard (`docs/design/justfile-standard-design.md`) fix a stable named-target
-vocabulary — `build run test seed migrate lint clean package deploy smoke
-release` (plus `stop`, tracked separately under #322) — every project should
-expose via a root `justfile`. Adopting that contract today is a manual
+vocabulary — `build run test unit-test seed migrate lint clean package deploy
+smoke gui-test release` (plus `stop`, tracked separately under #322) — every
+project should expose via a root `justfile`. Adopting that contract today is a manual
 procedure (`justfile-standard-design.md` §8): diagnose with
 `grm-install-doctor`, hand-add recipes, hand-edit `.claude/recipes.json`. This
 script automates the mechanical parts for a project that arrived with its own
@@ -79,8 +79,8 @@ PLACEHOLDER_MARKER = "# grimoire:placeholder"
 # ---------------------------------------------------------------------------
 
 VOCAB = [
-    "build", "run", "test", "seed", "migrate", "lint", "clean",
-    "package", "deploy", "smoke", "release",
+    "build", "run", "test", "unit-test", "seed", "migrate", "lint", "clean",
+    "package", "deploy", "smoke", "gui-test", "release",
 ]
 CORE_REQUIRED = {"build", "run", "deploy"}
 
@@ -93,6 +93,7 @@ SIGNATURES = {
     "build": 'build env="dev"',
     "run": 'run env="dev" port="3000"',
     "test": 'test filter="" watch=""',
+    "unit-test": 'unit-test filter="" watch=""',
     "seed": 'seed fixture="" env="dev"',
     "migrate": 'migrate env="dev"',
     "lint": "lint",
@@ -100,6 +101,7 @@ SIGNATURES = {
     "package": 'package version="" target=""',
     "deploy": "deploy env dry_run=\"false\"",
     "smoke": 'smoke port="3000"',
+    "gui-test": 'gui-test baseline="main"',
     "release": "release *ARGS",
     STOP_STUB: "stop",
 }
@@ -114,6 +116,7 @@ JSON_COMMAND = {
     "build": "just build ${env}",
     "run": "just run ${env} ${port}",
     "test": "just test ${filter}",
+    "unit-test": "just unit-test ${filter}",
     "seed": "just seed ${fixture} ${env}",
     "migrate": "just migrate ${env}",
     "lint": "just lint",
@@ -121,6 +124,7 @@ JSON_COMMAND = {
     "package": "just package ${version} ${target}",
     "deploy": "just deploy ${env}",
     "smoke": "just smoke ${port}",
+    "gui-test": "just gui-test ${baseline}",
     "release": "just release",
 }
 
@@ -128,6 +132,7 @@ JSON_PARAMS = {
     "build": {"env": {"default": "dev"}},
     "run": {"port": {"default": "3000"}, "env": {"default": "dev"}},
     "test": {"filter": {"default": ""}, "watch": {"default": ""}},
+    "unit-test": {"filter": {"default": ""}, "watch": {"default": ""}},
     "seed": {"fixture": {"default": ""}, "env": {"default": "dev"}},
     "migrate": {"env": {"default": "dev"}},
     "lint": {},
@@ -135,6 +140,7 @@ JSON_PARAMS = {
     "package": {"version": {"default": ""}, "target": {"default": ""}},
     "deploy": {"env": {"default": "production"}},
     "smoke": {"port": {"default": "3000"}},
+    "gui-test": {"baseline": {"default": "main"}},
     "release": {},
 }
 
@@ -146,6 +152,8 @@ TARGET_ALIASES = {
     "build": {"build", "compile", "assemble", "dist"},
     "run": {"run", "start", "serve", "server", "dev"},
     "test": {"test", "tests", "check"},
+    "unit-test": {"unit-test", "unittest", "unittests", "unit_test",
+                  "fast-test", "test-unit"},
     "seed": {"seed", "fixtures", "seeddb", "dbseed"},
     "migrate": {"migrate", "migration", "migrations", "dbmigrate"},
     "lint": {"lint", "format", "fmt"},
@@ -153,6 +161,8 @@ TARGET_ALIASES = {
     "package": {"package", "pack", "bundle"},
     "deploy": {"deploy", "publish"},
     "smoke": {"smoke", "healthcheck"},
+    "gui-test": {"gui-test", "guitest", "gui_test", "visual-test",
+                 "visualtest", "screenshot-test", "screenshottest"},
     "release": {"release", "cutrelease"},
 }
 

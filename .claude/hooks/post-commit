@@ -1,0 +1,71 @@
+#!/usr/bin/env python3
+""":"
+# Bash polyglot preamble — bash ignores the shebang and lands here.
+# Re-execute with python3, or emit a clear error if unavailable.
+if command -v python3 >/dev/null 2>&1; then
+  exec python3 "$0" "$@"
+fi
+printf 'error: %s requires python3. Re-run as: python3 %s %s\n' "$0" "$0" "$*" >&2
+exit 0
+":"""
+# HOOK_CONTRACT: v1 capabilities=[post-commit-gate]
+"""post-commit — Grimoire post-commit test + coverage force-correction gate (#361).
+
+A REAL git hook, unlike this project's other 8 guard hooks (all Claude Code
+PreToolUse hooks wired in .claude/settings.json, which only fire for a Bash
+tool call Claude Code itself issues). This one fires for ANY commit —
+Claude Code, another agent, or a human at a bare terminal — because git
+invokes it directly. Activation is a one-time, opt-in repo config step (git
+does not consult this directory by default):
+
+    git config core.hooksPath .claude/hooks
+
+Full contract, both hooks, and the activation step: grm-repo-init/SKILL.md
+§Post-commit test gate (opt-in); design:
+docs/grimoire/design/runtime-verification-design.md §Post-commit test +
+coverage gate.
+
+No-op (exit 0, silent) unless the project has opted in via
+`code-quality.post-commit-test-gate.enabled: true` in
+.claude/grimoire-config.json — this hook never runs uninvited. When enabled,
+it runs `recipe.py unit-test` (#360) plus any project-declared coverage
+command, and — because post-commit CANNOT block a commit that already
+happened — emits a loud "MUST FIX" report on a red suite or sub-threshold
+coverage (`code-quality.coverage-threshold`, reused from the existing merge-
+gate quality dial; `null` = advisory only). Escape hatch:
+GRIMOIRE_SKIP_POST_COMMIT_GATE=1 (human-set in the shell, never automated).
+
+All the actual logic lives in the shared engine
+(grm-build-recipe/post_commit_gate.py) so the OPTIONAL pre-commit blocking
+variant (pre-commit, opt-in via mode: block) never duplicates it.
+"""
+import os
+import subprocess
+import sys
+
+_HOOK_DIR = os.path.dirname(os.path.abspath(__file__))
+
+
+def main() -> int:
+    try:
+        out = subprocess.run(["git", "rev-parse", "--show-toplevel"],
+                             capture_output=True, text=True, timeout=5)
+    except (OSError, subprocess.SubprocessError):
+        return 0  # never fail the user's commit flow over our own plumbing
+    if out.returncode != 0:
+        return 0
+    root = out.stdout.strip()
+    engine = os.path.join(root, ".claude", "skills", "grm-build-recipe",
+                          "post_commit_gate.py")
+    if not os.path.isfile(engine):
+        return 0  # engine not installed on this checkout — silent no-op
+    # git ignores post-commit's exit status entirely; propagate it anyway so
+    # a terminal user or CI wrapper watching `$?` after `git commit` sees the
+    # force-correction signal (the "loud" half of force-correction).
+    result = subprocess.run([sys.executable, engine, "--mode", "postcommit",
+                             "--root", root])
+    return result.returncode
+
+
+if __name__ == "__main__":
+    sys.exit(main())

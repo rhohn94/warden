@@ -1,0 +1,13 @@
+# config/defaults.toml — lowest-priority layer read by config_loader.rs
+# (config-loader-design.md §1-§2). Checked into git; every key here is a safe
+# fallback for every environment. Overridden, in order, by config/base.toml,
+# config/{APP_ENV}.toml, config/local.toml (gitignored), then process env vars
+# (FOO_BAR overrides the `foo_bar` key).
+#
+# Only flat `key = value` lines are read (string / integer / boolean) — no
+# nested `[section]` tables; see config_loader.rs's module doc for the full
+# contract and config-loader-design.md §2 for the reference implementation.
+
+port = 8080
+log_level = "info"
+debug = false

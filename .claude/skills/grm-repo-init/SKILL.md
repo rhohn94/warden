@@ -200,6 +200,29 @@ To install in a new repo:
 
 ---
 
+## Post-commit test gate (opt-in, #361)
+
+`.claude/hooks/post-commit` (+ optional `pre-commit`) are REAL git hooks —
+unlike the other 8 guard hooks (Claude Code `PreToolUse`), they fire for any
+commit from any actor. Off by default; git ignores `.claude/hooks/` until
+activated. Full contract: `docs/coding-standards.md` §Post-commit test +
+coverage gate.
+
+To install (only when opted in via `code-quality.post-commit-test-gate.enabled:
+true`): confirm the hook file(s) are present + `chmod +x`, then activate with
+one repo-wide git config change (safe alongside the other 8 hooks — none of
+their filenames match a git-recognized hook name):
+
+```bash
+git config core.hooksPath .claude/hooks
+```
+
+Verify with `grm-install-doctor` — it audits both the `HOOK_CONTRACT` stamp
+and this activation (a correctly-stamped hook git never invokes reports
+`hooks-path:...` FAIL, not a silent pass).
+
+---
+
 ## Verify
 
 ```bash
